@@ -294,13 +294,14 @@ class PlanExecutorDecisionPortTest {
 
         DuelDecision summon = rig.port().decide(main, DecisionDeadline.of(3000));
         assertEquals(PathKind.LLM_CALL, summon.pathKind());
-        int callsAfterSummon = rig.chat().calls.size();
 
         DuelDecision place = rig.port().decide(placePoint(), DecisionDeadline.of(1000));
+        // "不再问"由路径种类兜底：位置若没被兑现，这里会是 LLM_CALL/TACTICAL 而非 PLAN_STEP。
+        // 不要在这里数 chat 调用总数——summon 决策后规划器还会异步排队 replan/events checkpoint，
+        // 后台线程何时消费 FakeChat 序列取决于调度（CI 上就因此 4≠5 翻过车）。
         assertEquals(PathKind.PLAN_STEP, place.pathKind(), "位置应由 one-shot 同一次回答给出并兑现");
         assertEquals(List.of("C2"), ((ChoiceIntent.Place) place.intent()).zones().stream()
                 .map(id -> id.value()).toList(), "模型给 MMZ-2，就该提交 C2");
-        assertEquals(callsAfterSummon, rig.chat().calls.size(), "兑现位置不该再发一次 LLM 调用");
     }
 
     @Test
