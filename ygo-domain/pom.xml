@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.github.coldgust</groupId>
+        <artifactId>ygo-agent</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>ygo-domain</artifactId>
+    <name>ygo-domain</name>
+    <description>游戏王领域模型：卡牌、区域、对局状态、动作请求与选择；零依赖纯 record，不绑定任何框架。</description>
+
+    <dependencies/>
+</project>

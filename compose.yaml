@@ -1,0 +1,156 @@
+name: ygo-agent
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg18
+    container_name: ygo-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ygo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ygo}
+      POSTGRES_DB: ygo
+    ports:
+      - "5432:5432"
+    volumes:
+      # PG18+ 官方镜像要求挂载整个 /var/lib/postgresql（数据实际落在 /var/lib/postgresql/18/data），
+      # 以支持 pg_upgrade --link。挂到 .../data 会在启动时报 "unused mount/volume" 并拒绝启动。
+      - pgdata:/var/lib/postgresql
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ygo} -d ygo" ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: ygo-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-change-me}
+      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_server_memory_pagecache_size: 512M
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4jdata:/data
+    healthcheck:
+      test: [ "CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null 2>&1 || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  # LightRAG 官方 server（镜像内已打包官方 WebUI，挂在 /webui）。
+  # - 抽取/存储引擎：pgvector 存 KV+向量+文档状态，Neo4j 存实体关系图
+  # - 官方 WebUI：http://localhost:9621/webui （文档上传、图谱浏览、RAG 查询）
+  # 认证：WebUI 登录用 AUTH_ACCOUNTS + TOKEN_SECRET；REST API 用 LIGHTRAG_API_KEY。
+  lightrag:
+    image: ghcr.io/hkuds/lightrag:latest
+    container_name: ygo-lightrag
+    env_file:
+      - path: ./ygo-rag/.env
+        required: false
+    environment:
+      HOST: 0.0.0.0
+      PORT: 9621
+      # 持久化与输入目录（与官方 compose 一致）
+      WORKING_DIR: /app/data/rag_storage
+      INPUT_DIR: /app/data/inputs
+      WORKSPACE: ygo
+      # ---------- 官方 WebUI 品牌化 ----------
+      WEBUI_TITLE: ${WEBUI_TITLE:-YGO 知识图谱 · LightRAG}
+      WEBUI_DESCRIPTION: ${WEBUI_DESCRIPTION:-游戏王规则与卡牌知识图谱 RAG}
+      # ---------- 认证（WebUI 与 API 暴露后必须开启）----------
+      # WebUI 登录账号：格式 user:password，多账号用逗号分隔
+      AUTH_ACCOUNTS: ${RAG_AUTH_ACCOUNTS:-ygo:changeme}
+      # JWT 签名密钥，生产环境请改为强随机值（可放根目录 .env）
+      TOKEN_SECRET: ${RAG_TOKEN_SECRET:-please-change-this-token-secret}
+      # REST API 访问密钥（可选；设置后所有 API 调用需带 x-api-key）
+      LIGHTRAG_API_KEY: ${LIGHTRAG_API_KEY:-}
+      # ---------- 存储：Neo4j 存图，pgvector 存向量 ----------
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-ygo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ygo}
+      POSTGRES_DATABASE: ygo_rag
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-change-me}
+      LIGHTRAG_KV_STORAGE: PGKVStorage
+      LIGHTRAG_VECTOR_STORAGE: PGVectorStorage
+      LIGHTRAG_DOC_STATUS_STORAGE: PGDocStatusStorage
+      LIGHTRAG_GRAPH_STORAGE: Neo4JStorage
+      # ---------- 生成模型（OpenAI 兼容）----------
+      LLM_BINDING: openai
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      LLM_BINDING_HOST: ${LLM_BASE_URL:-https://api.deepseek.com}/v1
+      LLM_BINDING_API_KEY: ${LLM_API_KEY:-}
+      # ---------- Embedding（维度必须与向量表一致）----------
+      EMBEDDING_BINDING: openai
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-1024}
+      EMBEDDING_BINDING_HOST: ${EMBEDDING_BASE_URL:-https://api.siliconflow.cn/v1}
+      EMBEDDING_BINDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_SEND_DIM: "false"
+    ports:
+      - "9621:9621"
+    volumes:
+      - lightragdata:/app/data/rag_storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      # 官方镜像自带 curl；/health 在依赖库就绪后即可返回 200
+      test: [ "CMD-SHELL", "curl -fsS http://localhost:9621/health >/dev/null 2>&1 || exit 1" ]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 5
+    restart: unless-stopped
+
+  # 对局服务（ygo-play-server + Svelte 前端）：:8081 同时提供 REST/SSE 与 WebUI。
+  # 需要 YGOPro 系客户端在宿主机建房：前端里地址填 host.docker.internal（Linux 由 host-gateway 映射）。
+  server:
+    build: .
+    image: ygo-play-server:local
+    container_name: ygo-server
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # 容器网络内指向同 compose 的 postgres / lightrag（覆盖 .env 里的 localhost 写法）
+      POSTGRES_URL: jdbc:postgresql://postgres:5432/ygo
+      LIGHTRAG_URL: http://lightrag:9621
+      PLAY_SERVER_PORT: "8081"
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - tracedata:/tmp/ygo-trace
+      - duellogdata:/tmp/ygo-duel-log
+      # 宿主机卡组目录（可选）：挂载后前端"卡组路径"填 /decks/xxx.ydk
+      # - /path/to/decks:/decks:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      lightrag:
+        condition: service_healthy
+    restart: unless-stopped
+
+
+volumes:
+  # 显式命名：与 compose 项目名解耦，改名/换项目不丢数据
+  pgdata:
+    name: ygo-pgdata
+  neo4jdata:
+    name: ygo-neo4jdata
+  lightragdata:
+    name: ygo-lightragdata
+  tracedata:
+    name: ygo-tracedata
+  duellogdata:
+    name: ygo-duellogdata

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.github.coldgust</groupId>
+        <artifactId>ygo-agent</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>ygo-play</artifactId>
+    <name>ygo-play</name>
+    <description>实机对局运行时：连接房间、上传卡组、驱动应答循环，装配决策端口与轨迹记录；含 CLI 入口。</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.github.coldgust</groupId>
+            <artifactId>ygo-agent-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.github.coldgust</groupId>
+            <artifactId>ygo-domain</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.github.coldgust</groupId>
+            <artifactId>ygopro-sdk</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.github.coldgust</groupId>
+            <artifactId>ygo-duel-log</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

@@ -1,0 +1,32 @@
+# Java / Maven
+target/
+*.class
+*.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# 环境与密钥
+.env
+*.local
+
+# 语料与运行时数据（规则书、卡牌数据、LightRAG 输出都不入库）
+data/
+ygo-rag/.env
+ygo-rag/corpus/**/*
+!ygo-rag/corpus/**/.gitkeep
+
+# Python（脚本缓存）
+__pycache__/
+*.pyc
+.venv/
+
+# 系统
+.DS_Store
+/web/dist/
+/web/node_modules/
+
+# 运行日志（全链路日志体积大，不入库）
+logs/

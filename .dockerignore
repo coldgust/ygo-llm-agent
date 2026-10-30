@@ -1,0 +1,13 @@
+# 构建上下文只保留源码；数据与产物运行时挂载或由构建阶段生成
+.git
+.workbuddy
+logs
+data
+docs
+infra
+web/node_modules
+web/dist
+**/target/
+*.log
+.env
+ygo-rag/corpus

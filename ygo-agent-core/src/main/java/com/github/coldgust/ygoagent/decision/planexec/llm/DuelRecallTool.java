@@ -1,0 +1,401 @@
+package com.github.coldgust.ygoagent.decision.planexec.llm;
+
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.LinkedHashSet;
+import java.util.Set;
+
+/**
+ * 历史对局检索工具：从 LightRAG 里的"对局复盘"召回与当前局面相似的历史经验。
+ *
+ * <p>对局库不是结构化案例库，而是<b>叙事记忆</b>：每局结束后由 LLM 写一份复盘
+ * （一句话结论 / 局面走向 / 关键决策 / 转折点 / 失误与代价 / 下次怎么做 / 检索关键词），
+ * 以 {@code duel:<id>} 为来源写进同一个 workspace。模型在"这局面好像见过"或
+ * "想参考以前怎么打"时自主调用。
+ *
+ * <p>检索仍走 {@code /query/data}（只取证据、不二次生成），并在客户端按
+ * {@code duel:} 来源过滤，避免规则/卡牌的片段串进来。
+ *
+ * <p>返回时按小节裁剪（{@code compact}）：复盘是"结论在最前、教训在最后"的结构，
+ * 盲目按字数截断会把最有用的"失误/下次怎么办"切掉，只留下流水账。
+ */
+public final class DuelRecallTool {
+
+    public static final String NAME = "search_duels";
+
+    private static final Logger log = LoggerFactory.getLogger(DuelRecallTool.class);
+    private static final int MAX_RESULT_CHARS = 4_000;
+    /** 单条复盘的字数上限：一份完整复盘约 1500 字，留出余量给同一来源的多个 chunk。 */
+    private static final int MAX_CHUNK_CHARS = 1_600;
+    /** 超预算时优先保留的小节（顺序即优先级）：先给结论，再给能指导当下决策的教训。 */
+    private static final List<String> KEEP_SECTIONS = List.of(
+            "一句话结论", "转折点", "失误与代价", "下次遇到类似局面");
+
+    private final HttpClient http;
+    private final JsonMapper mapper = JsonMapper.builder().build();
+    private final String endpoint;
+    private final String apiKey;
+    private final Duration timeout;
+    private final String mode;
+    private final int defaultLimit;
+
+    public DuelRecallTool(String baseUrl, String apiKey, Duration timeout, String mode, int defaultLimit) {
+        String base = baseUrl == null || baseUrl.isBlank() ? "http://localhost:9621" : baseUrl.trim();
+        if (base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        this.endpoint = base + "/query/data";
+        this.apiKey = apiKey;
+        this.timeout = timeout == null ? Duration.ofSeconds(8) : timeout;
+        this.mode = mode == null || mode.isBlank() ? "mix" : mode;
+        this.defaultLimit = defaultLimit <= 0 ? 4 : Math.min(defaultLimit, 10);
+        this.http = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
+                .connectTimeout(Duration.ofSeconds(3))
+                .build();
+    }
+
+    /** 从配置构建：进程 env 优先，其次当前/上级目录的 .env（与 RulebookTool 一致）。 */
+    public static DuelRecallTool fromEnv() {
+        return new DuelRecallTool(
+                setting("LIGHTRAG_URL", "http://localhost:9621"),
+                setting("LIGHTRAG_API_KEY", ""),
+                Duration.ofMillis(settingMillis("LIGHTRAG_TIMEOUT_MS", 8_000)),
+                "mix",
+                4);
+    }
+
+    public List<ChatClient.Tool> tools() {
+        Map<String, Object> query = new LinkedHashMap<>();
+        query.put("type", "string");
+        query.put("description", "当前局面或你想参考的问题，例如："
+                + "我方闪刀后手，对方清后场后OTK；或 我之前怎么处理增殖的G");
+
+        Map<String, Object> limit = new LinkedHashMap<>();
+        limit.put("type", "integer");
+        limit.put("description", "返回对局摘要条数，默认 4，最多 10");
+
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put("query", query);
+        properties.put("limit", limit);
+
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("type", "object");
+        params.put("properties", properties);
+        params.put("required", List.of("query"));
+
+        return List.of(new ChatClient.Tool(NAME,
+                "检索历史对局复盘（我方主题、先后手、胜负，以及关键决策/转折点/失误与教训）。"
+                        + "当当前局面让你觉得'以前遇到过'、或想参考历史经验/教训时调用；"
+                        + "返回最相似的对局复盘，作为参考而非命令。",
+                params));
+    }
+
+    public ChatClient.ToolHandler handler() {
+        return call -> search(call.arguments());
+    }
+
+    String search(String argumentsJson) {
+        String query = "";
+        int limit = defaultLimit;
+        try {
+            if (argumentsJson != null && !argumentsJson.isBlank()) {
+                JsonNode args = JsonMapper.builder().build().readTree(argumentsJson);
+                query = args.path("query").asText("").trim();
+                if (args.path("limit").isNumber()) {
+                    limit = Math.max(1, Math.min(10, args.path("limit").asInt(defaultLimit)));
+                }
+            }
+        } catch (RuntimeException e) {
+            // 参数不合法：按空查询处理并提示
+        }
+        if (query.isBlank()) {
+            return "（请描述当前局面或想参考的问题，例如 query=\"后手闪刀被清后场\"）";
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("query", query);
+        payload.put("mode", mode);
+        payload.put("top_k", Math.max(limit * 2, 8));
+        payload.put("chunk_top_k", Math.max(limit * 2, 8));
+        payload.put("include_chunk_content", true);
+
+        String text = render(post(payload), limit);
+        log.info("对局摘要检索 query='{}' → {} 字", clip(query, 40), text.length());
+        return text;
+    }
+
+    private JsonNode post(Map<String, Object> payload) {
+        try {
+            HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(endpoint))
+                    .header("Content-Type", "application/json")
+                    .timeout(timeout)
+                    .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(payload)));
+            if (apiKey != null && !apiKey.isBlank()) {
+                builder.header("X-API-Key", apiKey);
+            }
+            HttpResponse<String> response = http.send(builder.build(),
+                    HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                throw new IllegalStateException("LightRAG HTTP " + response.statusCode() + ": "
+                        + clip(response.body(), 200));
+            }
+            return mapper.readTree(response.body());
+        } catch (IOException e) {
+            throw new IllegalStateException("对局检索 IO 失败: " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("对局检索被中断", e);
+        }
+    }
+
+    /**
+     * 只保留 duel 域的片段。
+     *
+     * <p>注意别按来源"只取第一条"：一份复盘 1500+ 字，LightRAG 会切成多个 chunk，
+     * 而 chunk 是按相关度返回的——只留第一条，拿到的往往只是开头的"一句话结论"，
+     * 真正有用的"失误与代价/下次怎么做"正好在后面几条里。
+     * 所以这里按来源聚合所有命中片段，再做小节裁剪。
+     */
+    String render(JsonNode root, int limit) {
+        JsonNode chunks = root.path("data").path("chunks");
+        if (!chunks.isArray()) {
+            return "（没有匹配的历史对局复盘）";
+        }
+        Map<String, StringBuilder> bySource = new LinkedHashMap<>();
+        for (JsonNode chunk : chunks) {
+            String source = firstNonBlank(chunk, "file_path", "id");
+            if (!isDuelDomain(source)) {
+                continue;
+            }
+            String content = chunk.path("content").asText("");
+            if (content.isBlank()) {
+                continue;
+            }
+            StringBuilder merged = bySource.get(source);
+            if (merged == null) {
+                if (bySource.size() >= limit) {
+                    continue; // 已经够 limit 局了
+                }
+                merged = new StringBuilder();
+                bySource.put(source, merged);
+            }
+            appendWithoutOverlap(merged, content);
+        }
+        if (bySource.isEmpty()) {
+            return "（没有匹配的历史对局复盘；按当前局面自行判断）";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        int total = 0;
+        for (var entry : bySource.entrySet()) {
+            String merged = dedupeRepeatedLines(entry.getValue().toString());
+            sb.append("[历史对局 ").append(++total).append("]（").append(clip(entry.getKey(), 60)).append("）\n")
+                    .append(compact(merged, MAX_CHUNK_CHARS)).append("\n\n");
+            if (sb.length() > MAX_RESULT_CHARS) {
+                break;
+            }
+        }
+        String out = sb.toString();
+        return out.length() <= MAX_RESULT_CHARS ? out : out.substring(0, MAX_RESULT_CHARS) + "…";
+    }
+
+    /**
+     * 按小节压缩一份复盘。
+     *
+     * <p>复盘结构固定为"结论在前、教训在后"。超长时保留：事实头（`domain:` 等）+ 一句话结论 +
+     * 转折点 + 失误与代价 + 下次遇到类似局面，丢掉中间的流水账式"局面走向/关键决策"。
+     * 真按字符截断，模型拿到的就只剩过程，没有任何可迁移的结论。
+     */
+    static String compact(String content, int limit) {
+        if (content == null) {
+            return "";
+        }
+        String text = content.trim();
+        if (text.length() <= limit) {
+            return text;
+        }
+        int firstSection = text.indexOf("## ");
+        if (firstSection < 0) {
+            return clip(text, limit); // 老格式（模板摘要/纯文本）：只能截断
+        }
+        String head = text.substring(0, firstSection).trim();
+        Map<String, String> sections = splitSections(text.substring(firstSection));
+
+        StringBuilder sb = new StringBuilder(head.isEmpty() ? "" : head + "\n\n");
+        for (String keep : KEEP_SECTIONS) {
+            String body = sections.get(keep);
+            if (body == null || body.isBlank()) {
+                continue;
+            }
+            String block = "## " + keep + "\n" + body.trim() + "\n\n";
+            if (sb.length() + block.length() > limit) {
+                continue;
+            }
+            sb.append(block);
+        }
+        String out = sb.toString().trim();
+        // 一个小节都放不下时，退回普通截断，至少别返回空
+        return out.isEmpty() ? clip(text, limit) : out;
+    }
+
+    /**
+     * 逐行去掉重复内容。
+     *
+     * <p>切块重叠不一定是"干净的后缀"：实测出现过第二个 chunk 从某条建议的第二个字开始，
+     * 于是同一段结论在结果里出现两遍（只差一个开头字），按后缀消重抓不住。
+     * 同一篇复盘里出现完全相同的长句，基本只可能是切块伪影，所以按行去重（长句才参与，短标签不动）。
+     */
+    private static String dedupeRepeatedLines(String text) {
+        Set<String> seen = new LinkedHashSet<>();
+        StringBuilder out = new StringBuilder();
+        for (String line : text.split("\n", -1)) {
+            String key = line.strip();
+            if ("##".equals(key)) {
+                continue; // 切块边界把 "## 标题" 的标题部分切走了，只剩一个空标题
+            }
+            if (key.length() >= 20 && !seen.add(key)) {
+                continue;
+            }
+            out.append(line).append('\n');
+        }
+        return out.toString();
+    }
+
+    /**
+     * 追加一个 chunk，并去掉与已有文本末尾的重叠。
+     *
+     * <p>LightRAG 的切块是滑窗式的：相邻 chunk 会在边界处重叠若干十字，
+     * 直接拼接会出现"半句话重复"（实测出现过整段"下次遇到类似局面"重复一遍）。
+     * 这里按"最长后缀 = 前缀"消重，上限 400 字，避免退化成 O(n²) 的全串比较。
+     */
+    private static void appendWithoutOverlap(StringBuilder merged, String content) {
+        String text = content.trim();
+        if (text.isEmpty()) {
+            return;
+        }
+        // 比较"已有文本的尾部"时要忽略尾部空白：拼接时补的换行会让 endsWith 永远差一个字符
+        int end = merged.length();
+        while (end > 0 && Character.isWhitespace(merged.charAt(end - 1))) {
+            end--;
+        }
+        int maxOverlap = Math.min(Math.min(end, text.length()), 400);
+        for (int k = maxOverlap; k > 0; k--) {
+            if (merged.substring(end - k, end).equals(text.substring(0, k))) {
+                text = text.substring(k).stripLeading();
+                break;
+            }
+        }
+        if (text.isEmpty()) {
+            return;
+        }
+        if (merged.length() > 0 && merged.charAt(merged.length() - 1) != '\n') {
+            merged.append('\n');
+        }
+        merged.append(text).append('\n');
+    }
+
+    /** 把 `## 标题` 切成 标题 → 正文；标题不含 `## `。 */    private static Map<String, String> splitSections(String markdown) {
+        Map<String, String> sections = new LinkedHashMap<>();
+        String[] lines = markdown.split("\n", -1);
+        String current = null;
+        StringBuilder body = new StringBuilder();
+        for (String line : lines) {
+            if (line.startsWith("## ")) {
+                if (current != null) {
+                    sections.put(current, body.toString());
+                }
+                current = line.substring(3).trim();
+                body.setLength(0);
+            } else if (current != null) {
+                body.append(line).append('\n');
+            }
+        }
+        if (current != null) {
+            sections.put(current, body.toString());
+        }
+        return sections;
+    }
+
+    /** 对局域来源（`duel:` 或 `duel-`，与服务端写入保持一致）。 */
+    static boolean isDuelDomain(String source) {
+        return SourceDomain.isDuel(source);
+    }
+
+    private static String firstNonBlank(JsonNode node, String... fields) {
+        for (String field : fields) {
+            String value = node.path(field).asText("");
+            if (!value.isBlank()) {
+                return value;
+            }
+        }
+        return "";
+    }
+
+    private static String setting(String key, String fallback) {
+        String fromEnv = System.getenv(key);
+        if (fromEnv != null && !fromEnv.isBlank()) {
+            return fromEnv;
+        }
+        for (String path : new String[]{".env", "../.env", "../../.env"}) {
+            String value = readDotEnv(path, key);
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return fallback;
+    }
+
+    private static long settingMillis(String key, long fallback) {
+        try {
+            return Math.max(1_000L, Long.parseLong(setting(key, String.valueOf(fallback)).trim()));
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private static String readDotEnv(String path, String key) {
+        Path file = Path.of(path);
+        if (!Files.isRegularFile(file)) {
+            return null;
+        }
+        try {
+            for (String raw : Files.readAllLines(file)) {
+                String line = raw.strip();
+                if (line.startsWith("#") || !line.startsWith(key + "=")) {
+                    continue;
+                }
+                String value = line.substring(key.length() + 1).strip();
+                if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
+                    value = value.substring(1, value.length() - 1);
+                }
+                return value;
+            }
+        } catch (IOException e) {
+            log.debug("读取 {} 失败: {}", path, e.toString());
+        }
+        return null;
+    }
+
+    private static String clip(String text, int limit) {
+        if (text == null) {
+            return "";
+        }
+        String flat = text.replaceAll("\\s+", " ").trim();
+        return flat.length() <= limit ? flat : flat.substring(0, limit) + "…";
+    }
+}

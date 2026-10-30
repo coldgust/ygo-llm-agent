@@ -1,0 +1,117 @@
+/* 共享样式：表单/按钮/事件流 */
+form.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  background: #141821;
+  border: 1px solid #232a38;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 14px;
+}
+form.controls input,
+form.controls select {
+  background: #0f1115;
+  color: #d7dae0;
+  border: 1px solid #2a3245;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 13px;
+}
+form.controls label {
+  color: #6b7383;
+  font-size: 12px;
+}
+form.controls button.go {
+  background: #1b2a4a;
+  color: #7aa2f7;
+  border: 1px solid #2f4470;
+  border-radius: 6px;
+  padding: 6px 16px;
+  cursor: pointer;
+  font-family: inherit;
+}
+form.controls button.go:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.chip {
+  border: 1px solid #2a3245;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  background: #141821;
+}
+.chip b {
+  color: #7aa2f7;
+}
+.feed {
+  background: #10131a;
+  border: 1px solid #232a38;
+  border-radius: 8px;
+  padding: 10px;
+  max-height: 480px;
+  overflow-y: auto;
+}
+.feed .entry {
+  border-bottom: 1px dashed #1c2230;
+  padding: 6px 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.feed .entry:last-child {
+  border-bottom: none;
+}
+.badge {
+  display: inline-block;
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-right: 6px;
+  font-size: 11px;
+}
+.badge.REFLEX { color: #9ece6a; }
+.badge.PLAN_EXACT { color: #7aa2f7; }
+.badge.PLAN_SIMILAR { color: #bb9af7; }
+.badge.LLM_ONESHOT { color: #ff9e64; }
+.badge.TACTICAL { color: #e0af68; }
+.badge.FALLBACK { color: #f7768e; }
+.badge.COMBO { color: #73daca; }
+.badge.PLAN_EVENT { color: #b4f9f8; }
+.badge.DUEL_STATUS { color: #c0caf5; }
+.badge.COMBO_RECORDED { color: #ffdb99; }
+.muted {
+  color: #6b7383;
+}
+.prompt {
+  background: #141821;
+  border: 1px solid #2a3245;
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+.prompt button {
+  background: #1b2a4a;
+  color: #7aa2f7;
+  border: 1px solid #2f4470;
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-family: inherit;
+  margin-right: 8px;
+}
+.error {
+  color: #f7768e;
+  font-size: 12px;
+  white-space: pre-wrap;
+}

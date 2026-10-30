@@ -1,0 +1,34 @@
+server:
+  port: ${PLAY_SERVER_PORT:8081}
+
+spring:
+  application:
+    name: ygo-play-server
+  config:
+    # 复用仓库根目录 .env（KEY=VALUE）；没有也能启动
+    import: optional:file:./.env[.properties]
+  datasource:
+    url: ${POSTGRES_URL:jdbc:postgresql://localhost:5432/ygo}
+    username: ${POSTGRES_USER:ygo}
+    password: ${POSTGRES_PASSWORD:ygo}
+    hikari:
+      # PG 不可用时不拖垮启动：查卡失败会回退到 data/card_rag/cards.jsonl
+      initialization-fail-timeout: -1
+  threads:
+    virtual:
+      enabled: true
+
+ygo:
+  play:
+    default-move: second
+    max-concurrent-duels: 1
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+logging:
+  level:
+    com.github.coldgust: INFO
