@@ -766,6 +766,36 @@ class ContextPackBuilderTest {
     }
 
     @Test
+    void effectYesNoWithHintIdDoesNotPassOffTheFirstClauseAsTheAnswer() {
+        // 实机事故（最新一局 seq=10）：奇亚诺丝①特召成功后，引擎问的是 ②（从卡组特召露世）。
+        // "是否发动"（MSG_SELECT_EFFECTYN）的 description 是提示文 id（0/221），不是"卡号<<4|序号"，
+        // 旧实现退回"列出全部条款"，却仍冠以"这次要发动的是："，模型读成 ①，
+        // 答"①已用过、再丢魔法卡无净收益 → 不发动"，白丢一次免费的露世特召。
+        DuelState state = TestDuels.state(1, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
+        var choice = new ChoiceRequest.CardChoice(1, TestDuels.known(TestDuels.CYANOS),
+                ZoneRef.mainMonster(PlayerSide.SELF, 0));
+        for (long desc : new long[]{0L, 221L}) {
+            ChoiceRequest request = new ChoiceRequest.EffectYesNoRequest(choice, desc);
+            DecisionPoint point = new DecisionPoint(10, 1, state.phase(), PlayerSide.SELF,
+                    request, state, Candidates.from(request), "h", "r", RequestKind.EFFECT_YES_NO);
+
+            String section = builder.candidatesSection(point);
+            String header = section.lines().filter(l -> l.startsWith("是否发动：")).findFirst().orElse("");
+
+            assertFalse(header.contains("这次要发动的是"),
+                    "desc=" + desc + " 解不出序号时不许写'这次要发动的是'（会把第一条说成本次效果）:" + header);
+            assertTrue(section.contains("①：从手卡丢弃1张魔法卡"),
+                    "要完整列出条款，模型才有东西可排除:" + section);
+            assertTrue(section.contains("②：这张卡召唤·特殊召唤的场合"),
+                    "②（本次真正的效果）必须可见:" + section);
+            assertTrue(section.contains("本回合已经发动过"),
+                    "要教模型用'本回合已发动过'排除 ①——否则它又会把 ① 的代价算到别处:" + section);
+            assertFalse(section.contains("这次要发动的是：①"), section);
+            assertTrue(section.contains("要不要发") && section.contains("能不能发"), section);
+        }
+    }
+
+    @Test
     void historySectionTellsTheModelWhatItAlreadyDid() {
         // one-shot 是独立单轮调用，没有对话历史：不补"我刚做过什么"，它就会推翻自己
         // （上一手判"泡影留给上级怪兽"，下一手在检索环节就交了）。

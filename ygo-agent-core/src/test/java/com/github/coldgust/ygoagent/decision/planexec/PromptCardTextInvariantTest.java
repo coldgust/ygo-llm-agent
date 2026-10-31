@@ -87,6 +87,18 @@ class PromptCardTextInvariantTest {
         assertTrue(third.contains("③：自己·对方回合"), "序号 1 应是 ③: " + third);
     }
 
+    /** "是否发动"带的是提示文 id，不是效果序号：不许按低 4 位硬读（97 的低 4 位是 1 → 会读成"②"）。 */
+    @Test
+    void hintIdsAreNotMistakenForEffectIndexes() {
+        assertTrue(cardText.clauseOf(TestDuels.CYANOS, 0L).isEmpty(), "0 不是效果码");
+        assertTrue(cardText.clauseOf(TestDuels.CYANOS, 221L).isEmpty(), "221 是提示文 id，不是效果码");
+        assertTrue(cardText.clauseOf(TestDuels.CYANOS, 97L).isEmpty(),
+                "97 = 6<<4|1：高位不是卡号，不验就会把多效果卡说成'本次是 ②'");
+        // 真正属于这张卡的效果码仍然能定位：序号 1 = 第 2 个可发动条款 = ②
+        assertTrue(cardText.clauseOf(TestDuels.CYANOS, TestDuels.CYANOS * 16 + 1)
+                .map(c -> c.contains("②：这张卡召唤·特殊召唤的场合")).orElse(false));
+    }
+
     /* ======================= 各决策点的包 ======================= */
 
     private String effectYesNoPack() {

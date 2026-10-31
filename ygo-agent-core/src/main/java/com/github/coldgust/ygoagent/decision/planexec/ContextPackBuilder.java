@@ -810,15 +810,30 @@ public final class ContextPackBuilder {
             // 必须说清"要发动的是哪一条效果"。只给卡名 + 效果号时，模型只能凭记忆套——
             // 实机：零衣在墓地、引擎问的是 ②（从墓地自身特召），模型却按 ①（解放自身）判断，
             // 得出"①无法解放自身 → 不发动，保留资源"，把一次免费的资源回收当成了空过。
-            String fired = cardText.fired(y.card().identity().passcode(), y.description());
+            //
+            // 注意：这个请求的 description 并不总是"卡号<<4|序号"——引擎的触发型确认
+            // （MSG_SELECT_EFFECTYN）塞的是提示文 id（0/221/31/94…），解不出是哪一条。
+            // 解不出时绝不能把"全部条款"写成"这次要发动的是"（实机 seq=10：奇亚诺丝①特召成功后
+            // 引擎问②，模型把 ①②③ 全列表读成①，答"①已用过、再丢魔法卡无净收益 → 不发动"，
+            // 白丢一次免费的露世特召）。解不出就如实说明，并给出排除法。
+            long passcode = y.card().identity().passcode();
+            Optional<String> firedClause = cardText.clauseOf(passcode, y.description());
             sj.add("是否发动：" + effectCardLabel(y.card())
-                    + (fired.isEmpty() ? "" : " —— 这次要发动的是：" + fired));
+                    + (firedClause.isPresent()
+                    ? " —— 这次要发动的是：" + CardText.brief(firedClause.get())
+                    : ""));
+            if (firedClause.isEmpty()) {
+                appendUnlabeledEffectClauses(sj, passcode);
+            }
             // 这一句是必须的：引擎只有在"这个效果此刻可以发动"时才会发这个请求。
             // 不写的话模型会拿卡面条件去验（实机：零衣在墓地，它写"①②均不满足，无法发动"，
             // 而引擎正是因为条件成立才来问的——一次可发的资源点被当成空过）。
             sj.add("  ↑ 引擎只在「这个效果此刻可以发动」时才会问这一句：这是**要不要发**，不是**能不能发**。"
                     + "不要在理由里写「条件不满足 / 无法发动」——那说明你记错了规则，此时请重读上面的效果原文。");
-            appendEffectGroup(sj, "发动", point.candidatesOf(Candidate.EffectC.class));
+            // 候选行只给编号 + 卡名：条款在上面已经列过（解不出时是全部条款），
+            // 再渲染一遍只会让模型顺着第一条读下去。
+            appendGroup(sj, "发动", point.candidatesOf(Candidate.EffectC.class),
+                    e -> e.id().value() + " " + effectCardLabel(e.value().card()));
             appendDeclines(sj, point);
         } else if (request instanceof ChoiceRequest.YesNoRequest y) {
             sj.add("是/否确认（description 码 " + y.description() + "）");
@@ -926,7 +941,7 @@ public final class ContextPackBuilder {
                 // 上下文只有 ①②（当作黑魔术师 / 手卡特召），模型看不到任何"破坏"，
                 // 于是判"弃权保留两张速攻与机关"，而这一环结算后正是把这三张全部破坏。
                 List<String> clauses = cardText.clauses(passcode);
-                Optional<String> fired = cardText.clauseOf(clauses, node.effectDescription());
+                Optional<String> fired = cardText.clauseOf(passcode, clauses, node.effectDescription());
                 // 对象必须点名：卡面只写"以…为对象"，不写是哪张。
                 // 实机：黑魔导阵②"以对方场上1张卡为对象除外"，模型自己补成"要除外我方燎里"，
                 // 实际对象是我方后场的速攻魔法——猜错对象就会选错应对牌。
@@ -1005,6 +1020,32 @@ public final class ContextPackBuilder {
 
     private String effectCardLabel(ChoiceRequest.CardChoice card) {
         return DuelMathService.labelOf(instanceOf(card), facts);
+    }
+
+    /**
+     * "是否发动"定位不到是哪一条时的退化渲染：逐条列出 + 用排除法引导，<b>不许</b>写成
+     * "这次要发动的是：①…／②…／③…"——那等于把第一条说成本次效果。
+     *
+     * <p>实机事故（最新一局 seq=10）：奇亚诺丝①特召成功后，引擎问的是 <b>②</b>（从卡组·墓地特召
+     * 露世）。MSG_SELECT_EFFECTYN 的 description 是提示文 id（0/221），解不出序号，旧实现退回
+     * "列出全部条款"，却仍冠以"这次要发动的是："，模型读成①，答"①已用过、再丢魔法卡无净收益 →
+     * 不发动"，把一次白赚的露世特召丢了。所以这里要明说"协议没标出是哪一条"，并把唯一可靠的
+     * 定位手段（排除本回合已发动的 + 对齐当前时点）写出来。
+     */
+    private void appendUnlabeledEffectClauses(StringJoiner sj, long passcode) {
+        List<String> clauses = cardText.clauses(passcode);
+        if (clauses.isEmpty()) {
+            sj.add("  （卡库没有这张卡的效果原文——不要凭印象编造，必要时调 find_card 查）");
+            return;
+        }
+        sj.add("  协议**没有标出**这次是哪一条效果（「是否发动」的确认号不是效果序号）：下面把全部条款"
+                + "（①②③…）列出来，按排除法定位——");
+        for (String clause : clauses) {
+            sj.add("    " + CardText.brief(clause));
+        }
+        sj.add("  定位方法：① 本回合已经发动过的效果（见 [本回合已做]）不可能是本次请求，先排除；"
+                + "② 再看哪一条的发动时点与当前时点吻合（刚召唤·特殊召唤成功 / 刚进墓地 / 刚被破坏·除外 / "
+                + "刚有卡加入手牌…）；③ 不要默认按 ① 的代价与收益来判断，按你定位到的那一条算净收益。");
     }
 
     /** 效果文的分条标记（多效果卡）。 */

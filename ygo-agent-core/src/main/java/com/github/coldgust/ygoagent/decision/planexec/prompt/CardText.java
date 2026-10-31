@@ -30,9 +30,17 @@ import java.util.StringJoiner;
  *   <li>卡库查不到时明说"卡库无资料"，而不是给空字符串——留白会让模型自己编。</li>
  * </ol>
  *
- * <p>效果码的编码（引擎内部约定）：{@code desc = 脚本卡号 << 4 | 序号}，低 4 位是该卡第几个
+ * <p>效果描述码的编码：{@code desc = 脚本卡号 << 4 | 序号}，低 4 位是该卡第几个
  * <b>可发动</b>效果（只数含"发动"的条款）。实测：「王之仆人-黑魔术师」① 是"当作黑魔术师使用"、
  * 不占号，所以 0→②、1→③；而 ①②③ 都能发动的卡（如「未来之柱-奇亚诺丝」）序号与印刷顺序一致。
+ *
+ * <p><b>但这个编码只属于"效果描述"字段</b>：连锁（MSG_SELECT_CHAIN）与主阶段（MSG_SELECT_IDLECMD）
+ * 里带的就是它。而"是否发动"（MSG_SELECT_EFFECTYN）的 description <b>不是</b>效果序号——ocgcore 在
+ * 触发型确认里塞的是提示文 id（0 / 221 / 31 / 94 / 97 / 218……），高位根本不是卡号。所以定位条款前
+ * 必须先用 {@link #isOwnEffectCode(long, long)} 验一下：97 的低 4 位是 1，不验就会把一张多效果卡
+ * 说成"这次要发动的是 ②"。实机事故（seq=10）：奇亚诺丝①特召成功后引擎问的是 <b>②</b>（从卡组特召
+ * 露世），desc 解不出 → 退回"列出全部条款"，可上下文仍写着"这次要发动的是：①…／②…／③…"，模型读成
+ * ①，答"①已用过、再丢魔法卡无净收益 → 不发动"，白丢一次免费的露世特召。
  */
 public final class CardText {
 
@@ -131,20 +139,33 @@ public final class CardText {
     /**
      * 这次发动的是哪一条条款；解不出返回空（调用方应改用 {@link #fired}，它不会留白）。
      *
-     * <p>先把"能发动的条款"挑出来再按序号取——引擎的序号只数可发动效果（见类注释）。
+     * <p>先把"能发动的条款"挑出来再按序号取——引擎的效果序号只数可发动效果（见类注释）。
+     * effectCode 必须是本卡的效果描述码（{@link #isOwnEffectCode}）；"是否发动"带的是提示文 id，
+     * 会在这里被判空，调用方必须退化到"列出全部条款"，不能当成"第一条/全部"。
      */
     public Optional<String> clauseOf(long passcode, long effectCode) {
-        return clauseOf(clauses(passcode), effectCode);
+        return clauseOf(passcode, clauses(passcode), effectCode);
     }
 
-    public Optional<String> clauseOf(List<String> clauses, long effectCode) {
-        if (clauses.isEmpty() || effectCode <= 0) {
+    /** 同 {@link #clauseOf(long, long)}，条款由调用方切好（连锁段一次要渲染多张卡）。 */
+    public Optional<String> clauseOf(long passcode, List<String> clauses, long effectCode) {
+        if (clauses.isEmpty() || !isOwnEffectCode(passcode, effectCode)) {
             return Optional.empty();
         }
         List<String> activated = clauses.stream().filter(c -> c.contains("发动")).toList();
         List<String> pool = activated.isEmpty() ? clauses : activated;
         int index = (int) (effectCode & 0xF);
         return index < pool.size() ? Optional.of(pool.get(index)) : Optional.empty();
+    }
+
+    /**
+     * description 是否是"这张卡自己的效果描述码"（{@code 卡号<<4|序号}）。
+     *
+     * <p>必须验高位：MSG_SELECT_EFFECTYN（是否发动）带的是提示文 id（0/221/31/94/97/218…），
+     * 高位不是卡号。不验的话 97（= 6&lt;&lt;4|1）会被读成"②"，给模型一个凭空捏造的效果定位。
+     */
+    public static boolean isOwnEffectCode(long passcode, long effectCode) {
+        return passcode > 0 && effectCode > 0 && (effectCode >>> 4) == passcode;
     }
 
     /* ======================= 三、渲染 ======================= */
@@ -160,7 +181,7 @@ public final class CardText {
         if (clauses.isEmpty()) {
             return passcode <= 0 ? "" : MISSING_CARD;
         }
-        Optional<String> fired = clauseOf(clauses, effectCode);
+        Optional<String> fired = clauseOf(passcode, clauses, effectCode);
         return fired.map(clause -> clip(clause, FOCUS_LIMIT)).orElseGet(() -> all(clauses));
     }
 
@@ -205,7 +226,7 @@ public final class CardText {
     /** 除"这次发动的那条"以外的条款（避免同一句话在上下文里出现两遍）。 */
     public List<String> others(long passcode, long effectCode) {
         List<String> clauses = clauses(passcode);
-        Optional<String> fired = clauseOf(clauses, effectCode);
+        Optional<String> fired = clauseOf(passcode, clauses, effectCode);
         if (fired.isEmpty()) {
             return clauses;
         }
