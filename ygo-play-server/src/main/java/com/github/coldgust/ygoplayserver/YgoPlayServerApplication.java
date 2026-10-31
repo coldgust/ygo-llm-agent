@@ -8,7 +8,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 
 /**
  * 对局服务：HTTP 启动/查询/停止实机对局。
- * <p>不连数据库、不加载知识库自动配置；决策智能在 ygo-agent（v6 Planner–Executor）。
+ * <p>不连数据库、不加载知识库自动配置；决策智能在 ygo-agent-core（v6 Planner–Executor）。
  */
 @SpringBootApplication
 @EnableConfigurationProperties(PlayServerProperties.class)

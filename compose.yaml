@@ -1,4 +1,4 @@
-name: ygo-agent
+name: ygo-llm-agent
 
 services:
   postgres:

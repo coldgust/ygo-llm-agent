@@ -11,11 +11,11 @@
     </parent>
 
     <groupId>com.github.coldgust</groupId>
-    <artifactId>ygo-agent</artifactId>
+    <artifactId>ygo-llm-agent</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <packaging>pom</packaging>
 
-    <name>ygo-agent</name>
+    <name>ygo-llm-agent</name>
     <description>游戏王实机对局 AI：Planner–Executor 双 Agent 接入 YGOPro 协议客户端，从引擎给出的合法候选中决策；规则与历史经验由 RAG 知识栈供给。</description>
 
     <licenses>

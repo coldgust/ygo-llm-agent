@@ -13,7 +13,7 @@
 
 <main>
   <header>
-    <h1>YGO Agent</h1>
+    <h1>YGO LLM Agent</h1>
     <nav>
       {#each tabs as t (t.id)}
         <button class:active={tab === t.id} onclick={() => (tab = t.id)}>{t.label}</button>

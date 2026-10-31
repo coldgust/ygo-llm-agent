@@ -1,7 +1,5 @@
 # 常用命令。
-# 项目需要 JDK 25，而本机默认 java 往往是 17；这里用普通赋值（不是 ?=）覆盖环境里的 JAVA_HOME。
-# 要用别的 JDK：make test JAVA_HOME=/path/to/jdk-25
-JAVA_HOME := $(HOME)/Library/Java/JavaVirtualMachines/openjdk-25.0.2/Contents/Home
+JAVA_HOME := $(shell /usr/libexec/java_home -v 25 2>/dev/null)
 MVN := JAVA_HOME=$(JAVA_HOME) ./mvnw -B
 
 .DEFAULT_GOAL := help

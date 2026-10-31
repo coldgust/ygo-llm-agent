@@ -1,4 +1,4 @@
-# ygo-graph-agent 对局服务镜像（ygo-play-server + Svelte 前端产物）
+# ygo-llm-agent 对局服务镜像（ygo-play-server + Svelte 前端产物）
 #
 # 构建上下文 = 仓库根；数据（data/）不进镜像，运行时挂载（见 compose.yaml server 服务）。
 #   docker compose build server
@@ -7,11 +7,11 @@
 # ---------- 1/3 前端构建 ----------
 FROM node:22-alpine AS web
 WORKDIR /src/web
-# 先只拷 package.json，依赖层可被缓存（仓库无 pnpm-lock，用 npm 安装）
-COPY web/package.json ./
-RUN npm install --no-audit --no-fund
+# pnpm 版本由 package.json 的 packageManager 字段决定（corepack），按锁文件安装
+COPY web/package.json web/pnpm-lock.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile
 COPY web/ ./
-RUN npm run build
+RUN pnpm build
 
 # ---------- 2/3 后端构建 ----------
 FROM eclipse-temurin:25-jdk AS build
@@ -21,15 +21,15 @@ COPY .mvn/ .mvn/
 COPY mvnw pom.xml ./
 COPY ygo-domain/pom.xml ygo-domain/
 COPY ygopro-sdk/pom.xml ygopro-sdk/
-COPY ygo-agent/pom.xml ygo-agent/
 COPY ygo-duel-log/pom.xml ygo-duel-log/
+COPY ygo-agent-core/pom.xml ygo-agent-core/
 COPY ygo-play/pom.xml ygo-play/
 COPY ygo-play-server/pom.xml ygo-play-server/
 RUN ./mvnw -B -q dependency:go-offline || true
 COPY ygo-domain/ ygo-domain/
 COPY ygopro-sdk/ ygopro-sdk/
-COPY ygo-agent/ ygo-agent/
 COPY ygo-duel-log/ ygo-duel-log/
+COPY ygo-agent-core/ ygo-agent-core/
 COPY ygo-play/ ygo-play/
 COPY ygo-play-server/ ygo-play-server/
 RUN ./mvnw -B -q -DskipTests package

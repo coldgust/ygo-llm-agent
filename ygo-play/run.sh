@@ -7,7 +7,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-JAVA_HOME="${JAVA_HOME:-$HOME/Library/Java/JavaVirtualMachines/openjdk-25.0.2/Contents/Home}"
+JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home -v 25 2>/dev/null || true)}"
 MVN="$ROOT_DIR/mvnw -B -q"
 REPO_ARG=()
 if [[ -n "${MAVEN_REPO_LOCAL:-}" ]]; then
