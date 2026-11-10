@@ -1,5 +1,7 @@
 package com.github.coldgust.ygoplay;
 
+import com.github.coldgust.ygoagent.decision.planexec.Texts;
+
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -43,19 +45,10 @@ public record RuntimeConfig(
     }
 
     private static Llm resolveLlm(Map<String, String> dotenv) {
-        String apiKey = firstNonBlank(System.getenv("LLM_API_KEY"), dotenv.get("LLM_API_KEY"));
-        String baseUrl = firstNonBlank(System.getenv("LLM_BASE_URL"), dotenv.get("LLM_BASE_URL"),
+        String apiKey = Texts.firstNonBlank(System.getenv("LLM_API_KEY"), dotenv.get("LLM_API_KEY"));
+        String baseUrl = Texts.firstNonBlank(System.getenv("LLM_BASE_URL"), dotenv.get("LLM_BASE_URL"),
                 "https://api.deepseek.com");
-        String model = firstNonBlank(System.getenv("LLM_MODEL"), dotenv.get("LLM_MODEL"), "deepseek-chat");
+        String model = Texts.firstNonBlank(System.getenv("LLM_MODEL"), dotenv.get("LLM_MODEL"), "deepseek-chat");
         return new Llm(model, baseUrl, apiKey);
-    }
-
-    private static String firstNonBlank(String... values) {
-        for (String value : values) {
-            if (value != null && !value.isBlank()) {
-                return value;
-            }
-        }
-        return null;
     }
 }

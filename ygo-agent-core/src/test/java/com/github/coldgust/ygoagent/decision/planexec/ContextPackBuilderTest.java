@@ -665,7 +665,7 @@ class ContextPackBuilderTest {
                 request, state, Candidates.from(request), "h", "r", RequestKind.CARD_SELECT);
 
         String scope = builder.describeEffect(TestDuels.SERVANT, TestDuels.SERVANT * 16 + 1);
-        String pack = builder.decisionPack(point, null, scope);
+        String pack = builder.decisionPack(point, null, DecisionMemory.of(scope, List.of(), ""));
 
         assertTrue(pack.contains("[当前效果]"), "要说明这一手在结算哪个效果:\n" + pack);
         assertTrue(pack.contains("王之仆人-黑魔术师"), pack);

@@ -36,10 +36,6 @@ public final class DuelTraceReader {
             return new TraceView(Map.of(), List.of());
         }
 
-        public boolean isEmpty() {
-            return actions.isEmpty() && plans.isEmpty();
-        }
-
         public TurnPlanView planFor(int turn) {
             return plans.get(turn);
         }

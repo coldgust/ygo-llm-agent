@@ -28,8 +28,4 @@ public record DecisionDeadline(long startNanos, long hardNanos, long safetyMilli
     public long deepCutoffNanos() {
         return hardNanos - safetyMillis * 1_000_000L;
     }
-
-    public long elapsedMillis() {
-        return (System.nanoTime() - startNanos) / 1_000_000;
-    }
 }

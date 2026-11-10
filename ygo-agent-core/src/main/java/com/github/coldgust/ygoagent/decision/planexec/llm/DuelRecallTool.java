@@ -1,5 +1,6 @@
 package com.github.coldgust.ygoagent.decision.planexec.llm;
 
+import com.github.coldgust.ygoagent.decision.planexec.Texts;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import org.slf4j.Logger;
@@ -123,7 +124,7 @@ public final class DuelRecallTool {
         payload.put("include_chunk_content", true);
 
         String text = render(post(payload), limit);
-        log.info("对局摘要检索 query='{}' → {} 字", clip(query, 40), text.length());
+        log.info("对局摘要检索 query='{}' → {} 字", Texts.flattenClip(query, 40), text.length());
         return text;
     }
 
@@ -140,7 +141,7 @@ public final class DuelRecallTool {
                     HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
                 throw new IllegalStateException("LightRAG HTTP " + response.statusCode() + ": "
-                        + clip(response.body(), 200));
+                        + Texts.flattenClip(response.body(), 200));
             }
             return mapper.readTree(response.body());
         } catch (IOException e) {
@@ -161,7 +162,7 @@ public final class DuelRecallTool {
         }
         Map<String, StringBuilder> bySource = new LinkedHashMap<>();
         for (JsonNode chunk : chunks) {
-            String source = firstNonBlank(chunk, "file_path", "id");
+            String source = Texts.firstNonBlank(chunk, "file_path", "id");
             if (!isDuelDomain(source)) {
                 continue;
             }
@@ -187,7 +188,7 @@ public final class DuelRecallTool {
         int total = 0;
         for (var entry : bySource.entrySet()) {
             String merged = dedupeRepeatedLines(entry.getValue().toString());
-            sb.append("[历史对局 ").append(++total).append("]（").append(clip(entry.getKey(), 60)).append("）\n")
+            sb.append("[历史对局 ").append(++total).append("]（").append(Texts.flattenClip(entry.getKey(), 60)).append("）\n")
                     .append(compact(merged, MAX_CHUNK_CHARS)).append("\n\n");
             if (sb.length() > MAX_RESULT_CHARS) {
                 break;
@@ -210,7 +211,7 @@ public final class DuelRecallTool {
         }
         int firstSection = text.indexOf("## ");
         if (firstSection < 0) {
-            return clip(text, limit); // 老格式（模板摘要/纯文本）：只能截断
+            return Texts.flattenClip(text, limit); // 老格式（模板摘要/纯文本）：只能截断
         }
         String head = text.substring(0, firstSection).trim();
         Map<String, String> sections = splitSections(text.substring(firstSection));
@@ -229,7 +230,7 @@ public final class DuelRecallTool {
         }
         String out = sb.toString().trim();
         // 一个小节都放不下时，退回普通截断，至少别返回空
-        return out.isEmpty() ? clip(text, limit) : out;
+        return out.isEmpty() ? Texts.flattenClip(text, limit) : out;
     }
 
     /**
@@ -307,16 +308,6 @@ public final class DuelRecallTool {
         return SourceDomain.isDuel(source);
     }
 
-    private static String firstNonBlank(JsonNode node, String... fields) {
-        for (String field : fields) {
-            String value = node.path(field).asText("");
-            if (!value.isBlank()) {
-                return value;
-            }
-        }
-        return "";
-    }
-
     private static String setting(String key, String fallback) {
         String fromEnv = System.getenv(key);
         if (fromEnv != null && !fromEnv.isBlank()) {
@@ -360,13 +351,5 @@ public final class DuelRecallTool {
             log.debug("读取 {} 失败: {}", path, e.toString());
         }
         return null;
-    }
-
-    private static String clip(String text, int limit) {
-        if (text == null) {
-            return "";
-        }
-        String flat = text.replaceAll("\\s+", " ").trim();
-        return flat.length() <= limit ? flat : flat.substring(0, limit) + "…";
     }
 }

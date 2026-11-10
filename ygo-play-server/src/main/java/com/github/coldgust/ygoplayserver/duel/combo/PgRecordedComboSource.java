@@ -1,6 +1,7 @@
 package com.github.coldgust.ygoplayserver.duel.combo;
 
 import com.github.coldgust.ygoagent.decision.planexec.llm.RecordedComboSource;
+import com.github.coldgust.ygoplayserver.duel.ComboCatalog;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -98,16 +99,7 @@ public final class PgRecordedComboSource implements RecordedComboSource {
 
     @Override
     public List<String> archetypes() {
-        try {
-            return jdbc.sql("SELECT DISTINCT archetype FROM combo_record ORDER BY 1")
-                    .query(String.class)
-                    .list()
-                    .stream()
-                    .filter(value -> value != null && !value.isBlank())
-                    .toList();
-        } catch (RuntimeException e) {
-            return List.of();
-        }
+        return ComboCatalog.archetypes(jdbc);
     }
 
     private Entry mapRow(ResultSet rs, int rowNum) throws SQLException {

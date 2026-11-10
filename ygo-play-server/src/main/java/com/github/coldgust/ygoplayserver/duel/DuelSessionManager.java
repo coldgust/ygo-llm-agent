@@ -44,11 +44,6 @@ public class DuelSessionManager implements DuelService {
         this(properties, runnerFactory, new DuelEventHub(), null);
     }
 
-    public DuelSessionManager(PlayServerProperties properties, DuelRunnerFactory runnerFactory,
-                              DuelEventHub eventHub) {
-        this(properties, runnerFactory, eventHub, null);
-    }
-
     @Autowired
     public DuelSessionManager(PlayServerProperties properties, DuelRunnerFactory runnerFactory,
                               DuelEventHub eventHub, DuelSummaryService summaryService) {

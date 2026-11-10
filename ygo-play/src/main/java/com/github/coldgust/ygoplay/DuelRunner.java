@@ -244,7 +244,7 @@ public final class DuelRunner {
                     DuelResult result = session.state().isFinished() ? session.state().result() : null;
                     traceWriter.event("RUN_DONE", Map.of(
                             "answered", stats.answered(), "fallbacks", stats.fallbacks()));
-                    return new DuelRunResult(stats, result, spec.tracePath(), spec.duelLogPath());
+                    return new DuelRunResult(stats, result);
                 } finally {
                     if (planExecPort != null) {
                         planExecPort.close();

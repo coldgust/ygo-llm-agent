@@ -1,5 +1,7 @@
 package com.github.coldgust.ygoagent.decision.planexec.llm;
 
+import com.github.coldgust.ygoagent.decision.planexec.Texts;
+
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -42,12 +44,8 @@ public final class LlmTuning {
      */
     public static void init(Map<String, String> env) {
         instance = new LlmTuning(
-                normalize(firstNonBlank(System.getenv(PLANNER_KEY), env.get(PLANNER_KEY))),
-                normalize(firstNonBlank(System.getenv(DECISION_KEY), env.get(DECISION_KEY))));
-    }
-
-    private static String firstNonBlank(String a, String b) {
-        return a != null && !a.isBlank() ? a : b;
+                normalize(Texts.firstNonBlank(System.getenv(PLANNER_KEY), env.get(PLANNER_KEY))),
+                normalize(Texts.firstNonBlank(System.getenv(DECISION_KEY), env.get(DECISION_KEY))));
     }
 
     public String planner() {

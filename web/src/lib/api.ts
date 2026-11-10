@@ -53,7 +53,9 @@ export interface BranchDetail {
 }
 
 export interface DuelEvent {
-  kind: string // DECISION / EXEC_DECISION / PLAN_EVENT / DUEL_STATUS / COMBO_RECORDED / connected
+  // 服务端用 SSE 的 event name 区分类型，必须逐个注册监听（见 subscribe）；
+  // 新增事件类型忘了加进来，前端就"永远收不到"而且不报错
+  kind: string // DECISION / EXEC_DECISION / SUBMITTED / PLAN_EVENT / DUEL_STATUS / COMBO_RECORDED / connected
   seq?: number
   turn?: number
   phase?: string

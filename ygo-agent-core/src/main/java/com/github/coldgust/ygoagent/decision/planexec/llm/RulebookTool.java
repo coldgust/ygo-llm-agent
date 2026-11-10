@@ -1,5 +1,6 @@
 package com.github.coldgust.ygoagent.decision.planexec.llm;
 
+import com.github.coldgust.ygoagent.decision.planexec.Texts;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import org.slf4j.Logger;
@@ -173,7 +174,7 @@ public final class RulebookTool {
         payload.put("include_chunk_content", true);
 
         String text = render(post(payload));
-        log.info("规则检索 query='{}' topK={} → {} 字", clip(query, 40), topK, text.length());
+        log.info("规则检索 query='{}' topK={} → {} 字", Texts.flattenClip(query, 40), topK, text.length());
         return text;
     }
 
@@ -190,7 +191,7 @@ public final class RulebookTool {
                     HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
                 throw new IllegalStateException("LightRAG HTTP " + response.statusCode() + ": "
-                        + clip(response.body(), 200));
+                        + Texts.flattenClip(response.body(), 200));
             }
             return mapper.readTree(response.body());
         } catch (IOException e) {
@@ -213,15 +214,15 @@ public final class RulebookTool {
                 if (content.isBlank()) {
                     continue;
                 }
-                String source = firstNonBlank(chunk, "file_path", "id");
+                String source = Texts.firstNonBlank(chunk, "file_path", "id");
                 if (!isRuleDomain(source)) {
                     continue; // 单 workspace 多域共存：只吃规则域，避免卡牌/combo/对局片段串味
                 }
                 sb.append("[规则片段").append(++total).append("]");
                 if (!source.isBlank()) {
-                    sb.append("（").append(clip(source, 60)).append("）");
+                    sb.append("（").append(Texts.flattenClip(source, 60)).append("）");
                 }
-                sb.append("\n").append(clip(content, 1_200)).append("\n\n");
+                sb.append("\n").append(Texts.flattenClip(content, 1_200)).append("\n\n");
                 if (sb.length() > MAX_RESULT_CHARS) {
                     break;
                 }
@@ -236,9 +237,9 @@ public final class RulebookTool {
                     if (desc.isBlank()) {
                         continue;
                     }
-                    String name = firstNonBlank(e, "entity_name", "name");
-                    sb.append("- ").append(clip(name, 40)).append("：")
-                            .append(clip(desc, 300)).append("\n");
+                    String name = Texts.firstNonBlank(e, "entity_name", "name");
+                    sb.append("- ").append(Texts.flattenClip(name, 40)).append("：")
+                            .append(Texts.flattenClip(desc, 300)).append("\n");
                     if (++total >= 8) {
                         break;
                     }
@@ -251,23 +252,5 @@ public final class RulebookTool {
         }
         String out = sb.toString();
         return out.length() <= MAX_RESULT_CHARS ? out : out.substring(0, MAX_RESULT_CHARS) + "…";
-    }
-
-    private static String firstNonBlank(JsonNode node, String... fields) {
-        for (String field : fields) {
-            String value = node.path(field).asText("");
-            if (!value.isBlank()) {
-                return value;
-            }
-        }
-        return "";
-    }
-
-    private static String clip(String text, int limit) {
-        if (text == null) {
-            return "";
-        }
-        String flat = text.replaceAll("\\s+", " ").trim();
-        return flat.length() <= limit ? flat : flat.substring(0, limit) + "…";
     }
 }

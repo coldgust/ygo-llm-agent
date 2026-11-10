@@ -29,10 +29,6 @@ public record DecisionPoint(
         return candidates.stream().filter(c -> c.id().equals(id)).findFirst();
     }
 
-    public boolean candidateIsPresent(CandidateId id) {
-        return candidate(id).isPresent();
-    }
-
     public <T extends Candidate> List<T> candidatesOf(Class<T> type) {
         return candidates.stream().filter(type::isInstance).map(type::cast).toList();
     }

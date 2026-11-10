@@ -86,9 +86,4 @@ public class DuelEventHub {
             }
         }
     }
-
-    public int subscriberCount(String duelId) {
-        List<SseEmitter> emitters = subscribers.get(duelId);
-        return emitters == null ? 0 : emitters.size();
-    }
 }

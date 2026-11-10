@@ -3,7 +3,7 @@
 #   docker compose build server
 #   docker compose up -d
 
-FROM node:22-alpine AS web
+FROM node:24-alpine AS web
 WORKDIR /src/web
 # pnpm 版本由 package.json 的 packageManager 字段决定（corepack），按锁文件安装
 COPY web/package.json web/pnpm-lock.yaml ./

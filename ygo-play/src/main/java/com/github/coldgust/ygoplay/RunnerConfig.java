@@ -42,10 +42,4 @@ public record RunnerConfig(long pollMillis, long defaultBudgetMillis, Map<Reques
     public long budgetMillis(RequestKind kind) {
         return budgets.getOrDefault(kind, defaultBudgetMillis);
     }
-
-    public RunnerConfig withBudget(RequestKind kind, long millis) {
-        EnumMap<RequestKind, Long> copy = new EnumMap<>(budgets);
-        copy.put(kind, Math.max(100, millis));
-        return new RunnerConfig(pollMillis, defaultBudgetMillis, copy);
-    }
 }

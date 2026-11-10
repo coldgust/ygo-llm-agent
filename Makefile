@@ -12,9 +12,6 @@ up: ## 启动 postgres + neo4j
 up-rag: ## 启动知识栈（postgres + neo4j + lightrag）
 	docker compose up -d postgres neo4j lightrag
 
-up-all: ## 启动全部基础设施（postgres + neo4j + lightrag）
-	docker compose up -d postgres neo4j lightrag
-
 down: ## 停止容器
 	docker compose down
 

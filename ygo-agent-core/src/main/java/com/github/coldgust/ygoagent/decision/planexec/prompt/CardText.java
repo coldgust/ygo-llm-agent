@@ -145,10 +145,6 @@ public final class CardText {
         return fired.map(clause -> clip(clause, FOCUS_LIMIT)).orElseGet(() -> all(clauses));
     }
 
-    public String all(long passcode, int totalLimit) {
-        return all(clauses(passcode), totalLimit);
-    }
-
     public String all(List<String> clauses) {
         return all(clauses, ALL_TOTAL_LIMIT);
     }
@@ -180,16 +176,6 @@ public final class CardText {
     public String effectLine(long passcode, long effectCode) {
         String text = fired(passcode, effectCode);
         return text.isEmpty() ? card(passcode) : card(passcode) + "：" + text;
-    }
-
-    /** 除"这次发动的那条"以外的条款（避免同一句话在上下文里出现两遍）。 */
-    public List<String> others(long passcode, long effectCode) {
-        List<String> clauses = clauses(passcode);
-        Optional<String> fired = clauseOf(passcode, clauses, effectCode);
-        if (fired.isEmpty()) {
-            return clauses;
-        }
-        return clauses.stream().filter(c -> !c.equals(fired.get())).toList();
     }
 
     public static String brief(String clause) {

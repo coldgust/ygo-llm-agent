@@ -184,7 +184,6 @@ def main():
             monster_text = desc or None
 
         alias_name = None
-        is_alt = False
         if alias:
             alias_name = en_names.get(alias)
         rec = {

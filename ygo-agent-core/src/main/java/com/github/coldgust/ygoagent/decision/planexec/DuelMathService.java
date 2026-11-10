@@ -163,25 +163,6 @@ public final class DuelMathService {
         return new LethalScan(directLethal, certain, opponentLp, summary);
     }
 
-    /**
-     * 战斗数学段（锚点 [数学] 区）。
-     */
-    @Deprecated
-    public String mathSection(DuelState state, CardFacts facts) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(constraintsSection(state, facts)).append("\n");
-        List<AttackLine> lines = attackTable(state, facts);
-        if (lines.isEmpty()) {
-            sb.append("[数学] 攻击结算表：（无可攻击宣言或无已知攻击力）");
-        } else {
-            sb.append("[数学] 攻击结算表：");
-            for (AttackLine line : lines) {
-                sb.append("\n- ").append(line.describe());
-            }
-        }
-        return sb.toString();
-    }
-
     /** 约束计数段（锚点常驻）：只放确定性计数，不做任何"能不能赢"的判断。 */
     public String constraintsSection(DuelState state, CardFacts facts) {
         return "[约束] " + constraints(state, facts) + "\n";
@@ -218,15 +199,6 @@ public final class DuelMathService {
         }
         return facts.byPasscode(card.passcode()).map(CardFact::label)
                 .orElseGet(() -> "卡(" + card.passcode() + ")");
-    }
-
-    public static Optional<CardInstance> findKnown(DuelState state, long passcode, PlayerSide side) {
-        return state.monsters(side).stream()
-                .filter(c -> c.passcode() == passcode)
-                .findFirst()
-                .or(() -> state.spellTraps(side).stream().filter(c -> c.passcode() == passcode).findFirst())
-                .or(() -> state.player(side).hand().stream()
-                        .filter(c -> c.passcode() == passcode).findFirst());
     }
 
     public static String zoneLabel(ZoneKind kind) {

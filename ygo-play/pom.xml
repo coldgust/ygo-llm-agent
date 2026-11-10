@@ -27,10 +27,6 @@
             <artifactId>ygopro-sdk</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.github.coldgust</groupId>
-            <artifactId>ygo-duel-log</artifactId>
-        </dependency>
-        <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
         </dependency>

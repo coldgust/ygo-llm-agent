@@ -64,59 +64,64 @@ public final class MsgFraming {
         return switch (type) {
             case ProtocolIds.MSG_RETRY, ProtocolIds.MSG_WAITING,
                  ProtocolIds.MSG_REQUEST_DECK, ProtocolIds.MSG_SHUFFLE_DECK,
-                 ProtocolIds.MSG_REVERSE_DECK, 74, 75, 76, // CHAIN_END / NEGATED / DISABLED
-                 113, 114 -> 2; // DAMAGE_STEP_START / END
-            case 2 -> 7;      // HINT: type+player+data
-            case 4 -> 19;     // START
-            case 5 -> 3;      // WIN
-            case 13 -> 6;      // SELECT_YESNO: type+player+desc4（实测截断修复）
-            case 12 -> 14;    // SELECT_EFFECTYN
-            case 14 -> 3 + 4 * b[off + 2];                       // SELECT_OPTION
-            case 15, 20 -> 6 + 8 * u(b, off + 5);                // SELECT_CARD / TRIBUTE
-            case 18, 24 -> 7;                                    // SELECT_PLACE / DISFIELD
-            case 19 -> 7;                                        // SELECT_POSITION
-            case 16 -> chainSize(b, off);                        // SELECT_CHAIN
-            case 22 -> 7 + 9 * u(b, off + 6);                    // SELECT_COUNTER
-            case 25 -> 3 + 8 * u(b, off + 2);                    // SORT_CARD
-            case 10 -> battleSize(b, off);                       // SELECT_BATTLECMD
-            case 11 -> idleSize(b, off);                         // SELECT_IDLECMD
-            case 23 -> sumSize(b, off);                          // SELECT_SUM
-            case 26 -> unselectSize(b, off);                     // SELECT_UNSELECT_CARD
-            case 30 -> 3 + 7 * u(b, off + 2);                    // CONFIRM_DECKTOP
-            case 31 -> confirmCardsSize(b, off);                 // CONFIRM_CARDS
-            case 33, 39 -> 3 + 4 * u(b, off + 2);                // SHUFFLE_HAND / SHUFFLE_EXTRA
-            case 35 -> 3;                                        // SWAP_GRAVE_DECK
-            case 36 -> 3 + 8 * u(b, off + 2);                    // SHUFFLE_SET_CARD
-            case 38 -> 6;                                        // DECK_TOP
-            case 40 -> 3;                                        // NEW_TURN
-            case 41 -> 4;                                        // NEW_PHASE
-            case 42 -> 3 + 7 * u(b, off + 2);                    // CONFIRM_EXTRATOP
-            case 50 -> 17;                                       // MOVE
-            case 53 -> 10;                                       // POS_CHANGE
-            case 54, 55, 56 -> 9;                                // SET / SWAP / FIELD_DISABLED
-            case 60, 61, 62, 63, 64, 65 -> 9;                    // 召唤族
-            case 70 -> 17;                                       // CHAINING
-            case 71, 72, 73 -> 3;                                // CHAINED / SOLVING / SOLVED
-            case 80, 81 -> 3 + 4 * u(b, off + 2);                // CARD_SELECTED / RANDOM_SELECTED
-            case 83 -> 2 + 4 * u(b, off + 1);                    // BECOME_TARGET
-            case 90 -> 3 + 4 * u(b, off + 2);                    // DRAW
-            case 91, 92, 94, 100 -> 6;                           // DAMAGE / RECOVER / LPUPDATE / PAY_LPCOST
-            case 93, 95, 96, 97 -> 9;                            // EQUIP / UNEQUIP / TARGET / CANCEL_TARGET
-            case 101, 102 -> 10;                                 // ADD/REMOVE_COUNTER
-            case 110 -> 9;                                       // ATTACK
-            case 111 -> 27;                                      // BATTLE（26 字节 payload，无目标时后半段全 0）
-            case 112 -> 5;                                       // ATTACK_DISABLED
-            case 120 -> 8;                                       // MISSED_EFFECT
-            case 130, 131 -> n < 3 ? -1 : 3 + u(b, off + 2);     // TOSS_COIN / TOSS_DICE
-            case 132, 133 -> 2;                                  // RPS / HAND_RES
-            case 140, 141 -> 6;                                  // ANNOUNCE_RACE / ATTRIB
-            case 142 -> n >= 3 ? 3 + 4 * u(b, off + 2) : 5;      // ANNOUNCE_CARD（候选为空时仅 5 字节）
-            case 143 -> 3 + 4 * u(b, off + 2);                   // ANNOUNCE_NUMBER
-            case 160 -> 8;                                       // CARD_HINT
-            case 163 -> 2 + 4 * u(b, off + 1);                   // AI_NAME
-            case 164, 165 -> 5;                                  // SHOW_HINT / PLAYER_HINT
-            case 170 -> 5;                                       // MATCH_KILL
-            default -> -1;                                       // 6 / 7 / 161 / 162 / 180 等：整帧交付
+                 ProtocolIds.MSG_REVERSE_DECK, ProtocolIds.MSG_CHAIN_END,
+                 ProtocolIds.MSG_CHAIN_NEGATED, ProtocolIds.MSG_CHAIN_DISABLED,
+                 ProtocolIds.MSG_DAMAGE_STEP_START, ProtocolIds.MSG_DAMAGE_STEP_END -> 2;
+            case ProtocolIds.MSG_HINT -> 7;      // type+player+data
+            case ProtocolIds.MSG_START -> 19;
+            case ProtocolIds.MSG_WIN -> 3;
+            case ProtocolIds.MSG_SELECT_YESNO -> 6;      // type+player+desc4（实测截断修复）
+            case ProtocolIds.MSG_SELECT_EFFECTYN -> 14;
+            case ProtocolIds.MSG_SELECT_OPTION -> 3 + 4 * b[off + 2];
+            case ProtocolIds.MSG_SELECT_CARD, ProtocolIds.MSG_SELECT_TRIBUTE -> 6 + 8 * u(b, off + 5);
+            case ProtocolIds.MSG_SELECT_PLACE, ProtocolIds.MSG_SELECT_DISFIELD -> 7;
+            case ProtocolIds.MSG_SELECT_POSITION -> 7;
+            case ProtocolIds.MSG_SELECT_CHAIN -> chainSize(b, off);
+            case ProtocolIds.MSG_SELECT_COUNTER -> 7 + 9 * u(b, off + 6);
+            case ProtocolIds.MSG_SORT_CARD -> 3 + 8 * u(b, off + 2);
+            case ProtocolIds.MSG_SELECT_BATTLECMD -> battleSize(b, off);
+            case ProtocolIds.MSG_SELECT_IDLECMD -> idleSize(b, off);
+            case ProtocolIds.MSG_SELECT_SUM -> sumSize(b, off);
+            case ProtocolIds.MSG_SELECT_UNSELECT_CARD -> unselectSize(b, off);
+            case ProtocolIds.MSG_CONFIRM_DECKTOP -> 3 + 7 * u(b, off + 2);
+            case ProtocolIds.MSG_CONFIRM_CARDS -> confirmCardsSize(b, off);
+            case ProtocolIds.MSG_SHUFFLE_HAND, ProtocolIds.MSG_SHUFFLE_EXTRA -> 3 + 4 * u(b, off + 2);
+            case ProtocolIds.MSG_SWAP_GRAVE_DECK -> 3;
+            case ProtocolIds.MSG_SHUFFLE_SET_CARD -> 3 + 8 * u(b, off + 2);
+            case ProtocolIds.MSG_DECK_TOP -> 6;
+            case ProtocolIds.MSG_NEW_TURN -> 3;
+            case ProtocolIds.MSG_NEW_PHASE -> 4;
+            case ProtocolIds.MSG_CONFIRM_EXTRATOP -> 3 + 7 * u(b, off + 2);
+            case ProtocolIds.MSG_MOVE -> 17;
+            case ProtocolIds.MSG_POS_CHANGE -> 10;
+            case ProtocolIds.MSG_SET, ProtocolIds.MSG_SWAP, ProtocolIds.MSG_FIELD_DISABLED -> 9;
+            case ProtocolIds.MSG_SUMMONING, ProtocolIds.MSG_SUMMONED,
+                 ProtocolIds.MSG_SPSUMMONING, ProtocolIds.MSG_SPSUMMONED,
+                 ProtocolIds.MSG_FLIPSUMMONING, ProtocolIds.MSG_FLIPSUMMONED -> 9;
+            case ProtocolIds.MSG_CHAINING -> 17;
+            case ProtocolIds.MSG_CHAINED, ProtocolIds.MSG_CHAIN_SOLVING, ProtocolIds.MSG_CHAIN_SOLVED -> 3;
+            case ProtocolIds.MSG_CARD_SELECTED, ProtocolIds.MSG_RANDOM_SELECTED -> 3 + 4 * u(b, off + 2);
+            case ProtocolIds.MSG_BECOME_TARGET -> 2 + 4 * u(b, off + 1);
+            case ProtocolIds.MSG_DRAW -> 3 + 4 * u(b, off + 2);
+            case ProtocolIds.MSG_DAMAGE, ProtocolIds.MSG_RECOVER,
+                 ProtocolIds.MSG_LPUPDATE, ProtocolIds.MSG_PAY_LPCOST -> 6;
+            case ProtocolIds.MSG_EQUIP, ProtocolIds.MSG_UNEQUIP,
+                 ProtocolIds.MSG_CARD_TARGET, ProtocolIds.MSG_CANCEL_TARGET -> 9;
+            case ProtocolIds.MSG_ADD_COUNTER, ProtocolIds.MSG_REMOVE_COUNTER -> 10;
+            case ProtocolIds.MSG_ATTACK -> 9;
+            case ProtocolIds.MSG_BATTLE -> 27;      // 26 字节 payload，无目标时后半段全 0
+            case ProtocolIds.MSG_ATTACK_DISABLED -> 5;
+            case ProtocolIds.MSG_MISSED_EFFECT -> 8;
+            case ProtocolIds.MSG_TOSS_COIN, ProtocolIds.MSG_TOSS_DICE -> n < 3 ? -1 : 3 + u(b, off + 2);
+            case ProtocolIds.MSG_ROCK_PAPER_SCISSORS, 133 -> 2;      // 133 = HAND_RES（无常量）
+            case ProtocolIds.MSG_ANNOUNCE_RACE, ProtocolIds.MSG_ANNOUNCE_ATTRIB -> 6;
+            case ProtocolIds.MSG_ANNOUNCE_CARD -> n >= 3 ? 3 + 4 * u(b, off + 2) : 5;      // 候选为空时仅 5 字节
+            case ProtocolIds.MSG_ANNOUNCE_NUMBER -> 3 + 4 * u(b, off + 2);
+            case ProtocolIds.MSG_CARD_HINT -> 8;
+            case ProtocolIds.MSG_AI_NAME -> 2 + 4 * u(b, off + 1);
+            case ProtocolIds.MSG_SHOW_HINT, ProtocolIds.MSG_PLAYER_HINT -> 5;
+            case ProtocolIds.MSG_MATCH_KILL -> 5;
+            default -> -1;       // 6/7/161/162/180 等未建模类型：整帧交付
         };
     }
 

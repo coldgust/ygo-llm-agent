@@ -53,14 +53,6 @@
     font-size: 18px;
     margin: 0;
   }
-  .badge {
-    font-size: 11px;
-    color: #7aa2f7;
-    border: 1px solid #2a3245;
-    border-radius: 4px;
-    padding: 2px 6px;
-    margin-left: 6px;
-  }
   nav {
     display: flex;
     gap: 6px;
