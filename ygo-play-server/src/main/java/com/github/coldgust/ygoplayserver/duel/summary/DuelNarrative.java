@@ -1,5 +1,6 @@
 package com.github.coldgust.ygoplayserver.duel.summary;
 
+import com.github.coldgust.ygoagent.decision.planexec.Texts;
 import com.github.coldgust.ygoduellog.model.DecisionEpisode;
 import com.github.coldgust.ygoduellog.model.DuelRecord;
 import com.github.coldgust.ygoplay.DuelRunResult;
@@ -113,10 +114,10 @@ public final class DuelNarrative {
 
         if (plan != null) {
             if (!plan.goal().isBlank()) {
-                sb.append("计划目标：").append(clip(plan.goal(), 200)).append('\n');
+                sb.append("计划目标：").append(Texts.flattenClip(plan.goal(), 200)).append('\n');
             }
             if (!plan.thinking().isBlank()) {
-                sb.append("计划思路：").append(clip(plan.thinking(), 300)).append('\n');
+                sb.append("计划思路：").append(Texts.flattenClip(plan.thinking(), 300)).append('\n');
             }
         }
         if (actions.isEmpty()) {
@@ -142,7 +143,7 @@ public final class DuelNarrative {
                 sb.append("（兜底）");
             }
             if (!action.rationale().isBlank()) {
-                sb.append(" ｜ 理由：").append(clip(action.rationale(), 160));
+                sb.append(" ｜ 理由：").append(Texts.flattenClip(action.rationale(), 160));
             }
             sb.append('\n');
             written++;
@@ -193,10 +194,5 @@ public final class DuelNarrative {
 
     private void line(String key, String value) {
         facts.append(key).append(": ").append(value).append('\n');
-    }
-
-    private static String clip(String text, int limit) {
-        String flat = text == null ? "" : text.replaceAll("\\s+", " ").trim();
-        return flat.length() <= limit ? flat : flat.substring(0, limit) + "…";
     }
 }

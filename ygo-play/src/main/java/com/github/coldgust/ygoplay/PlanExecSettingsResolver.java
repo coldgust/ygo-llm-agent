@@ -1,6 +1,7 @@
 package com.github.coldgust.ygoplay;
 
 import com.github.coldgust.ygoagent.decision.planexec.PlannerSettings;
+import com.github.coldgust.ygoagent.decision.planexec.Texts;
 import com.github.coldgust.ygoagent.decision.planexec.llm.LlmTuning;
 
 import java.nio.file.Path;
@@ -22,9 +23,9 @@ public final class PlanExecSettingsResolver {
         if (apiKey == null || apiKey.isBlank()) {
             return Optional.empty();
         }
-        String baseUrl = firstNonBlank(env.get("LLM_BASE_URL"), "https://api.deepseek.com");
-        String model = firstNonBlank(env.get("PLANNER_MODEL"), env.get("LLM_MODEL"), "deepseek-chat");
-        String cardRag = firstNonBlank(env.get("CARD_RAG_PATH"), "data/card_rag/cards.jsonl");
+        String baseUrl = Texts.firstNonBlank(env.get("LLM_BASE_URL"), "https://api.deepseek.com");
+        String model = Texts.firstNonBlank(env.get("PLANNER_MODEL"), env.get("LLM_MODEL"), "deepseek-chat");
+        String cardRag = Texts.firstNonBlank(env.get("CARD_RAG_PATH"), "data/card_rag/cards.jsonl");
         PlannerSettings defaults = PlannerSettings.defaults(Path.of(cardRag), baseUrl, apiKey, model);
         return Optional.of(new PlannerSettings(
                 true,
@@ -72,15 +73,6 @@ public final class PlanExecSettingsResolver {
         } catch (NumberFormatException e) {
             return fallback;
         }
-    }
-
-    private static String firstNonBlank(String... values) {
-        for (String value : values) {
-            if (value != null && !value.isBlank()) {
-                return value;
-            }
-        }
-        return null;
     }
 
     private PlanExecSettingsResolver() {

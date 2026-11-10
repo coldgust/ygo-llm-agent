@@ -79,10 +79,12 @@ form.controls button.go:disabled {
   margin-right: 6px;
   font-size: 11px;
 }
+.badge.ONLY_CHOICE { color: #9ece6a; }
+.badge.PLAN_STEP { color: #7aa2f7; }
+.badge.PLAN_BRANCH { color: #bb9af7; }
+.badge.LLM_CALL { color: #ff9e64; }
+/* 旧名兜底：levelBadge 对 connected 等未分类事件返回 REFLEX 类 */
 .badge.REFLEX { color: #9ece6a; }
-.badge.PLAN_EXACT { color: #7aa2f7; }
-.badge.PLAN_SIMILAR { color: #bb9af7; }
-.badge.LLM_ONESHOT { color: #ff9e64; }
 .badge.TACTICAL { color: #e0af68; }
 .badge.FALLBACK { color: #f7768e; }
 .badge.COMBO { color: #73daca; }

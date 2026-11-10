@@ -173,8 +173,4 @@ public final class BattlefieldReporter implements DuelListener {
         file.println(line);
         file.flush();
     }
-
-    public boolean hasState() {
-        return last != null;
-    }
 }

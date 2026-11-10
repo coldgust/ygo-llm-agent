@@ -41,7 +41,7 @@ public final class GroundingEngine {
             return flagIntent(point, step.alternatives().isEmpty() ? "" : step.alternatives().getFirst().verb());
         }
         CandidateId id = result.candidate();
-        return point.candidate(id).flatMap(c -> CandidateIntentsCompat.toIntent(point, c));
+        return point.candidate(id).flatMap(c -> CandidateIntents.toIntent(point, c));
     }
 
     /**
@@ -119,13 +119,6 @@ public final class GroundingEngine {
             case "end_battle" -> Optional.of(new ChoiceIntent.EndBattlePhase());
             default -> Optional.empty();
         };
-    }
-
-    /** 对 {@link PlanGrounder} 的访问桥（其 matches 为私有；此处复制其语义并保持同步）。 */
-    private static final class CandidateIntentsCompat {
-        static Optional<ChoiceIntent> toIntent(DecisionPoint point, Candidate candidate) {
-            return CandidateIntents.toIntent(point, candidate);
-        }
     }
 
     public GroundingEngine() {

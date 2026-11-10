@@ -1,5 +1,5 @@
 -- 由 docker-entrypoint-initdb.d 在首次初始化时执行
---   ygo     : 决策服务业务表（match / decision / cards）
+--   ygo     : 业务表（card 卡面事实 / combo_record 实战连招录入）
 --   ygo_rag : LightRAG 的 KV / 向量 / 文档状态表
 
 \set ON_ERROR_STOP on

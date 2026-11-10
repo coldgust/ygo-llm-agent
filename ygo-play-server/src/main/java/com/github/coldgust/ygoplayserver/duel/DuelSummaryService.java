@@ -1,5 +1,6 @@
 package com.github.coldgust.ygoplayserver.duel;
 
+import com.github.coldgust.ygoagent.decision.planexec.Texts;
 import com.github.coldgust.ygoagent.decision.planexec.llm.ChatClient;
 import com.github.coldgust.ygoagent.decision.planexec.llm.OpenAiCompatChat;
 import com.github.coldgust.ygoduellog.ingest.JsonlDuelParser;
@@ -190,7 +191,7 @@ public class DuelSummaryService {
             perTurn++;
             sb.append("- T").append(action.turn())
                     .append(" [").append(action.level()).append("] ")
-                    .append(clip(action.submitted(), 70)).append('\n');
+                    .append(Texts.flattenClip(action.submitted(), 70)).append('\n');
         }
     }
 
@@ -214,7 +215,7 @@ public class DuelSummaryService {
             perTurn++;
             sb.append("- T").append(episode.turn()).append(' ').append(episode.phase())
                     .append(' ').append(shortType(episode.requestType())).append(": ")
-                    .append(clip(episode.chosen(), 60)).append('\n');
+                    .append(Texts.flattenClip(episode.chosen(), 60)).append('\n');
         }
     }
 
@@ -284,19 +285,11 @@ public class DuelSummaryService {
                     HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
                 throw new IllegalStateException("LightRAG HTTP " + response.statusCode()
-                        + ": " + clip(response.body(), 200));
+                        + ": " + Texts.flattenClip(response.body(), 200));
             }
         } catch (Exception e) {
             throw new IllegalStateException("写 LightRAG 失败: " + e.getMessage(), e);
         }
-    }
-
-    private static String clip(String text, int limit) {
-        if (text == null) {
-            return "";
-        }
-        String flat = text.replaceAll("\\s+", " ").trim();
-        return flat.length() <= limit ? flat : flat.substring(0, limit) + "…";
     }
 
     private static int intOf(Environment environment, String key, int fallback) {

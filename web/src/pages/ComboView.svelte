@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { api, type DuelEvent } from '../lib/api'
+  import { STATUS_LABELS, TERMINAL_STATUSES } from '../lib/labels'
 
   let host = $state('127.0.0.1')
   let port = $state(7911)
@@ -34,9 +35,6 @@
     }
   })
 
-  /** 终态：无论录入成功与否，都解除按钮禁用，让用户能重开一局。 */
-  const TERMINAL = ['FINISHED', 'STOPPED', 'FAILED']
-
   let pollTimer: ReturnType<typeof setInterval> | null = null
 
   function stopPoll() {
@@ -54,7 +52,7 @@
     stopPoll()
   }
 
-  function showRecorded(e: { count: number; archetype?: string; recordId?: number; summary?: string | null; summarySource?: string; stepPreviews?: string[] }) {
+  function showRecorded(e: Pick<DuelEvent, 'count' | 'archetype' | 'recordId' | 'summary' | 'summarySource' | 'stepPreviews'>) {
     recorded = { summary: String(e.summary ?? ''), steps: e.stepPreviews ?? [] }
     recordedMeta = {
       count: Number(e.count ?? 0),
@@ -78,7 +76,7 @@
       }
       return
     }
-    if (e.kind === 'DUEL_STATUS' && TERMINAL.includes(String(e.status)) && !recorded) {
+    if (e.kind === 'DUEL_STATUS' && TERMINAL_STATUSES.includes(String(e.status)) && !recorded) {
       // 正常成功的场合 COMBO_RECORDED 先到、SSE 已关；走到这里说明没录成（失败/手动停止）。
       // 但 SSE 可能丢过事件：先查一次库，真的没有才报"未完成录入"。
       fetchRecordFromServer()
@@ -104,7 +102,7 @@
     if (!duelId) return
     try {
       const d = await api.getDuel(duelId)
-      if (TERMINAL.includes(d.status) && running) {
+      if (TERMINAL_STATUSES.includes(d.status) && running) {
         stopPoll()
         if (!recorded) await fetchRecordFromServer()
         running = false
@@ -178,12 +176,6 @@
       stopSse = null
       stopPoll()
     }
-  }
-
-  /** 对局状态、规划器子类型的展示词（原始枚举值不上屏）。 */
-  const STATUS_LABELS: Record<string, string> = {
-    STARTING: '准备中', RUNNING: '进行中', STOPPING: '停止中',
-    STOPPED: '已停止', FINISHED: '已结束', FAILED: '异常结束',
   }
 
   function summarize(e: DuelEvent): string {

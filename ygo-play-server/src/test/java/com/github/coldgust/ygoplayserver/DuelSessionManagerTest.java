@@ -60,7 +60,7 @@ class DuelSessionManagerTest {
     @Test
     void finishesWithStats() throws Exception {
         DuelSessionManager manager = new DuelSessionManager(props(), fakeFactory((spec, ref, stop) ->
-                new DuelRunResult(new RunStats(10, 0), null, spec.tracePath(), spec.duelLogPath())));
+                new DuelRunResult(new RunStats(10, 0), null)));
 
         DuelView view = manager.start(request());
         DuelView done = awaitStatus(manager, view.id(), DuelStatus.FINISHED);
@@ -74,7 +74,7 @@ class DuelSessionManagerTest {
         CountDownLatch release = new CountDownLatch(1);
         DuelSessionManager manager = new DuelSessionManager(props(), fakeFactory((spec, ref, stop) -> {
             release.await(2, TimeUnit.SECONDS);
-            return new DuelRunResult(new RunStats(0, 0), null, spec.tracePath(), spec.duelLogPath());
+            return new DuelRunResult(new RunStats(0, 0), null);
         }));
 
         manager.start(request());
@@ -100,7 +100,7 @@ class DuelSessionManagerTest {
     @Test
     void askPolicyWaitsForUserDecision() throws Exception {
         DuelSessionManager manager = new DuelSessionManager(props(), fakeFactory((spec, ref, stop) ->
-                new DuelRunResult(new RunStats(3, 0), null, spec.tracePath(), spec.duelLogPath())),
+                new DuelRunResult(new RunStats(3, 0), null)),
                 new DuelEventHub(),
                 new DuelSummaryService(new MockEnvironment()));
 
@@ -119,7 +119,7 @@ class DuelSessionManagerTest {
     @Test
     void askPolicyDeclineKeepsPendingFromBeingStored() throws Exception {
         DuelSessionManager manager = new DuelSessionManager(props(), fakeFactory((spec, ref, stop) ->
-                new DuelRunResult(new RunStats(1, 0), null, spec.tracePath(), spec.duelLogPath())),
+                new DuelRunResult(new RunStats(1, 0), null)),
                 new DuelEventHub(),
                 new DuelSummaryService(new MockEnvironment()));
 
@@ -132,7 +132,7 @@ class DuelSessionManagerTest {
     @Test
     void neverPolicyNeverMarksPending() throws Exception {
         DuelSessionManager manager = new DuelSessionManager(props(), fakeFactory((spec, ref, stop) ->
-                new DuelRunResult(new RunStats(1, 0), null, spec.tracePath(), spec.duelLogPath())),
+                new DuelRunResult(new RunStats(1, 0), null)),
                 new DuelEventHub(),
                 new DuelSummaryService(new MockEnvironment()));
 
