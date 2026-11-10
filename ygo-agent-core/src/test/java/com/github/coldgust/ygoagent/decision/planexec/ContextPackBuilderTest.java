@@ -212,8 +212,6 @@ class ContextPackBuilderTest {
 
     @Test
     void oneshotPackCarriesCurrentPlanWithCursorAndBranches() {
-        // 回归：④ one-shot 以前只看到局面，看不到规划器已经想好的主线，
-        // 于是经常选出一个让计划失去连续性的动作（例如计划要通召，它先结束回合）。
         DuelState state = TestDuels.state(2, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
         var point = TestDuels.mainPhasePoint(state,
                 List.of(TestDuels.cardChoice(201, TestDuels.WIDOW_ANCHOR)), List.of());
@@ -276,7 +274,6 @@ class ContextPackBuilderTest {
         assertTrue(pack.contains("[卡组思路]"), "one-shot 也要看到:\n" + pack);
         assertTrue(pack.indexOf("[卡组思路]") < pack.indexOf("[局面]"), "思路应在局面之前:\n" + pack);
 
-        // 没填就不该凭空出现这一段
         assertFalse(builder.anchorPack(state).contains("[卡组思路]"));
         assertFalse(new ContextPackBuilder(facts, DuelMathService.instance(), "   ")
                 .anchorPack(state).contains("[卡组思路]"), "空白串等同于没填");
@@ -301,8 +298,6 @@ class ContextPackBuilderTest {
 
     @Test
     void ruleDigestSeparatesActivationFromResolution() {
-        // 回归：实机把"我方发动了灰流丽"当成"对手的幕帘已被无效"，结果被对方后发的指名者反制，
-        // 下一手还拿"幕帘已无效"去解释"对方场上已经有黑魔术师"的反证。
         String digest = ContextPackBuilder.RULE_DIGEST;
 
         assertTrue(digest.contains("发动 → 结算 → 生效"), "要把三段态写清:\n" + digest);
@@ -314,7 +309,6 @@ class ContextPackBuilderTest {
     @Test
     void endTurnComesWithAPerCategoryAuditOfWhatIsStillAvailable() {
         // 用户的判断标准：结束回合前，摆着的每个可选动作都该被评估过并主动放弃。
-        // 旧行为是"我觉得没收益就结束"，连"盖放魔陷"这一行有 3 个候选都没提。
         DuelState state = TestDuels.state(3, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
         ChoiceRequest request = new ChoiceRequest.MainPhaseRequest(
                 List.of(TestDuels.cardChoice(1, TestDuels.HORNET)),
@@ -337,9 +331,6 @@ class ContextPackBuilderTest {
 
     @Test
     void endTurnOptionSaysHowManyQuickPlaysAreStillUnset() {
-        // 实机：计划里明写"把抓锚与双纽闪门盖到魔陷区，结束回合"，主阶段却直接选了"结束回合"，
-        // 理由只谈特召与格子。盖放没有即时收益，"不要为用而用"又把它推向结束——
-        // 所以把成本/收益印在选项上：这一行是它做选择时唯一一定会读到的地方。
         long quick = 98338152L;
         CardFacts withQuick = new CardFacts() {
             @Override
@@ -375,8 +366,6 @@ class ContextPackBuilderTest {
 
     @Test
     void handSpellsAreCalledOutAsUnusableInsteadOfLeftImplicit() {
-        // 实机反复三次栽在同一个推论上：手里的〔速攻魔法〕在对手回合用不了。
-        // 这是规则事实，不该指望模型自己从卡面推——直接点名。
         DuelState myTurn = TestDuels.state(3, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
         String attack = builder.anchorPack(myTurn);
         assertTrue(attack.contains("[本回合可用性]"), "自己回合也要点名手牌魔陷的可用性:\n" + attack);
@@ -390,8 +379,6 @@ class ContextPackBuilderTest {
 
     @Test
     void ruleDigestStatesTheTimingAndEffectFactsModelsGetWrong() {
-        // 回归：模型曾把"手牌里的速攻魔法"当成对手回合能用、把"效果无效"当成"压打点"，
-        // 这两条都在通用规则里，必须在速查中有明确结论（且不能写成"所有盖放的卡当回合都不能发动"）。
         String digest = ContextPackBuilder.RULE_DIGEST;
 
         assertTrue(digest.contains("盖的当回合不能发动") && digest.contains("只适用于速攻魔法和陷阱"),
@@ -436,8 +423,6 @@ class ContextPackBuilderTest {
 
     @Test
     void spellTrapCandidatesCarryTheirCardTypeButMonstersDoNot() {
-        // 实战踩过：模型把「永续魔法」盖下去当成"对手回合的阻抗"，还写进计划第 1 步。
-        // 决策上下文里必须能看出卡种，否则它只能凭印象判断这张卡盖了能不能用。
         DuelState state = TestDuels.state(2, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
         ChoiceRequest request = new ChoiceRequest.MainPhaseRequest(
                 List.of(TestDuels.cardChoice(1, TestDuels.HORNET)),
@@ -519,8 +504,6 @@ class ContextPackBuilderTest {
 
     @Test
     void phaseActionsCarryRealCandidateIds() {
-        // 实战事故：主阶段的"结束回合"没有编号，模型只能用 C0 表达 → 判越界 → 降级经验规则
-        // → 把灰流丽通常召唤上场、连盖两张泡影。阶段动作必须有真编号。
         DuelState state = TestDuels.state(2, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
         var point = TestDuels.mainPhasePoint(state,
                 List.of(TestDuels.cardChoice(201, TestDuels.HORNET)), List.of());
@@ -542,8 +525,6 @@ class ContextPackBuilderTest {
 
     @Test
     void noPseudoCandidateC0SurvivesInAnyRequest() {
-        // C0 已经不存在的意义：它不在候选集里 → 模型填了就是越界 → 整条决策降级。
-        // 现在弃权/取消都是真候选，任何请求的渲染里都不该再出现 C0。
         DuelState state = TestDuels.state(2, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
         var main = TestDuels.mainPhasePoint(state,
                 List.of(TestDuels.cardChoice(201, TestDuels.HORNET)), List.of());
@@ -562,9 +543,6 @@ class ContextPackBuilderTest {
 
     @Test
     void chainLinkListsEveryEffectClauseNotJustTheFirstOne() {
-        // 实机事故（seq=39）：对方「王之仆人-黑魔术师」发动 ③"对方场上的魔法·陷阱卡全部破坏"。
-        // 旧渲染从「①：」起只留前 120 字，模型只看到 ①②（当作黑魔术师 / 手卡特召），
-        // 看不到任何"破坏"，于是判"弃权保留两张速攻与机关"——而那一环结算后正是把这三张全部破坏。
         DuelState state = TestDuels.state(2, false, List.of(), List.of(),
                 List.of(TestDuels.instance(1, TestDuels.SERVANT,
                         ZoneRef.mainMonster(PlayerSide.OPPONENT, 0))),
@@ -590,8 +568,6 @@ class ContextPackBuilderTest {
 
     @Test
     void chainLinkTellsWhichCardIsTheTarget() {
-        // 实机：黑魔导阵②「以对方场上1张卡为对象，那张卡除外」——上下文只有效果原文，
-        // 模型自己补成"要除外我方燎里"，实际对象是我方后场的速攻魔法，于是选错了应对牌。
         long targeter = 47222537L;
         CardFacts targetingFacts = new CardFacts() {
             @Override
@@ -640,9 +616,6 @@ class ContextPackBuilderTest {
 
     @Test
     void chainBlockKeepsEveryLinkMarksNegatedAndShowsResolveOrder() {
-        // 实机事故：我方灰流丽被对手后发的指名者无效后，链上那一环被直接删掉，
-        // 模型看到一条"少了一环"的链，于是断言"幕帘已被灰流丽无效"——而幕帘其实照常结算了。
-        // 现在：链必须完整（被无效的环节留着并标记）+ 明确结算次序。
         DuelState state = TestDuels.state(2, false, List.of(), List.of(),
                 List.of(TestDuels.instance(1, TestDuels.SERVANT,
                         ZoneRef.mainMonster(PlayerSide.OPPONENT, 0))),
@@ -678,10 +651,6 @@ class ContextPackBuilderTest {
 
     @Test
     void subordinateSelectionKnowsWhichEffectItServesAndWhichTargetsAreImmune() {
-        // 实机事故（seq=58/67）：零露②先选零衣+露世特召，再选场上 1 张卡破坏。
-        // 到第二个决策点，上下文原来只有"选 1–1 张"，模型把必选的破坏目标当成
-        // "要不要做某个动作"（理由写"无净收益、弃权"），却把『不会被效果破坏』的
-        // 超魔导龙骑士交了上去 —— 整次除去白给。
         DuelState state = TestDuels.state(3, true, List.of(), List.of(),
                 List.of(new CardInstance(1, TestDuels.known(TestDuels.DRAGOON),
                         ZoneRef.mainMonster(PlayerSide.OPPONENT, 4), Position.FACE_UP_ATTACK, Map.of(), List.of())),
@@ -710,9 +679,6 @@ class ContextPackBuilderTest {
 
     @Test
     void firstTurnStillOffersEndTurnEvenWithoutBattlePhase() {
-        // 实机事故：先手第 1 回合不能进战阶（canEnterBattlePhase=false），而"结束回合"曾经被绑在
-        // canEnterBattlePhase 上 → 候选里只剩"通召/盖放"，模型想空过却没有编号可用，
-        // 只好把票投给唯一的 C1（通召灰流丽），自述却写着"改选弃权空过"。
         DuelState state = TestDuels.state(1, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
         ChoiceRequest request = new ChoiceRequest.MainPhaseRequest(
                 List.of(TestDuels.cardChoice(1, TestDuels.HORNET)),
@@ -738,10 +704,6 @@ class ContextPackBuilderTest {
 
     @Test
     void effectYesNoNamesTheClauseBeingActivatedNotJustTheCard() {
-        // 实机事故（seq=24）：零衣在墓地，引擎问的是 ②（自身从墓地特召）；
-        // 上下文只给"是否发动：闪刀姬-零衣(26077387) [效果#417238193]"，模型按 ① 判断
-        // （"①需解放自身，但零衣在墓地不在场，无法作为解放 cost"），于是不发动，
-        // 白丢一次免费的资源回收，理由是"保留资源"。
         DuelState state = TestDuels.state(2, false, List.of(), List.of(), List.of(), List.of(), 7000, 8000);
         ChoiceRequest.CardChoice ray = new ChoiceRequest.CardChoice(1, TestDuels.known(TestDuels.RAY),
                 ZoneRef.mainMonster(PlayerSide.SELF, 0));
@@ -758,8 +720,6 @@ class ContextPackBuilderTest {
         assertFalse(header.contains("①：自己·对方回合，把这张卡解放"),
                 "不能把 ① 说成本次要发动的效果（模型会据此判「解放不了」从而不发动）:" + header);
         assertTrue(section.contains("C2 不发动") || section.contains("不发动"), section);
-        // 同一个事故的第二次复现：即使标明了 ②，模型仍然用卡面条件去验（"①②均不满足，无法发动"）。
-        // 所以请求本身必须写明"引擎只在可以发动时才问"，把问题定性成"要不要发"。
         assertTrue(section.contains("要不要发") && section.contains("能不能发"),
                 "要明说这是「要不要发」，不是「能不能发」:\n" + section);
         assertTrue(section.contains("引擎只在"), "要点明请求出现即代表条件成立:\n" + section);
@@ -767,10 +727,6 @@ class ContextPackBuilderTest {
 
     @Test
     void effectYesNoWithHintIdDoesNotPassOffTheFirstClauseAsTheAnswer() {
-        // 实机事故（最新一局 seq=10）：奇亚诺丝①特召成功后，引擎问的是 ②（从卡组特召露世）。
-        // "是否发动"（MSG_SELECT_EFFECTYN）的 description 是提示文 id（0/221），不是"卡号<<4|序号"，
-        // 旧实现退回"列出全部条款"，却仍冠以"这次要发动的是："，模型读成 ①，
-        // 答"①已用过、再丢魔法卡无净收益 → 不发动"，白丢一次免费的露世特召。
         DuelState state = TestDuels.state(1, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
         var choice = new ChoiceRequest.CardChoice(1, TestDuels.known(TestDuels.CYANOS),
                 ZoneRef.mainMonster(PlayerSide.SELF, 0));

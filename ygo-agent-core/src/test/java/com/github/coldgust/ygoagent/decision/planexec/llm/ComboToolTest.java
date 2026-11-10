@@ -8,9 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * find_combos：对手主题 / 关键卡牌检索 PG 实战录入，一次最多 3 条。
- */
 class ComboToolTest {
 
     private static RecordedComboSource.Entry entry(long id, String archetype, String keyCards) {

@@ -11,9 +11,6 @@
 
   let duelId = $state('')
   let events: DuelEvent[] = $state([])
-  // running 只控制「停止」按钮与状态语义，**不禁用开始按钮**：
-  // 按钮被独占禁用是"永远卡死"的根源——任何一条解锁路径失效（SSE 断、事件丢、bundle 陈旧），
-  // 用户就被锁死且毫无办法。重复点击交给服务端并发上限（409）明确报错，本局结果不受影响。
   let running = $state(false)
   let submitting = $state(false) // 仅 startDuel POST 在途的秒级窗口
   let recorded: { summary: string; steps: string[] } | null = $state(null)
@@ -57,7 +54,6 @@
     stopPoll()
   }
 
-  /** 渲染一条录入结果（SSE 与 HTTP 轮询共用）。 */
   function showRecorded(e: { count: number; archetype?: string; recordId?: number; summary?: string | null; summarySource?: string; stepPreviews?: string[] }) {
     recorded = { summary: String(e.summary ?? ''), steps: e.stepPreviews ?? [] }
     recordedMeta = {

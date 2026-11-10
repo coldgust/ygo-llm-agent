@@ -24,13 +24,11 @@ public enum Phase {
     MAIN_PHASE_2,
     END_PHASE;
 
-    /** 是否处于 Battle Phase 框架内。 */
     public boolean inBattlePhase() {
         return this == BATTLE_START_STEP || this == BATTLE_STEP || this == DAMAGE_STEP
                 || this == DAMAGE_CALCULATION || this == BATTLE_END_STEP;
     }
 
-    /** 是否为主要阶段（Main Phase 1 / 2）。 */
     public boolean isMainPhase() {
         return this == MAIN_PHASE_1 || this == MAIN_PHASE_2;
     }

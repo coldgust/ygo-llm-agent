@@ -1,4 +1,3 @@
-# 常用命令。
 JAVA_HOME := $(shell /usr/libexec/java_home -v 25 2>/dev/null)
 MVN := JAVA_HOME=$(JAVA_HOME) ./mvnw -B
 

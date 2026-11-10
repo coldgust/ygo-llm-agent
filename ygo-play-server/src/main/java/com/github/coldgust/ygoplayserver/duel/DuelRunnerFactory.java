@@ -21,7 +21,6 @@ import org.springframework.stereotype.Component;
 import java.util.Map;
 import java.nio.file.Path;
 
-/** 创建执行器；v6 Planner–Executor 由进程环境解析（与 CLI 共用同一套 env 键）。 */
 @Component
 public class DuelRunnerFactory {
 
@@ -31,10 +30,8 @@ public class DuelRunnerFactory {
     private final DuelEventHub eventHub;
     private final ObjectProvider<JdbcClient> jdbc;
     private final ObjectProvider<ComboRecordService> comboRecords;
-    /** 实战录入数据源：首次成功探测后缓存；null = 表还没建/还没数据，逐局重试。 */
     private volatile PgRecordedComboSource recordedSource;
 
-    /** 测试/轻量场景：不接 PG，查卡回退本地 jsonl。 */
     public DuelRunnerFactory(DuelEventHub eventHub) {
         this(eventHub, null, null);
     }

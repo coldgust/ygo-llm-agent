@@ -88,8 +88,6 @@ class SelectionMapperTest {
 
     @Test
     void activateOnChainRequestIsEncodedAsRespondNotDecline() {
-        // 回归：实机里 24 次连锁全部发成 Decline，而 trace 写着 Activate。
-        // 原因是 Activate 要求主阶段请求 → 抛异常 → 上层兜成"第一个合法选项"（弃权）。
         var card = TestFixtures.handCard(1, 123);
         var effect = new ChoiceRequest.EffectChoice(TestFixtures.choice(card), 0);
         var option = new ChoiceRequest.ChainRequest.ChainOption(effect, false);

@@ -10,7 +10,6 @@ import com.github.coldgust.ygoprosdk.protocol.ByteReader;
  */
 public final class QueryBlockDecoder {
 
-    /** 解码出的一张卡的关键信息。 */
     public record CardBlock(int length, int flags, long code, Integer position) {
     }
 

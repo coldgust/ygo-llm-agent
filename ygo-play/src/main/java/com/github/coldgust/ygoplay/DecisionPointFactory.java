@@ -11,7 +11,6 @@ import com.github.coldgust.ygoagent.decision.model.RequestKind;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
-/** ChoiceRequest + DuelState → DecisionPoint（候选编号 + 指纹）。 */
 public final class DecisionPointFactory {
 
     private final AtomicLong seq = new AtomicLong();

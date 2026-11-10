@@ -18,15 +18,6 @@ public interface ComboSource {
         return point -> Optional.empty();
     }
 
-    /**
-     * 命中的连招建议。
-     *
-     * @param comboId    连招 id
-     * @param next       当前决策点优先执行的首步
-     * @param steps      完整步骤（后续决策点可继续使用）
-     * @param payoff     收益描述
-     * @param confidence 置信度
-     */
     record ComboHint(String comboId, ComboStep next, List<ComboStep> steps,
                      String payoff, double confidence) {
 

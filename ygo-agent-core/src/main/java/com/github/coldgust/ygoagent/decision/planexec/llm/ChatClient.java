@@ -24,40 +24,17 @@ public interface ChatClient {
         }
     }
 
-    /**
-     * @param reasoning 思考模式：{@code "off"} 关闭（最快、JSON 最稳）、{@code "low"} 轻度思考、
-     *                  {@code null} 交给服务端默认。推理型模型默认开着思考，会把 max_tokens
-     *                  全花在思维链上（实测 finish_reason=length、正文为空），决策类调用必须显式关掉。
-     */
     record ChatOptions(double temperature, int maxTokens, boolean jsonMode, Duration timeout,
                        String reasoning) {
 
-        /**
-         * 带思考的规划档。实测 deepseek-flash 上"低强度思考"会把 4000 tokens 全烧在推理上
-         * （27.9s、finish_reason=length、正文为空），因此默认路径改用 {@link #fastPlan}；
-         * 换模型（支持 reasoning 且不烧穿额度）时可切回这里。
-         */
         public static ChatOptions planning(int maxTokens, Duration timeout) {
             return new ChatOptions(0.4, Math.max(maxTokens, 4_000), true, timeout, "low");
         }
 
-        /**
-         * 快档：关掉思考（~2s 出结果）。
-         * {@code LLM_REASONING_PLANNER=off} 时全部规划 checkpoint 走这里；未配置时
-         * checkpoint 统一走 {@link #deepPlan}，锚点也接受"首动作可能等不到计划"的代价换质量。
-         */
         public static ChatOptions fastPlan(int maxTokens, Duration timeout) {
             return new ChatOptions(0.3, Math.max(maxTokens, 1_200), true, timeout, "off");
         }
 
-        /**
-         * 深度规划档：带推理链（thinking=low），但必须给足 max_tokens——
-         * 实测 deepseek 把思维链也计入 max_tokens：给 4000 会 28s 后返回空正文，
-         * 给 8192 则 30s 返回 4089 tokens（其中正文 ~800 字）。
-         * 结论：这个档用于**全部规划器 checkpoint（锚点/增量修订/紧急重规划）**。
-         * 注意锚点在首动作的等待窗口里，low 档实测 7–8s+，窗口（默认 7s）经常等不到
-         * 计划——这是有意用质量换及时性；要旧行为就 {@code LLM_REASONING_PLANNER=off}。
-         */
         public static ChatOptions deepPlan(int maxTokens, Duration timeout) {
             return new ChatOptions(0.4, Math.max(maxTokens, 8_000), true, timeout, "low");
         }
@@ -83,17 +60,6 @@ public interface ChatClient {
             return new ChatOptions(temperature, maxTokens, jsonMode, timeout, null);
         }
 
-        /**
-         * 用配置项覆盖思考强度（{@code LLM_REASONING_PLANNER} / {@code LLM_REASONING_DECISION}）。
-         *
-         * <p>两点注意：
-         * <ul>
-         *   <li>override 为 null/空白时原样返回——配置不写就等于"沿用调用档位的默认值"；</li>
-         *   <li>一旦开启思考（不是 {@code "off"}），把 max_tokens 抬到至少 4000：
-         *       deepseek 把思维链算进 max_tokens，给少了会 finish_reason=length、正文为空。
-         *       这是实测过的坑（{@link #planning} 的注释里也记了同一条）。</li>
-         * </ul>
-         */
         public ChatOptions withReasoning(String override) {
             String level = override == null ? "" : override.trim();
             if (level.isEmpty() || level.equalsIgnoreCase(reasoning)) {
@@ -104,12 +70,8 @@ public interface ChatClient {
         }
     }
 
-    /**
-     * 发起一次补全；失败抛 {@link ChatException}。
-     */
     String complete(List<Msg> messages, ChatOptions options);
 
-    /* ---------- 工具调用（OpenAI tools / function calling） ---------- */
 
     /**
      * 提供给模型的工具（OpenAI tools 规范）。
@@ -125,7 +87,6 @@ public interface ChatClient {
     record ToolCall(String id, String name, String arguments) {
     }
 
-    /** 工具执行器：拿到调用，返回给模型看的文本结果。 */
     @FunctionalInterface
     interface ToolHandler {
         String execute(ToolCall call);
@@ -141,7 +102,6 @@ public interface ChatClient {
         return complete(messages, options);
     }
 
-    /** 调用失败（网络/超时/非 2xx/响应不可解析）。 */
     class ChatException extends RuntimeException {
         public ChatException(String message) {
             super(message);

@@ -25,7 +25,6 @@ import java.util.List;
 import java.nio.file.Path;
 import java.util.Map;
 
-/** 对局 HTTP 接口：启动 / 查询 / 停止。 */
 @RestController
 @RequestMapping("/api/duels")
 public class DuelController {
@@ -35,7 +34,6 @@ public class DuelController {
     private final ObjectProvider<JdbcClient> jdbc;
     private final ObjectProvider<ComboRecordService> comboRecords;
 
-    /** 测试/轻量场景便利构造器。 */
     public DuelController(DuelService duels) {
         this(duels, new DuelEventHub(), null, null);
     }
@@ -50,7 +48,6 @@ public class DuelController {
         this.comboRecords = comboRecords;
     }
 
-    /** 实时决策/规划器/对局状态事件流（SSE）。对局终结后服务端主动 complete。 */
     @GetMapping(value = "/{id}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter events(@PathVariable String id) {
         duels.get(id); // 不存在则 404
@@ -63,7 +60,6 @@ public class DuelController {
         return duels.start(request);
     }
 
-    /** 前端"卡组主题"下拉：种子编译目录 ∪ PG 实战录入的主题（空 = 库里没有该主题的 combo）。 */
     @GetMapping("/archetypes")
     public List<String> archetypes() {
         return ComboCatalog.archetypes(jdbc == null ? null : jdbc.getIfAvailable());
@@ -84,16 +80,11 @@ public class DuelController {
         return duels.stop(id);
     }
 
-    /** 「结束后询问」模式下用户对入库的决定；body 为 {"store": true|false}。 */
     @PostMapping("/{id}/archive")
     public DuelView archive(@PathVariable String id, @RequestBody ArchiveDecision body) {
         return duels.archiveDecision(id, Boolean.TRUE.equals(body.store()));
     }
 
-    /**
-     * 某局对局的 combo 录入结果（HTTP 兜底：SSE 的 COMBO_RECORDED 没收到时轮询它）。
-     * 无记录返回 404，前端按"未完成录入"处理。
-     */
     @GetMapping("/{id}/combo")
     public Map<String, Object> comboRecord(@PathVariable String id) {
         DuelView view = duels.get(id);
@@ -107,7 +98,6 @@ public class DuelController {
                 .orElseThrow(() -> new DuelExceptions.NotFoundException("该对局没有 combo 录入记录"));
     }
 
-    /** 入库决定的请求体。store 缺省按 false（不入库）处理。 */
     public record ArchiveDecision(Boolean store) {
     }
 

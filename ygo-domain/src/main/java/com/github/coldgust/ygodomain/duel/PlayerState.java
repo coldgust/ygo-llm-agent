@@ -11,8 +11,6 @@ import java.util.List;
  *
  * @param side              相对视角
  * @param seat              绝对座位号（0 / 1；调试与回放用）
- * @param name              玩家名
- * @param lifePoints        当前 LP
  * @param hand              手牌（对方版本全部为未知卡；协议洗牌时会置零，顺序不可靠）
  * @param mainDeckCount     主卡组剩余张数
  * @param extraDeckCount    额外卡组剩余张数
@@ -49,12 +47,10 @@ public record PlayerState(
         return hand.stream().filter(c -> c.identity().isUnknown()).count();
     }
 
-    /** 查询手牌第 sequence 张。 */
     public CardInstance handAt(int sequence) {
         return hand.get(sequence);
     }
 
-    /** 该玩家是否拥有指定的区域格子。 */
     public boolean owns(ZoneRef zone) {
         return zone.owner() == side;
     }

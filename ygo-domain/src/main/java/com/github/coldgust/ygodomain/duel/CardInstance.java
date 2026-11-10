@@ -14,7 +14,6 @@ import java.util.Map;
  *
  * @param instanceId    实例标识（镜像内唯一，跨快照不稳定）
  * @param identity      卡身份（已知 / 未知）
- * @param zone          当前所在区域
  * @param position      表示形式；非场地区域为 null
  * @param counters      指示物（种类 → 数量）
  * @param xyzMaterials  Xyz Material 的实例标识列表（自底向上）

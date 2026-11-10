@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # 把 data/card_rag/cards.jsonl 导入 PostgreSQL 的 card 表（决策侧查卡走 PG）。
-#
 # 用法：./ygo-rag/scripts/ingest-cards-pg.sh [cards.jsonl]
 # 连接：默认 docker 容器 ygo-postgres / 库 ygo / 用户 ygo；
 #       宿主机有 psql 时用 PGHOST/PGPORT/PGUSER/PGPASSWORD，否则 docker exec。

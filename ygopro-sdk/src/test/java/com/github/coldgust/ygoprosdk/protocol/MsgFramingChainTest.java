@@ -11,10 +11,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 回归：{@code MSG_SELECT_CHAIN} 的分帧长度。
- *
- * <p>旧实现把选项数读成了 {@code player} 字段（off+1）：轮到我们（player=0）时被当成
- * 0 条选项，整段选项被切掉 → 解码器只能补占位项 → 所有连锁窗口都退化成"不响应"。
- * 实测后果：闪刀姬-零衣被黑魔导阵指定时，引擎给了它的效果，我们却答了弃权。
  */
 class MsgFramingChainTest {
 

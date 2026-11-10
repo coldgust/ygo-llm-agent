@@ -13,30 +13,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-/**
- * combo 录入的素材提取：从对局日志（JSONL）里切出用户回合的逐步操作。
- *
- * <p>用户先手（agent 强制后手）打完 combo、AI 回合自动认输，所以日志里
- * {@code turn == 1} 的全部状态事件就是这次录入：卡牌移动、阶段切换、效果发动、LP 变动。
- * 不做任何"连招挖掘"——原样记录，理解交给上游的 LLM 摘要。
- *
- * <p>每一步都必须带<b>自然语言描述</b>（{@link Step#desc()}，卡名经 {@link CardFacts} 解析），
- * 只有编号的记录没有价值：人看不懂，模型也只能瞎猜。
- */
 public final class ComboStepReader {
 
-    /** combo 录入固定记录用户回合；agent 强制后手，用户回合恒为第 1 回合。 */
     public static final int USER_TURN = 1;
 
-    /**
-     * 一条已描述化的操作。
-     *
-     * @param kind     事件类型（TURN_STARTED / PHASE_ENTERED / CARD_MOVED / EFFECT_ACTIVATED / LP_CHANGED）
-     * @param desc     自然语言描述（主字段：给人看、给 LLM 看、存库）
-     * @param passcode 涉及的卡（无则 0）
-     * @param from/to  移动起止区（原始格式 OPP:MAIN_MONSTER_ZONE#2，无则 null）
-     * @param player   "用户" / "AI"（按座位归属，可空）
-     */
     public record Step(long seq, int turn, String phase, String kind, String desc,
                        long passcode, String fromZone, String toZone, String position,
                        String player) {
@@ -44,10 +24,6 @@ public final class ComboStepReader {
 
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
-    /**
-     * @param duelLog 对局日志 JSONL
-     * @param facts   卡名解析（可空：解析不出时用"未知卡(编号)"）
-     */
     public static List<Step> readUserTurn(Path duelLog, CardFacts facts) throws IOException {
         List<String> lines = Files.readAllLines(duelLog, StandardCharsets.UTF_8);
         int agentSeat = -1;
@@ -127,7 +103,6 @@ public final class ComboStepReader {
         }
     }
 
-    /** 卡牌移动的描述：按"从哪到哪 + 表示形式"挑一个说人话的动词，不做效果猜测。 */
     private static String cardMoveDesc(JsonNode payload, CardFacts facts) {
         long passcode = payload.path("passcode").asLong();
         String from = textOrNull(payload, "fromZone");
@@ -190,7 +165,6 @@ public final class ComboStepReader {
         return name == null || name.isBlank() ? "未知卡(" + passcode + ")" : name;
     }
 
-    /** "OPP:MAIN_MONSTER_ZONE#2" → "怪兽区#2"；AI 自己的区加前缀。 */
     private static String zoneLabel(String raw) {
         String[] parts = raw.split(":", 2);
         String side = parts.length > 1 ? parts[0] : "";

@@ -53,7 +53,6 @@ final class DuelLogBridge implements DuelListener {
         this.decisionContextEnabled = decisionContextEnabled;
     }
 
-    /* ================= 状态流 ================= */
 
     @Override
     public void onStateUpdate(DuelState state) {
@@ -175,7 +174,6 @@ final class DuelLogBridge implements DuelListener {
         log.append("SYSTEM", DuelEventKind.STATE_SNAPSHOT, new DuelEventPayload.StateSnapshot(state));
     }
 
-    /* ================= 决策流 ================= */
 
     @Override
     public void onChoiceAvailable(ChoiceRequest request) {
@@ -193,7 +191,6 @@ final class DuelLogBridge implements DuelListener {
         }
     }
 
-    /* ================= 候选集快照 ================= */
 
     private static DuelEventPayload.DecisionContext buildContext(ChoiceRequest request) {
         List<DuelEventPayload.DecisionContext.CandidateView> views = new ArrayList<>();
@@ -322,7 +319,6 @@ final class DuelLogBridge implements DuelListener {
         return latest == null ? "P0" : "P" + latest.selfSeat();
     }
 
-    /* ================= 终局 ================= */
 
     @Override
     public void onDuelEnd(DuelResult result) {
@@ -346,7 +342,6 @@ final class DuelLogBridge implements DuelListener {
                 null, "DISCONNECTED", lastTurn));
     }
 
-    /* ================= 请求摘要 ================= */
 
     private static int candidateCount(ChoiceRequest request) {
         if (request instanceof ChoiceRequest.MainPhaseRequest m) {
@@ -362,8 +357,6 @@ final class DuelLogBridge implements DuelListener {
             return c.options().size();
         }
         if (request instanceof ChoiceRequest.EffectYesNoRequest) {
-            // "是否发动"在决策层有 1 个"发动"候选（见 Candidates.from）；日志侧以前漏算成 0，
-            // 排查时容易误判成"没有候选"。
             return 1;
         }
         if (request instanceof ChoiceRequest.CardSelectRequest s) {

@@ -50,8 +50,6 @@ public final class SelectionMapperImpl implements SelectionMapper {
                         new ChoiceSelection.SetSpellTrap(card(point, i.card())));
             }
             case ChoiceIntent.Activate i -> {
-                // 兜底：计划接地/战术层可能对连锁窗口产出 Activate，这里按"连锁响应"处理，
-                // 不再直接抛异常（否则会被上层兜成弃权，效果等同于"看得见但不发动"）。
                 if (request instanceof ChoiceRequest.ChainRequest) {
                     yield new ChoiceSelection.ChainSelection(
                             new ChoiceSelection.ChainAnswer.Respond(chainOption(point, i.effect())));
@@ -146,9 +144,6 @@ public final class SelectionMapperImpl implements SelectionMapper {
             case ChoiceIntent.Cancel ignored -> {
                 require(request.cancelable(), "当前请求不允许取消");
                 if (request instanceof ChoiceRequest.UnselectRequest u && u.min() > 0) {
-                    // 取消一个"至少要选 min 张"的选择 = 放弃整个上一步动作，引擎会回滚并重新问一遍，
-                    // 于是形成死循环（实机：特招→选素材→取消→再特招… 127 次）。
-                    // 这里直接判非法，让上层兜底成"选第一张"把流程推进下去。
                     throw new IllegalArgumentException(
                             "至少要选 " + u.min() + " 张，不能取消（取消会回滚上一步并重复询问）");
                 }
@@ -215,7 +210,6 @@ public final class SelectionMapperImpl implements SelectionMapper {
         };
     }
 
-    /* ---------- 解析与校验 ---------- */
 
     private static void require(boolean condition, String message) {
         if (!condition) {

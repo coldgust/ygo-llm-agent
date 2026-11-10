@@ -20,7 +20,6 @@ public final class SimilarityMatcher {
     public record Match(TurnPlan.TurnBranch branch, double score) {
     }
 
-    /** 当前局面的特征向量（封闭词表，v6 §3.1）。 */
     public static Map<String, Object> features(DecisionPoint point) {
         Map<String, Object> f = new LinkedHashMap<>();
         f.put("phase", normalizePhase(point.kind().name()));
@@ -31,7 +30,6 @@ public final class SimilarityMatcher {
         return f;
     }
 
-    /** 从局面提取全部已知 passcode（key_cards 命中判定用）。 */
     private static List<Long> knownPasscodes(DecisionPoint point) {
         List<Long> out = new ArrayList<>();
         point.state().cards().values().forEach(c -> {
@@ -105,7 +103,6 @@ public final class SimilarityMatcher {
         if (key.equals("phase")) {
             return normalizePhase(expectedText).equals(normalizePhase(String.valueOf(actual)));
         }
-        // 数量约束：<=n / >=n / ==n / n
         if (actual instanceof Number number) {
             int value = number.intValue();
             String t = expectedText.trim();

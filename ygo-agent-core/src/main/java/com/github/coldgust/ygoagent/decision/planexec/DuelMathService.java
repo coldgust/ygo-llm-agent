@@ -20,7 +20,6 @@ import java.util.Optional;
  */
 public final class DuelMathService {
 
-    /** 单次攻击的结算结果。 */
     public record AttackLine(
             long attackerInstanceId,
             long attackerPasscode,
@@ -34,12 +33,12 @@ public final class DuelMathService {
             int damageToSelf) {
 
         public enum Outcome {
-            DESTROY_AND_DAMAGE,   // 破坏目标并造成伤害
-            TRADE,                // 同归于尽（双方攻击表示）
-            ATTACKER_DESTROYED,   // 攻击方被破坏
-            NO_EFFECT,            // 打不动（对方守备 ≥ 我方攻击）
+            DESTROY_AND_DAMAGE,
+            TRADE,
+            ATTACKER_DESTROYED,
+            NO_EFFECT,
             DIRECT_ATTACK,
-            UNRESOLVED            // 对方盖卡/身份未知
+            UNRESOLVED
         }
 
         public String describe() {
@@ -57,11 +56,9 @@ public final class DuelMathService {
         }
     }
 
-    /** 斩杀判定。 */
     public record LethalScan(boolean directLethal, int totalAvailableDamage, int opponentLp, String summary) {
     }
 
-    /** 关键约束计数（stateCount）。 */
     public Map<String, Object> constraints(DuelState state, CardFacts facts) {
         Map<String, Object> out = new LinkedHashMap<>();
         int selfGySpells = 0;
@@ -83,7 +80,6 @@ public final class DuelMathService {
         return out;
     }
 
-    /** 全部可攻击宣言的结算表（只算表侧攻击表示的已知怪兽）。 */
     public List<AttackLine> attackTable(DuelState state, CardFacts facts) {
         List<AttackLine> lines = new ArrayList<>();
         List<CardInstance> attackers = state.monsters(PlayerSide.SELF).stream()
@@ -169,9 +165,6 @@ public final class DuelMathService {
 
     /**
      * 战斗数学段（锚点 [数学] 区）。
-     *
-     * <p>已停用【斩杀判定】：回合开始/空场时"确定伤害 0 → 不可斩杀"既无信息量又误导规划器，
-     * 待斩杀模型（含战阶推进、盖卡未知、后续展开）完善后再接回。{@link #lethalScan} 仍保留为纯函数。
      */
     @Deprecated
     public String mathSection(DuelState state, CardFacts facts) {
@@ -212,14 +205,12 @@ public final class DuelMathService {
     private DuelMathService() {
     }
 
-    /** 供静态调用的便捷实例（无状态，全部纯函数）。 */
     public static DuelMathService instance() {
         return INSTANCE;
     }
 
     private static final DuelMathService INSTANCE = new DuelMathService();
 
-    /* ---------- 供锚点/事件批使用的名称解析 ---------- */
 
     public static String labelOf(CardInstance card, CardFacts facts) {
         if (card.isUnknown()) {
@@ -238,7 +229,6 @@ public final class DuelMathService {
                         .filter(c -> c.passcode() == passcode).findFirst());
     }
 
-    /** ZoneKind 的可读名（锚点用）。 */
     public static String zoneLabel(ZoneKind kind) {
         return switch (kind) {
             case MAIN_MONSTER_ZONE -> "主怪区";

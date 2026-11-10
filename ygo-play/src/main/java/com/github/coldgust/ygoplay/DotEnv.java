@@ -7,7 +7,6 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** 极简 .env 读取（KEY=VALUE，忽略注释/空行/引号）。 */
 public final class DotEnv {
 
     public static Map<String, String> load(Path file) {

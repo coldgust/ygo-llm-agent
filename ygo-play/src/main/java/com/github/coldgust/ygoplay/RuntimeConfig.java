@@ -5,11 +5,6 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
 
-/**
- * 实机运行配置的唯一入口：CLI &gt; 环境变量/.env &gt; 默认值。
- *
- * <p>合并了原先散落的 RunnerConfig、DeepSettings、LLM 属性与路径解析。
- */
 public record RuntimeConfig(
         String host, int port, String name, String ydkPath, String move,
         String archetype,
@@ -18,7 +13,6 @@ public record RuntimeConfig(
 
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
-    /** LLM 凭据（v6 Planner–Executor 用；不打印 key）。 */
     public record Llm(String model, String baseUrl, String apiKey) {
 
         @Override

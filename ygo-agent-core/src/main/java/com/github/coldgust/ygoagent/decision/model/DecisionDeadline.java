@@ -5,10 +5,6 @@ import java.time.Duration;
 /**
  * 决策预算。所有下游调用都取 {@link #remainingMillis()} 设超时；
  * Deep 路径必须早于 {@link #deepCutoffNanos()} 返回。
- *
- * @param startNanos    开始时刻（System.nanoTime）
- * @param hardNanos     硬截止时刻
- * @param safetyMillis  安全边际（编码/发送/GC）
  */
 public record DecisionDeadline(long startNanos, long hardNanos, long safetyMillis) {
 

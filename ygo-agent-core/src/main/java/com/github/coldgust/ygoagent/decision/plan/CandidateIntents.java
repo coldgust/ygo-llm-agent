@@ -15,11 +15,6 @@ public final class CandidateIntents {
     public static Optional<ChoiceIntent> toIntent(DecisionPoint point, Candidate candidate) {
         return switch (candidate) {
             case Candidate.EffectC effect -> {
-                // 同一个"可发动效果"候选，在不同请求里的语义完全不同：
-                // - 是否发动 → EffectYesNo(true)
-                // - 连锁响应 → ChainRespond（编码成 ChainSelection.Respond；用 Activate 会被
-                //   映射层判成"需要主阶段请求"而抛异常，最后被兜成弃权——实机 24 次连锁全弃权就是这么来的）
-                // - 其他（主阶段/战阶）→ Activate
                 if (point.request() instanceof ChoiceRequest.EffectYesNoRequest) {
                     yield Optional.of(new ChoiceIntent.EffectYesNo(true));
                 }

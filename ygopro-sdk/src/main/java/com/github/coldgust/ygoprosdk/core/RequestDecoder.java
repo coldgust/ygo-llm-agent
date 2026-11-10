@@ -80,7 +80,6 @@ public final class RequestDecoder {
         };
     }
 
-    /* ---------- 主要阶段（§8.2）---------- */
 
     private ChoiceRequest decodeIdle(ByteReader r) {
         r.u8(); // player
@@ -122,7 +121,6 @@ public final class RequestDecoder {
         return out;
     }
 
-    /* ---------- 战斗阶段（§8.3）---------- */
 
     private ChoiceRequest decodeBattle(ByteReader r) {
         r.u8(); // player
@@ -151,7 +149,6 @@ public final class RequestDecoder {
         return new ChoiceRequest.BattlePhaseRequest(activatable, attackable, toM2, toEp);
     }
 
-    /* ---------- 选卡族（§8.4）---------- */
 
     private ChoiceRequest decodeCard(ByteReader r) {
         r.u8(); // player
@@ -237,7 +234,6 @@ public final class RequestDecoder {
         return choice(c, l, s, code);
     }
 
-    /* ---------- 连锁（§8.6）---------- */
 
     private ChoiceRequest decodeChain(ByteReader r) {
         r.u8(); // player
@@ -266,17 +262,12 @@ public final class RequestDecoder {
         return new ChoiceRequest.ChainRequest(options);
     }
 
-    /* ---------- 区域与表示形式（§8.5 / §8.9）---------- */
 
     private ChoiceRequest decodePlace(ByteReader r, int msgType) {
         int responder = r.u8(); // player：本条请求要谁应答（选择位置几乎总是我们）
         int count = r.u8();
         int flag = (int) r.u32();
         // flag 是"不可用"掩码，取补集。
-        // 位图的 0–15 / 16–31 **相对应答者**划分（bit 7 / 23 是场地魔法区，不是保留位）：
-        // 应答者自己的格子在前半段，对手的在后半段。以前按"绝对座位"解释，
-        // 我方坐 1 号位时整张掩码都被算成对方区域——于是 UI 出现"放到 对方魔陷区#1"，
-        // 实际把牌放到了对面（还可能被判非法）。
         List<ZoneRef> available = collectPlaceZones(flag, false, responder);
         if (available.isEmpty()) {
             // 兜底一：按镜像空位猜（绝大多数情况是对的——引擎只是没给出可读的位图）
@@ -359,7 +350,6 @@ public final class RequestDecoder {
         return new ChoiceRequest.PositionRequest(choice(mirror.selfSeat(), ZoneMapper.LOC_HAND, 0, code), positions);
     }
 
-    /* ---------- 是/否与选项（§8.7 / §8.8）---------- */
 
     private ChoiceRequest decodeEffectYesNo(ByteReader r) {
         r.u8(); // player
@@ -386,7 +376,6 @@ public final class RequestDecoder {
         return new ChoiceRequest.OptionRequest(options);
     }
 
-    /* ---------- 宣言族（§8.12）---------- */
 
     private ChoiceRequest decodeRace(ByteReader r) {
         r.u8(); // player
@@ -434,7 +423,6 @@ public final class RequestDecoder {
         return new ChoiceRequest.DeclareNumberRequest(numbers);
     }
 
-    /* ---------- 排序与指示物（§8.10 / §8.11）---------- */
 
     private ChoiceRequest decodeSort(ByteReader r) {
         r.u8(); // player
@@ -467,7 +455,6 @@ public final class RequestDecoder {
         return new ChoiceRequest.CounterRequest(counterType, total, candidates);
     }
 
-    /* ---------- 助手 ---------- */
 
     private ChoiceRequest.CardChoice choice(int absController, int location, int sequence, long code) {
         return mirror.choice(absController, location, sequence, code);

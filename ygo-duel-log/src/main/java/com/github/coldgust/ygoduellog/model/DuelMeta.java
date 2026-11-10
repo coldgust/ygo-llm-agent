@@ -2,7 +2,6 @@ package com.github.coldgust.ygoduellog.model;
 
 import java.util.List;
 
-/** 一局对局的元信息。 */
 public record DuelMeta(
         String duelId,
         String path,

@@ -40,7 +40,6 @@ public sealed interface ChoiceRequest {
     record TributeChoice(CardChoice card, int releaseCount) {
     }
 
-    /* ================= 主要阶段 ================= */
 
     /**
      * Main Phase 的动作集合：六个候选组（通常召唤/特殊召唤/改变表示形式/
@@ -72,7 +71,6 @@ public sealed interface ChoiceRequest {
         }
     }
 
-    /* ================= 战斗阶段 ================= */
 
     /** Battle Phase 的动作集合：可发动的效果、可攻击的怪兽、进 Main Phase 2 / 结束战斗阶段。 */
     record BattlePhaseRequest(
@@ -92,7 +90,6 @@ public sealed interface ChoiceRequest {
         }
     }
 
-    /* ================= 选卡族 ================= */
 
     /** 选卡：必须选 [min, max] 张，下标不重复。 */
     record CardSelectRequest(int min, int max, boolean cancelable, List<CardChoice> candidates)
@@ -163,7 +160,6 @@ public sealed interface ChoiceRequest {
             return options.stream().noneMatch(ChainOption::forced);
         }
 
-        /** 一个可连锁的效果。 */
         public record ChainOption(EffectChoice effect, boolean forced) {
         }
 
@@ -172,7 +168,6 @@ public sealed interface ChoiceRequest {
         }
     }
 
-    /* ================= 区域与表示形式 ================= */
 
     /** 选区域（须选 count 个；availableZones 已是"不可用掩码取补集"后的合法区域）。 */
     record PlaceRequest(int count, List<ZoneRef> availableZones) implements ChoiceRequest {
@@ -210,7 +205,6 @@ public sealed interface ChoiceRequest {
         }
     }
 
-    /* ================= 是/否与选项 ================= */
 
     /** 效果是否发动（附发动卡与效果描述）。 */
     record EffectYesNoRequest(CardChoice card, long description) implements ChoiceRequest {
@@ -220,7 +214,6 @@ public sealed interface ChoiceRequest {
         }
     }
 
-    /** 是 / 否。 */
     record YesNoRequest(long description) implements ChoiceRequest {
         @Override
         public boolean cancelable() {
@@ -240,7 +233,6 @@ public sealed interface ChoiceRequest {
         }
     }
 
-    /* ================= 宣言族 ================= */
 
     /** 宣言种族：必须恰好宣言 count 个 available 中的种族。 */
     record DeclareRaceRequest(int count, Set<MonsterRace> available) implements ChoiceRequest {
@@ -296,7 +288,6 @@ public sealed interface ChoiceRequest {
         }
     }
 
-    /* ================= 排序与指示物 ================= */
 
     /** 卡序排列：对新顺序提交一个排列。 */
     record SortRequest(List<CardChoice> cards) implements ChoiceRequest {
@@ -327,7 +318,6 @@ public sealed interface ChoiceRequest {
         }
     }
 
-    /* ================= 助手 ================= */
 
     static <T> List<T> safe(List<T> list) {
         return list == null ? List.of() : List.copyOf(list);

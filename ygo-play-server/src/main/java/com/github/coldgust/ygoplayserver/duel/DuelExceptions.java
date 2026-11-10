@@ -1,6 +1,5 @@
 package com.github.coldgust.ygoplayserver.duel;
 
-/** 服务层异常，由 web 层映射为 400/404/409。 */
 public final class DuelExceptions {
 
     public static class ValidationException extends RuntimeException {

@@ -27,7 +27,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.LinkedHashMap;
 
-/** 对局生命周期管理：同一时刻最多 N 局（默认 1）。 */
 @Service
 public class DuelSessionManager implements DuelService {
 
@@ -45,7 +44,6 @@ public class DuelSessionManager implements DuelService {
         this(properties, runnerFactory, new DuelEventHub(), null);
     }
 
-    /** 测试/轻量场景：不写对局摘要。 */
     public DuelSessionManager(PlayServerProperties properties, DuelRunnerFactory runnerFactory,
                               DuelEventHub eventHub) {
         this(properties, runnerFactory, eventHub, null);
@@ -110,7 +108,6 @@ public class DuelSessionManager implements DuelService {
         Future<?> future = job.future;
         if (future != null && future.cancel(true) && job.status == DuelStatus.STOPPING
                 && job.result == null) {
-            // 还没真正开始执行就取消了
             job.status = DuelStatus.STOPPED;
             job.finishedAt = Instant.now();
         }
@@ -170,11 +167,6 @@ public class DuelSessionManager implements DuelService {
         }
     }
 
-    /**
-     * 用户对"结束后询问"模式的决定：写入 / 跳过。
-     *
-     * <p>只接受一次决定（重复调用幂等返回现状），确认写入后在后台生成复盘并写对局库。
-     */
     @Override
     public DuelView archiveDecision(String id, boolean store) {
         DuelJob job = require(id);
@@ -197,7 +189,6 @@ public class DuelSessionManager implements DuelService {
         return toView(job);
     }
 
-    /** 终态事件（含 result 摘要与 trace/duel-log 路径），随后关闭该局的 SSE 订阅。 */
     private void publishFinal(DuelJob job) {
         try {
             var result = job.result;
@@ -266,12 +257,6 @@ public class DuelSessionManager implements DuelService {
                 blank(request.deckStrategy()) ? null : request.deckStrategy().trim());
     }
 
-    /**
-     * 归一化卡组主题：空值视为"不指定"；其余 trim 后做文件名安全校验。
-     * 主题名是 combo 的归属键（PG combo_record 的查询条件、种子编译产物
-     * {@code compiled/<主题>.json} 的查找键），含路径分隔符等字符虽然现在不再直接落文件，
-     * 但会污染 PG 里按文本匹配的主题查询，照样挡掉。
-     */
     private static String normalizeArchetype(String raw) {
         if (blank(raw)) {
             return null;
@@ -312,7 +297,6 @@ public class DuelSessionManager implements DuelService {
                 job.request.archivePolicyOrDefault(), job.archiveState);
     }
 
-    /** SSE 频道 id：与 runner 推导一致（trace 文件名去扩展名）。 */
     @Override
     public String traceId(String id) {
         return traceId(require(id));

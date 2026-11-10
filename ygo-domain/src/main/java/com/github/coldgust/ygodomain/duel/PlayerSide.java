@@ -8,7 +8,6 @@ public enum PlayerSide {
     SELF,
     OPPONENT;
 
-    /** 取对侧。 */
     public PlayerSide opposite() {
         return this == SELF ? OPPONENT : SELF;
     }

@@ -7,7 +7,6 @@ public final class ProtocolIds {
     private ProtocolIds() {
     }
 
-    /* ---------- CTOS ---------- */
     public static final int CTOS_RESPONSE = 0x01;
     public static final int CTOS_UPDATE_DECK = 0x02;
     public static final int CTOS_HAND_RESULT = 0x03;
@@ -27,7 +26,6 @@ public final class ProtocolIds {
     public static final int CTOS_HS_START = 0x25;
     public static final int CTOS_REQUEST_FIELD = 0x30;
 
-    /* ---------- STOC ---------- */
     public static final int STOC_GAME_MSG = 0x01;
     public static final int STOC_ERROR_MSG = 0x02;
     public static final int STOC_SELECT_HAND = 0x03;
@@ -49,14 +47,12 @@ public final class ProtocolIds {
     public static final int STOC_HS_WATCH_CHANGE = 0x22;
     public static final int STOC_FIELD_FINISH = 0x30;
 
-    /* ---------- ERROR types ---------- */
     public static final int ERROR_JOIN = 1;
     public static final int ERROR_DECK = 2;
     public static final int ERROR_SIDE = 3;
     public static final int ERROR_VER = 4;
     public static final int ERROR_VER2 = 5;
 
-    /* ---------- MSG（STOC_GAME_MSG 内层）---------- */
     public static final int MSG_RETRY = 1;
     public static final int MSG_HINT = 2;
     public static final int MSG_WAITING = 3;

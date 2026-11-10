@@ -34,7 +34,6 @@ public enum ZoneKind {
         };
     }
 
-    /** 是否为怪兽区。 */
     public boolean isMonsterZone() {
         return this == MAIN_MONSTER_ZONE || this == EXTRA_MONSTER_ZONE;
     }

@@ -6,18 +6,6 @@ import java.util.Map;
 
 /**
  * 卡组主题（archetype）的归一化与别名。
- *
- * <p>为什么需要：同一个系列有<b>三套写法</b>，它们分别出现在不同地方——
- * 编译库用代码（{@code data/combos/compiled/SKY_STRIKER.json}）、
- * 前端下拉与录入用中文（{@code 闪刀}）、模型自己会写 {@code Sky Striker}。
- * 不做归一化，就会出现"录入了 combo 但一条都查不到"，
- * 甚至更糟：按 {@code 闪刀.json} 找不到编译库 → 连招索引整个关闭（实机日志：
- * {@code combo 编译库不存在（data/combos/compiled/闪刀.json），连招索引关闭}），
- * {@code find_combos} 也不会注册，模型看到的就是"这个 deck 没有 combo"。
- *
- * <p>归一化规则：去空白、大小写不敏感、空格/连字符/下划线视为等价；
- * 再按别名表收敛到编译库使用的代码。别名表只收"同一系列的常见写法"，
- * 新增系列时在这里加一行即可。
  */
 public final class ComboArchetype {
 
@@ -32,7 +20,6 @@ public final class ComboArchetype {
     private ComboArchetype() {
     }
 
-    /** 归一化成编译库那种代码；空串原样返回空串。 */
     public static String canonical(String raw) {
         String key = normalize(raw);
         if (key.isEmpty()) {
@@ -41,7 +28,6 @@ public final class ComboArchetype {
         return ALIASES.getOrDefault(key, key);
     }
 
-    /** 两个写法是否指同一个系列。 */
     public static boolean matches(String a, String b) {
         String left = canonical(a);
         String right = canonical(b);

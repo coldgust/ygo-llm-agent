@@ -6,9 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import tools.jackson.databind.json.JsonMapper;
 
-/**
- * 对局复盘检索：域过滤（只认 duel:）+ 按小节压缩（保留结论与教训，砍掉流水账）。
- */
 class DuelRecallToolTest {
 
     @Test

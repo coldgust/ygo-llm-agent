@@ -14,7 +14,6 @@ CREATE TABLE IF NOT EXISTS card (
     pendulum_effect TEXT
 );
 
--- 精确/前缀查询
 CREATE INDEX IF NOT EXISTS idx_card_name_lower ON card (lower(name));
 CREATE INDEX IF NOT EXISTS idx_card_name_en_lower ON card (lower(name_en));
 

@@ -18,7 +18,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 回归：规划器在新回合回 {@code {"keep": true}} 时，计划必须"续期"到新回合。
- * <p>否则执行器按 turn 过滤会把它丢掉，整回合"计划尚未就绪"（实机一局出现 15 次）。
  */
 class PlannerSessionCarryOverTest {
 
@@ -54,8 +53,6 @@ class PlannerSessionCarryOverTest {
 
     @Test
     void allCheckpointsShareTheReasoningTier() {
-        // 锚点/重规划/增量修订统一走推理档（deepPlan 默认开）。锚点曾单独快档（off）
-        // 保首动作及时性，但快档计划质量差——统一后接受"首动作可能等不到计划"的代价。
         List<ChatClient.ChatOptions> seen =
                 Collections.synchronizedList(new ArrayList<>());
         AtomicInteger calls = new AtomicInteger();
@@ -100,8 +97,6 @@ class PlannerSessionCarryOverTest {
 
     @Test
     void replanUsesTheReasoningTierLikeEventsCheckpoints() {
-        // replan 曾与锚点同走快档（thinking=off）：实测快档产出的计划常低质量、与前面矛盾。
-        // 现在 replan 与 events checkpoint 同档（low），都受 LLM_REASONING_PLANNER 覆盖。
         List<ChatClient.ChatOptions> seen = Collections.synchronizedList(new ArrayList<>());
         List<List<ChatClient.Msg>> prompts = Collections.synchronizedList(new ArrayList<>());
         ChatClient recorder = (messages, options) -> {
@@ -138,9 +133,6 @@ class PlannerSessionCarryOverTest {
 
     @Test
     void keepWithoutAnyPlanTriggersOneRecoveryPlan() {
-        // 实机事故：锚点解析失败 → 之后每次 checkpoint 都回 keep → 没有可续期的计划，
-        // 旧代码静默 return，于是整回合（25 次决策）都没有计划。
-        // 现在：keep + 无计划 → 每段补一次"重新规划"，拿到计划为止。
         PlannerSession planner = new PlannerSession(
                 chat("{\"keep\": true}", planJson()),
                 new ContextPackBuilder(TestDuels.facts(), DuelMathService.instance()),

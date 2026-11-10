@@ -13,9 +13,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
-/**
- * JSONL 落盘 Sink：每行一个事件 JSON，逐行 flush（可实时 tail）。
- */
 public final class JsonlSink implements DuelEventSink {
 
     /** FAIL_ON_EMPTY_BEANS 必须关闭：CardIdentity.Unknown 等零字段 record 是合法载荷。 */

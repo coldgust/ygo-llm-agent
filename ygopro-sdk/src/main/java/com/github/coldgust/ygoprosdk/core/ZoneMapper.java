@@ -16,7 +16,6 @@ public final class ZoneMapper {
     private ZoneMapper() {
     }
 
-    /* ---------- 协议 location 字节 ---------- */
     public static final int LOC_DECK = 0x01;
     public static final int LOC_HAND = 0x02;
     public static final int LOC_MZONE = 0x04;
@@ -27,13 +26,11 @@ public final class ZoneMapper {
     public static final int LOC_OVERLAY = 0x80;
     public static final int LOC_FZONE = 0x100;
 
-    /* ---------- 表示形式 ---------- */
     public static final int POS_FACEUP_ATTACK = 0x1;
     public static final int POS_FACEDOWN_ATTACK = 0x2;
     public static final int POS_FACEUP_DEFENSE = 0x4;
     public static final int POS_FACEDOWN_DEFENSE = 0x8;
 
-    /* ---------- 打包位置字 ---------- */
 
     /** 解包：c | l<<8 | s<<16 | pos<<24。 */
     public record Packed(int controller, int location, int sequence, int position) {
@@ -52,7 +49,6 @@ public final class ZoneMapper {
                 | ((position & 0xFFL) << 24);
     }
 
-    /* ---------- 槽位 → 域区域（绝对座位视角；owner 由调用方换算为相对视角）---------- */
 
     /**
      * 协议 (location, sequence) → 域 ZoneKind + 域 sequence；无法映射返回 null。
@@ -102,14 +98,10 @@ public final class ZoneMapper {
         };
     }
 
-    /* ---------- SELECT_PLACE / DISFIELD 位图 ---------- */
 
     /**
      * 位图位 → 协议槽位（规范 §8.5）：怪兽区位 = seq（0–6，5/6 为额外怪兽区）；
      * <b>bit 7 = 场地魔法区</b>；魔陷区位 = 8 + seq（0–4 魔陷，14/15 灵摆）；高位 +16 为另一侧座位。
-     *
-     * <p>踩过的坑：bit 7 曾被当成"保留位"直接返回 null。发动场地魔法（如闪刀空域-零区）时
-     * 引擎给的可用位图只剩这一位，于是 PlaceRequest 解出 0 个候选 → 应答非法 → 对局卡死。
      */
     public static Slot slotFromBitmapBit(int bit) {
         int b = bit >= 16 ? bit - 16 : bit;
@@ -144,7 +136,6 @@ public final class ZoneMapper {
         return opponent ? bit + 16 : bit;
     }
 
-    /* ---------- 表示形式 ---------- */
 
     public static Position toPosition(int posByte) {
         return switch (posByte) {

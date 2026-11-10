@@ -20,20 +20,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * combo 实战录入的落库服务（Web 功能 2 的新实现）。
- *
- * <p>流程（对局线程上同步执行，保证 COMBO_RECORDED 先于终态 DUEL_STATUS 到前端）：
- * 对局日志 → {@link ComboStepReader} 切出用户回合的逐步操作（自然语言描述）→
- * LLM 生成摘要（LLM 不可用则只存步骤，不阻塞入库）→ INSERT PG {@code combo_record} →
- * SSE 通知前端。
- *
- * <p>PG 是 combo 的唯一存储（JSON 种子/编译管线已删除）。运行时消费走
- * {@link PgRecordedComboSource}：己方主题注入规划器上下文 + find_combos 对手检索。
- *
- * <p>失败面：LLM 失败 → 步骤照存（summary_source=NONE）；PG 不可用 → 只发 SSE 错误，
- * 绝不向上抛——录入是旁路产物，不能影响对局结果上报。
- */
 @Service
 public class ComboRecordService {
 
@@ -41,13 +27,11 @@ public class ComboRecordService {
 
     private static final int SUMMARY_MAX_TOKENS = 1_000;
     private static final Duration SUMMARY_TIMEOUT = Duration.ofSeconds(60);
-    /** SSE 里带回去的步骤数上限（全量在库里，前端没必要收全部）。 */
     private static final int STEPS_PREVIEW = 8;
 
     private final ObjectProvider<JdbcClient> jdbc;
     private final DuelEventHub eventHub;
     private final JsonMapper mapper = JsonMapper.builder().build();
-    /** 懒构建的摘要客户端（环境没配 LLM_API_KEY 时为 null）。 */
     private volatile ChatClient chat;
     private volatile boolean tableReady;
     private final String baseUrl;
@@ -64,9 +48,7 @@ public class ComboRecordService {
                 environment.getProperty("LLM_MODEL", "deepseek-chat"));
     }
 
-    /* ================= 主流程 ================= */
 
-    /** 启动即建表/补列：老库的 key_cards 不必等下一次录入才出现（查询侧 SELECT 该列）。 */
     @jakarta.annotation.PostConstruct
     void initTable() {
         JdbcClient client = jdbc.getIfAvailable();
@@ -81,7 +63,6 @@ public class ComboRecordService {
         }
     }
 
-    /** 落库入口（DuelRunner 在录入对局结束后同步调用）。必须自吞异常。 */
     public void record(ComboRecording recording, CardFacts facts) {
         String duelId = recording.duelId();
         try {
@@ -112,7 +93,6 @@ public class ComboRecordService {
         String archetype = recording.archetype();
         List<String> descriptions = steps.stream().map(ComboStepReader.Step::desc).toList();
 
-        // ① LLM 摘要：失败不阻塞入库，步骤是底线
         String summary = null;
         String summarySource = "NONE";
         String keyCards = null;
@@ -136,14 +116,12 @@ public class ComboRecordService {
             }
         }
 
-        // ② 存 PG
         Long id = insert(duelId, archetype, steps, summary, keyCards, summarySource);
         log.info("combo 录入完成（duel={}）：{} 步 → combo_record#{}，摘要 {}，关键卡牌 [{}]",
                 duelId, steps.size(), id,
                 summary == null ? "无（" + summarySource + "）" : summary.length() + " 字",
                 keyCards == null ? "无" : keyCards);
 
-        // ③ SSE
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("duelId", duelId);
         payload.put("recordId", id);
@@ -155,7 +133,6 @@ public class ComboRecordService {
         publish(duelId, payload);
     }
 
-    /* ================= PG ================= */
 
     private Long insert(String duelId, String archetype, List<ComboStepReader.Step> steps,
                         String summary, String keyCards, String summarySource) {
@@ -196,7 +173,6 @@ public class ComboRecordService {
                 .single();
     }
 
-    /** 建表幂等：老库没跑过 03-combo-record.sql 也能用（compose 卷里的 init 只在首次执行）。 */
     private static void ensureTable(JdbcClient client) {
         client.sql("""
                 CREATE TABLE IF NOT EXISTS combo_record (
@@ -224,7 +200,6 @@ public class ComboRecordService {
         return client;
     }
 
-    /* ================= LLM 客户端（懒加载） ================= */
 
     private ChatClient chat() {
         ChatClient client = chat;
@@ -242,12 +217,7 @@ public class ComboRecordService {
         }
     }
 
-    /* ================= 查询（前端轮询兜底：SSE 丢了也能拿到结果） ================= */
 
-    /**
-     * 取某次对局最近一条录入（载荷与 SSE COMBO_RECORDED 事件同构，多一个 duelId）。
-     * 库不可达/无记录/坏数据一律返回 empty，调用方按"没有录入"处理。
-     */
     public Optional<Map<String, Object>> findLatest(String duelKey) {
         JdbcClient client = jdbc.getIfAvailable();
         if (client == null || duelKey == null || duelKey.isBlank()) {
@@ -278,7 +248,6 @@ public class ComboRecordService {
         }
     }
 
-    /** steps JSONB → 前 8 条自然语言描述。 */
     private List<String> previewOf(String stepsJson) {
         List<String> descs = new ArrayList<>();
         if (stepsJson == null || stepsJson.isBlank()) {

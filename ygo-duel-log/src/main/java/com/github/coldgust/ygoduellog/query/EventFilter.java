@@ -6,9 +6,6 @@ import com.github.coldgust.ygoduellog.event.DuelEventKind;
 import java.util.Set;
 import java.util.function.Predicate;
 
-/**
- * 事件过滤器（各维度为 null = 不限）。
- */
 public record EventFilter(
         Long fromSeq,
         Long toSeq,

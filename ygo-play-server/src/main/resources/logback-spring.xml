@@ -1,18 +1,4 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  日志落盘配置。
-
-  输出两路：
-    1) 控制台（保持开发时 tail 的习惯，带颜色）；
-    2) 文件 → ${LOG_DIR}/ygo-play-server.log，按 天 + 大小 滚动。
-
-  LOG_DIR 由 LoggingPaths.configure() 在 main() 里算好并写进系统属性 ygo.log.dir：
-  优先 YGO_LOG_DIR，其次从当前目录向上找仓库根，落到 <仓库根>/logs。
-  这样无论从仓库根、模块目录还是 IDE 启动，日志都进同一个地方。
-
-  全链路日志（YGO_VERBOSE_LOG=true）走的是 ygo.llm / ygo.decision 两个 logger，
-  它们的 INFO 也会进同一个文件——所以单局复盘只需要看这一个文件。
--->
 <configuration>
     <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
 

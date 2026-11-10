@@ -11,25 +11,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 把"一局发生了什么"整理成喂给 LLM 的素材。
- *
- * <p>这个类的职责边界很关键：**它只做陈述，不做解释**。
- * 判断"哪一步走错了""下次怎么办"是 LLM 的活；这里只负责把散在轨迹与日志里的事实
- * 拼成一段人类读得懂、模型不会看漏的时间线。一旦这里开始写"这步不好"，就又变回了
- * 规则模板——那正是我们要摆脱的东西。
- *
- * <p>两段素材：
- * <ul>
- *   <li><b>固定事实</b>：对局 id / 日期 / 主题 / 先后手 / 胜负 / 应答与兜底次数。
- *       这些都是"不许模型猜"的字段，由代码给出，模型只许引用；</li>
- *   <li><b>逐回合记录</b>：每回合的 LP、手牌数、计划目标与思路、我们实际做了什么
- *       （含决策来源与当时理由）。</li>
- * </ul>
- */
 public final class DuelNarrative {
 
-    /** 单回合最多列出的动作数：再多只是重复的"不响应"，对复盘没有增量信息。 */
     private static final int ACTIONS_PER_TURN = 12;
 
     private final StringBuilder facts = new StringBuilder();
@@ -38,11 +21,6 @@ public final class DuelNarrative {
     private DuelNarrative() {
     }
 
-    /**
-     * @param record      对局日志解析结果（可为空：日志缺失时仍能出一份只有轨迹的素材）
-     * @param trace       决策轨迹（可为空）
-     * @param maxTimeline 逐回合记录的字数上限
-     */
     public static DuelNarrative build(String duelId, DuelRunSpec spec, DuelRunResult result,
                                       DuelRecord record, DuelTraceReader.TraceView trace,
                                       int maxTimeline) {
@@ -52,12 +30,10 @@ public final class DuelNarrative {
         return narrative;
     }
 
-    /** 固定事实段（给提示词的第一块，也是最终文档头的来源）。 */
     public String facts() {
         return facts.toString().trim();
     }
 
-    /** 逐回合记录段（LLM 的主要输入）。 */
     public String timeline() {
         return timeline.toString().trim();
     }
@@ -184,7 +160,6 @@ public final class DuelNarrative {
                 && a.level().equals(b.level());
     }
 
-    /** LP 与手牌数：取该回合第一条有快照的决策。 */
     private static String lpLine(List<DecisionEpisode> episodes) {
         if (episodes == null || episodes.isEmpty()) {
             return "";
@@ -199,10 +174,6 @@ public final class DuelNarrative {
         return "";
     }
 
-    /**
-     * 回合归属：我方回合一定会有"主要阶段/战斗阶段"这类请求；只有连锁响应的回合是对方的。
-     * 这条推断来自数据本身，不靠"先后手 + 回合奇偶"，避免座位不同时判断反了。
-     */
     private static String ownershipOf(List<DuelTraceReader.Action> actions) {
         boolean hasMainPhase = false;
         boolean hasAny = false;

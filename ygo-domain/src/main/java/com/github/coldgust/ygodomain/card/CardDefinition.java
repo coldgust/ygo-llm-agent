@@ -13,8 +13,6 @@ import java.util.Set;
  * @param monsterTypes   怪兽种类与能力标志集合（MONSTER 时非空）
  * @param spellType      魔法种类（SPELL 时非空）
  * @param trapType       陷阱种类（TRAP 时非空）
- * @param attribute      怪兽属性
- * @param race           怪兽种族
  * @param level          等级（怪兽 1–12；连接怪兽无等级，为 null）
  * @param rank           阶级（超量怪兽）
  * @param linkRating     连接标记数（连接怪兽 = Link Rating）
@@ -65,7 +63,6 @@ public record CardDefinition(
         return isMonster() && monsterTypes.stream().anyMatch(MonsterType::isExtraDeckKind);
     }
 
-    /** 是否为灵摆怪兽。 */
     public boolean isPendulumMonster() {
         return isMonster() && monsterTypes.contains(MonsterType.PENDULUM);
     }
@@ -75,7 +72,6 @@ public record CardDefinition(
         return isMonster() && monsterTypes.contains(MonsterType.LINK);
     }
 
-    /** 是否为调整怪兽。 */
     public boolean isTuner() {
         return isMonster() && monsterTypes.contains(MonsterType.TUNER);
     }

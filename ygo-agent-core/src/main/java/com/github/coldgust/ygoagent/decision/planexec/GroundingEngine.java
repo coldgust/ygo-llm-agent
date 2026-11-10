@@ -32,7 +32,6 @@ public final class GroundingEngine {
         }
     }
 
-    /** 接地 → 意图。FLAG 动作直接映射标志意图（校验请求确实允许）。 */
     public Optional<ChoiceIntent> toIntent(DecisionPoint point, PlanStep step) {
         GroundingResult result = ground(point, step);
         if (result.status() == Status.NOT_GROUNDED || result.status() == Status.AMBIGUOUS) {
@@ -65,10 +64,6 @@ public final class GroundingEngine {
         boolean handOnly = false;
         for (Candidate candidate : point.candidates()) {
             if (PlanGrounder.matchSpec(point, candidate, spec)) {
-                // 手牌里的连锁响应（G/灰流丽/效遮/速攻…）不按计划硬发：
-                // 它的价值取决于"对手这一环具体在做什么"，而计划是几分钟前写的判断。
-                // 实机教训：计划写"对手首次特召/检索时交G"，T4 末端只要候选里有 G 就照发，
-                // 早就不满足"首次"了。让行给 ④ 决策器判断（看得见当前连锁），比照旧计划发强得多。
                 if (point.kind() == RequestKind.CHAIN && isFromHand(candidate)) {
                     handOnly = true;
                     continue;

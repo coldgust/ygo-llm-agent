@@ -5,7 +5,6 @@ import com.github.coldgust.ygodomain.decision.ChoiceSelection;
 import com.github.coldgust.ygodomain.duel.DuelState;
 import com.github.coldgust.ygoprosdk.session.DuelSession;
 
-/** DuelSession 适配。 */
 public final class SdkSessionLink implements SessionLink {
 
     private final DuelSession session;

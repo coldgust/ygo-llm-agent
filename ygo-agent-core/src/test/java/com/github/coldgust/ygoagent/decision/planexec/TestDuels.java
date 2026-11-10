@@ -138,7 +138,6 @@ public final class TestDuels {
         return new CardInstance(id, identity, zone, null, Map.of(), List.of());
     }
 
-    /** 主阶段请求 + 决策点。 */
     public static DecisionPoint mainPhasePoint(DuelState state, List<ChoiceRequest.CardChoice> summonable,
                                                List<ChoiceRequest.EffectChoice> activatable) {
         ChoiceRequest request = new ChoiceRequest.MainPhaseRequest(

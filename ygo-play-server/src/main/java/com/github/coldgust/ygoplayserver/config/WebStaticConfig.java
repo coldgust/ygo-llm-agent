@@ -12,9 +12,6 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * 托管 Svelte 前端构建产物（web/dist）。/api/** 由控制器优先处理，其余走静态资源。
- */
 @Configuration
 public class WebStaticConfig implements WebMvcConfigurer {
 
@@ -35,7 +32,6 @@ public class WebStaticConfig implements WebMvcConfigurer {
         distLocation().ifPresent(dist -> registry.addViewController("/").setViewName("forward:/index.html"));
     }
 
-    /** web/dist 的候选位置：工作目录与上级（spring-boot:run 的工作目录在 ygo-play-server/）。 */
     static Optional<Path> distLocation() {
         for (Path candidate : List.of(Path.of("web", "dist"), Path.of("..", "web", "dist"))) {
             if (Files.isRegularFile(candidate.resolve("index.html"))) {

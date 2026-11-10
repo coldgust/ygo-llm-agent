@@ -1,15 +1,8 @@
 #!/usr/bin/env bash
 # 规则书入库：整本 PDF 上传，**用文件名承载域名前缀**。
-#
 # 约定：文件名 = <domain>-<source>.pdf（默认 rule-ocg-zh.pdf）。
 # LightRAG 的 /documents/upload 用"上传的文件名"当 file_source，所以文件名就是来源标识；
 # 规则书是 rule-*，对局复盘是 duel:*，检索时能按来源分开（RulebookTool / DuelRecallTool 都按前缀过滤）。
-#
-# 为什么用 `-` 而不是 `rule:`：LightRAG 的 sanitize_filename 明确拒绝冒号
-# （`:` 会被当作 NTFS 数据流 / 盘符相对路径），上传会直接 400 "Unsafe filename detected"。
-# 想用 `rule:` 字面量只能走 /documents/text 并自己给 file_source——那样就得自己切块，
-# 为了少维护一个切块脚本，这里统一用 `-`（工具侧两种分隔符都认）。
-#
 # 用法：
 #   ./ygo-rag/scripts/ingest-rules.sh                       # 默认 rule-ocg-zh.pdf
 #   ./ygo-rag/scripts/ingest-rules.sh --pdf x.pdf --source ocg-zh-v11
@@ -29,7 +22,7 @@ while [ $# -gt 0 ]; do
     --source) SOURCE="$2"; shift 2 ;;
     --domain) DOMAIN="$2"; shift 2 ;;
     --no-wait) WAIT=0; shift ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
     *) echo "未知参数：$1" >&2; exit 2 ;;
   esac
 done
@@ -53,7 +46,6 @@ if ! curl -fsS -m 5 "${AUTH[@]}" "$URL/health" >/dev/null; then
   exit 1
 fi
 
-# 文件名就是 file_source：<domain>-<source>.pdf
 TARGET="$DOMAIN-$SOURCE.pdf"
 STAGE_DIR="$(mktemp -d)"
 cp "$PDF" "$STAGE_DIR/$TARGET"

@@ -106,14 +106,12 @@ class DuelSessionManagerTest {
 
         DuelView view = manager.start(request("ask"));
         DuelView done = awaitStatus(manager, view.id(), DuelStatus.FINISHED);
-        // 结束后挂起等用户决定，不自动写库
         assertEquals("PENDING", done.archiveState());
 
         // 决定写入 → 状态翻转（写库异步进行，LightRAG 不可达只记日志，不影响状态）
         DuelView accepted = manager.archiveDecision(view.id(), true);
         assertEquals("ACCEPTED", accepted.archiveState());
 
-        // 重复决定幂等返回现状，不覆盖
         DuelView again = manager.archiveDecision(view.id(), false);
         assertEquals("ACCEPTED", again.archiveState());
     }
@@ -163,7 +161,6 @@ class DuelSessionManagerTest {
     void acceptsNewArchetypeName() throws Exception {
         DuelSessionManager manager = new DuelSessionManager(props(), fakeFactory((spec, ref, stop) -> null));
 
-        // 建新主题：库里还没有的名字也要能用（trim 后入库命名）
         DuelRequest fresh = new DuelRequest("127.0.0.1", 7911, "n", "second",
                 "main:1", null, "  白龙  ", null, null, null, null, null);
         DuelView view = manager.start(fresh);

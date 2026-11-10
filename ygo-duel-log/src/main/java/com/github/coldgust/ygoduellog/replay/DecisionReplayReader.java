@@ -14,17 +14,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 从 JSONL 对局记录中重建"决策点"序列：请求 + 候选集 + 应答。
- * <p>只解析决策相关事件，不反序列化完整 DuelState，避免领域模型版本耦合。
- */
 public final class DecisionReplayReader {
 
     private static final ObjectMapper MAPPER = JsonMapper.builder()
             .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS)
             .build();
 
-    /** 一个可回放的决策点。 */
     public record ReplayDecision(
             long requestSeq,
             int turn,

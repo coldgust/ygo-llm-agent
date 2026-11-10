@@ -14,8 +14,6 @@ public final class Candidates {
 
     public static List<Candidate> from(ChoiceRequest request) {
         List<Candidate> out = new ArrayList<>();
-        // 从 C1 起连续编号。弃权类动作（不响应/不发动/取消）现在也是真候选（DeclineC），
-        // 不再有"C0 伪候选"——那样 choice 可能落在候选集之外，判越界后整条决策会降级。
         int[] seq = {1};
 
         if (request instanceof ChoiceRequest.MainPhaseRequest m) {
@@ -30,8 +28,6 @@ public final class Candidates {
                 out.add(new Candidate.FlagC(next(seq), Candidate.Flag.ENTER_BATTLE));
             }
             // 「结束回合」只看 canEndTurn：先手第 1 回合不能进战阶（canEnterBattlePhase=false），
-            // 曾经把两者绑在一起 → 第一回合整个"结束回合"候选消失，模型想空过却没有编号可用，
-            // 只能填唯一的 C1（通召灰流丽），自述写着"改选弃权空过"、票却投给了通召。
             if (m.canEndTurn()) {
                 out.add(new Candidate.FlagC(next(seq), Candidate.Flag.END_TURN));
             }
@@ -70,7 +66,6 @@ public final class Candidates {
             out.add(new Candidate.DeclineC(next(seq), Candidate.Decline.CHAIN_DECLINE));
         } else if (request instanceof ChoiceRequest.EffectYesNoRequest y) {
             // "是否发动"也要有一个"发动"候选：否则执行器看到空候选就直接走兜底，
-            // 等于又把判断交给规则（本局实测 1 次）。
             out.add(new Candidate.EffectC(next(seq),
                     new ChoiceRequest.EffectChoice(y.card(), y.description())));
             out.add(new Candidate.DeclineC(next(seq), Candidate.Decline.EFFECT_NO));

@@ -13,7 +13,6 @@ import java.util.List;
  */
 public final class PlanGrounder {
 
-    /** 单候选 × 单动作规格的匹配（v6 执行器 GroundingEngine 复用同一语义）。 */
     public static boolean matchSpec(DecisionPoint point, Candidate candidate, ActionSpec spec) {
         if (spec.passcode() > 0 && passcode(candidate) != spec.passcode()) {
             return false;
@@ -32,16 +31,6 @@ public final class PlanGrounder {
         };
     }
 
-    /**
-     * 计划里的 {@code zone} 有两种语义，不能混：
-     * <ul>
-     *   <li><b>目的地</b>：召唤/盖放/连接召唤/放置 —— 卡此刻还在手牌或额外卡组，
-     *       计划说的是"要放到 MMZ-3"。拿它去比候选的 HAND 区永远不相等，
-     *       结果是"召唤到 MMZ-3"这一步永远接不上地、整份计划被作废。</li>
-     *   <li><b>所在地</b>：发动场上效果/攻击 —— 计划说的是"就是 STZ-2 的这张"，必须精确对上。</li>
-     * </ul>
-     * 区分方式：候选本身在场上（有格子的区域）才比对，否则视为目的地不做比对。
-     */
     static boolean zoneCompatible(ZoneRef planned, Candidate candidate) {
         ZoneRef actual = zone(candidate);
         if (actual == null) {

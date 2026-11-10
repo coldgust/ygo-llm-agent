@@ -21,8 +21,6 @@ import java.util.stream.IntStream;
  *
  * @param duelRule     大师规则版本（协议 duel_rule，5 = MR5）
  * @param turnNumber   当前回合数（从 1 起）
- * @param turnPlayer   当前回合方
- * @param phase        当前阶段
  * @param players      双方状态（key = 相对视角）
  * @param cards        全部在场卡实例（key = instanceId）
  * @param currentChain 当前连锁（index 1 = 最先发动）
@@ -46,7 +44,6 @@ public record DuelState(
         currentChain = currentChain == null ? List.of() : List.copyOf(currentChain);
     }
 
-    /* ---------- 基础查询 ---------- */
 
     public PlayerState player(PlayerSide side) {
         return players.get(side);
@@ -68,9 +65,7 @@ public record DuelState(
         return result != null;
     }
 
-    /* ---------- 卡与区域查询 ---------- */
 
-    /** 按 instanceId 取卡实例。 */
     public Optional<CardInstance> card(long instanceId) {
         return Optional.ofNullable(cards.get(instanceId));
     }
@@ -84,10 +79,6 @@ public record DuelState(
 
     /**
      * 某方某区域中的全部卡（列表区域按放置顺序）。
-     *
-     * <p><b>一格一卡不变式</b>：同一槽位上若残留多个实例（镜像历史 bug 会让"盖放"同时
-     * 登记 MSG_MOVE 与 MSG_SET 两个实例），只保留实例号更大的那一个。
-     * 否则 3 张盖卡会被数成 6 张。
      */
     public List<CardInstance> cardsIn(ZoneKind kind, PlayerSide owner) {
         return slotDeduped(List.of(kind), owner);
@@ -125,7 +116,6 @@ public record DuelState(
         return a.instanceId() >= b.instanceId() ? a : b;
     }
 
-    /** 某方的场地魔法。 */
     public Optional<CardInstance> fieldSpell(PlayerSide side) {
         return cardAt(ZoneRef.field(side));
     }

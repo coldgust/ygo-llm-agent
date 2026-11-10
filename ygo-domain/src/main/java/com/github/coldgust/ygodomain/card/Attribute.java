@@ -5,11 +5,11 @@ package com.github.coldgust.ygodomain.card;
  * 属性宣言类效果在可选范围内宣言。
  */
 public enum Attribute {
-    DARK,      // 暗
-    LIGHT,     // 光
-    EARTH,     // 地
-    WATER,     // 水
-    FIRE,      // 火
-    WIND,      // 风
-    DIVINE     // 神
+    DARK,
+    LIGHT,
+    EARTH,
+    WATER,
+    FIRE,
+    WIND,
+    DIVINE
 }

@@ -18,7 +18,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * REFLEX 是"零策略假设层"：只有答案唯一时才应答，有取舍的一律让行。
- * <p>本测试的重点是<b>连锁必须让行</b>——旧实现"没有必发就一律弃权"把整条决策链短路了。
  */
 class ReflexPolicyTest {
 

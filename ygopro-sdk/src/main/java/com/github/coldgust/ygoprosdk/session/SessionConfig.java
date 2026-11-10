@@ -9,13 +9,11 @@ import java.nio.file.Path;
 /**
  * 会话配置。
  *
- * @param host              服务端地址
  * @param port              服务端端口（默认 7911）
  * @param playerName        玩家名（定长 40 字节 UTF-16LE，超长截断）
  * @param deck              卡组（就绪前上传）
  * @param firstPlayer       获得先后攻选择权时要先攻还是后攻
  * @param joinVersion       CTOS_JOIN_GAME 的 version 字段（服务端不校验，0x1353 最通用）
- * @param joinPassword      房间密码
  * @param createRoom        是否由本端建房（true 时使用 roomOptions）
  * @param roomOptions       建房参数（createRoom = true 时必填）
  * @param cardResolver      卡牌定义解析（可空：只携带 passcode）

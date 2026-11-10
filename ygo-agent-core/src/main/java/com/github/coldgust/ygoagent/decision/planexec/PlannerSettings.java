@@ -64,16 +64,6 @@ public record PlannerSettings(
                 cardRagPath, 3_000, false, true);
     }
 
-    /**
-     * 规划器 checkpoint（锚点/紧急重规划/增量修订）的调用选项，由生效思考强度一档决定
-     * （{@code LLM_REASONING_PLANNER}，{@code null}=未配置 → 默认 low）：
-     * <ul>
-     *   <li>{@code off} → 快档：thinking=off、~2s、小 token、不封 20s——锚点快出计划的旧行为；</li>
-     *   <li>low/medium/high → 推理档：思维链计入 max_tokens 必须给足 8k；预算封顶 20s，
-     *       避免一次慢调用拖住后续 checkpoint。代价（实测）：low 档大锚点 7–8s+，
-     *       首动作的等待窗口（firstOneshotWaitMs，默认 7s）经常等不到计划。</li>
-     * </ul>
-     */
     public ChatClient.ChatOptions checkpointOptions(String effectiveLevel) {
         if ("off".equals(effectiveLevel)) {
             // 顾问模式四段 + 方案比较合计约 900–1100 字，额度给足避免截成半截 JSON；路径模式 JSON 更紧凑

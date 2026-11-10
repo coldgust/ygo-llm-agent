@@ -21,17 +21,6 @@ import java.util.Set;
 
 /**
  * 历史对局检索工具：从 LightRAG 里的"对局复盘"召回与当前局面相似的历史经验。
- *
- * <p>对局库不是结构化案例库，而是<b>叙事记忆</b>：每局结束后由 LLM 写一份复盘
- * （一句话结论 / 局面走向 / 关键决策 / 转折点 / 失误与代价 / 下次怎么做 / 检索关键词），
- * 以 {@code duel:<id>} 为来源写进同一个 workspace。模型在"这局面好像见过"或
- * "想参考以前怎么打"时自主调用。
- *
- * <p>检索仍走 {@code /query/data}（只取证据、不二次生成），并在客户端按
- * {@code duel:} 来源过滤，避免规则/卡牌的片段串进来。
- *
- * <p>返回时按小节裁剪（{@code compact}）：复盘是"结论在最前、教训在最后"的结构，
- * 盲目按字数截断会把最有用的"失误/下次怎么办"切掉，只留下流水账。
  */
 public final class DuelRecallTool {
 
@@ -69,7 +58,6 @@ public final class DuelRecallTool {
                 .build();
     }
 
-    /** 从配置构建：进程 env 优先，其次当前/上级目录的 .env（与 RulebookTool 一致）。 */
     public static DuelRecallTool fromEnv() {
         return new DuelRecallTool(
                 setting("LIGHTRAG_URL", "http://localhost:9621"),
@@ -165,11 +153,6 @@ public final class DuelRecallTool {
 
     /**
      * 只保留 duel 域的片段。
-     *
-     * <p>注意别按来源"只取第一条"：一份复盘 1500+ 字，LightRAG 会切成多个 chunk，
-     * 而 chunk 是按相关度返回的——只留第一条，拿到的往往只是开头的"一句话结论"，
-     * 真正有用的"失误与代价/下次怎么做"正好在后面几条里。
-     * 所以这里按来源聚合所有命中片段，再做小节裁剪。
      */
     String render(JsonNode root, int limit) {
         JsonNode chunks = root.path("data").path("chunks");
@@ -189,7 +172,7 @@ public final class DuelRecallTool {
             StringBuilder merged = bySource.get(source);
             if (merged == null) {
                 if (bySource.size() >= limit) {
-                    continue; // 已经够 limit 局了
+                    continue;
                 }
                 merged = new StringBuilder();
                 bySource.put(source, merged);
@@ -216,10 +199,6 @@ public final class DuelRecallTool {
 
     /**
      * 按小节压缩一份复盘。
-     *
-     * <p>复盘结构固定为"结论在前、教训在后"。超长时保留：事实头（`domain:` 等）+ 一句话结论 +
-     * 转折点 + 失误与代价 + 下次遇到类似局面，丢掉中间的流水账式"局面走向/关键决策"。
-     * 真按字符截断，模型拿到的就只剩过程，没有任何可迁移的结论。
      */
     static String compact(String content, int limit) {
         if (content == null) {
@@ -255,10 +234,6 @@ public final class DuelRecallTool {
 
     /**
      * 逐行去掉重复内容。
-     *
-     * <p>切块重叠不一定是"干净的后缀"：实测出现过第二个 chunk 从某条建议的第二个字开始，
-     * 于是同一段结论在结果里出现两遍（只差一个开头字），按后缀消重抓不住。
-     * 同一篇复盘里出现完全相同的长句，基本只可能是切块伪影，所以按行去重（长句才参与，短标签不动）。
      */
     private static String dedupeRepeatedLines(String text) {
         Set<String> seen = new LinkedHashSet<>();
@@ -278,10 +253,6 @@ public final class DuelRecallTool {
 
     /**
      * 追加一个 chunk，并去掉与已有文本末尾的重叠。
-     *
-     * <p>LightRAG 的切块是滑窗式的：相邻 chunk 会在边界处重叠若干十字，
-     * 直接拼接会出现"半句话重复"（实测出现过整段"下次遇到类似局面"重复一遍）。
-     * 这里按"最长后缀 = 前缀"消重，上限 400 字，避免退化成 O(n²) 的全串比较。
      */
     private static void appendWithoutOverlap(StringBuilder merged, String content) {
         String text = content.trim();

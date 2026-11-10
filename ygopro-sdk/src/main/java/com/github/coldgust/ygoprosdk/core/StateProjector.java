@@ -31,7 +31,6 @@ import java.util.TreeMap;
  */
 public final class StateProjector {
 
-    /** 一张卡的构建态。 */
     private static final class Card {
         long id;                 // 镜像内实例标识（0 = 未注册）
         CardIdentity identity;
@@ -43,7 +42,6 @@ public final class StateProjector {
         final List<Long> xyzMaterials = new ArrayList<>();
     }
 
-    /** 一名玩家的构建态。 */
     private static final class Player {
         String name = "";
         int lp;
@@ -80,7 +78,6 @@ public final class StateProjector {
         return selfSeat;
     }
 
-    /* ================= 消息入口 ================= */
 
     /**
      * 应用一条 MSG（payload 为去掉 type 字节后的消息体）。
@@ -123,7 +120,6 @@ public final class StateProjector {
         }
     }
 
-    /* ================= 事件实现 ================= */
 
     private void onStart(ByteReader r) {
         int seat = r.u8();          // playertype = 接收者座位（§7.3.2）
@@ -410,10 +406,6 @@ public final class StateProjector {
 
     /**
      * 某一环的发动对象（BECOME_TARGET）。
-     *
-     * <p>为什么必须有：卡面只写"以…为对象"，不写具体是哪张卡。没有这一条，模型只能猜——
-     * 实机里「黑魔导阵②：以对方场上1张卡为对象，那张卡除外」被我方读成"要除外我方燎里"，
-     * 实际对象是我方后场的速攻魔法。猜错的直接后果是选错应对牌。
      */
     private void onBecomeTarget(ByteReader r) {
         int count = r.u8();
@@ -436,12 +428,6 @@ public final class StateProjector {
 
     /**
      * 某一环被无效（CHAIN_NEGATED / CHAIN_DISABLED）：<b>标记而不是删除</b>。
-     *
-     * <p>旧的实现是"删掉链的最后一环"，有两个问题：
-     * ① 被无效的往往不是最后一环（例如 C3 的指名者无效掉 C2 的灰流丽，删掉的是 C3 自己）；
-     * ② 删掉之后链就"缺了一环"，模型看到一条不完整的链会自己编因果
-     * （实机：断言"幕帘已被灰流丽无效"，而幕帘其实照常结算）。
-     * 现在按协议给的链号打标记，链保持完整，模型能看到"这一环被无效了"。
      */
     private void onChainNegated(ByteReader r) {
         int index = r.u8();
@@ -650,7 +636,6 @@ public final class StateProjector {
         }
     }
 
-    /* ================= 区域工具 ================= */
 
     private static long zoneKey(int seat, int location, int sequence) {
         return ((long) seat << 24) | ((long) location << 8) | (sequence & 0xFF);
@@ -669,11 +654,6 @@ public final class StateProjector {
 
     /**
      * 某格上卡片**已知**的身份；拿不到就是 {@link CardIdentity#UNKNOWN}。
-     *
-     * <p>为什么需要它：{@code MSG_SELECT_CARD} 对部分卡（对手场上的卡、里侧卡）会下发 {@code code=0}，
-     * 但投影层早在 {@code CARD_MOVED} / 抽卡 / 展示效果时就记住了它是什么。
-     * 候选身份如果只看协议 code，就会出现"候选全是未知卡"——实战里模型把
-     * 「超魔导龙骑士」当普通怪兽选成破坏目标（那张卡『不会被效果破坏』），整次除去白费。
      */
     public synchronized CardIdentity identityAt(int seat, int location, int sequence) {
         Long id = zoneIndex.get(zoneKey(seat, location, sequence));
@@ -853,7 +833,6 @@ public final class StateProjector {
         return zone != null ? zone : ZoneRef.deck(sideOf(controller));
     }
 
-    /* ================= 快照 ================= */
 
     public synchronized DuelState snapshot() {
         Map<PlayerSide, PlayerState> playerStates = new LinkedHashMap<>();

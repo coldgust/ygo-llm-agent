@@ -22,18 +22,6 @@ import java.util.List;
 import java.util.StringJoiner;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * 实况战场播报（人工比对用）。
- *
- * <p>每个决策点输出三块内容：
- * <ol>
- *   <li>抬头：序号 / 回合 / 阶段 / 待决策的请求类型；</li>
- *   <li>{@link ContextPackBuilder#anchorPack} —— <b>与规划器看到的完全同一份文本</b>；</li>
- *   <li>{@code [核对]} —— 直接按槽位统计的场上张数，用来抓"同一格被数成两张"这类错。</li>
- * </ol>
- *
- * <p>同时写控制台与文件（默认 {@code /tmp/ygo-live/battlefield.log}），文件每条即时 flush，可 {@code tail -f}。
- */
 public final class BattlefieldReporter implements DuelListener {
 
     private final PrintWriter file;
@@ -57,7 +45,6 @@ public final class BattlefieldReporter implements DuelListener {
         return new BattlefieldReporter(writer, packer);
     }
 
-    /* ---------- 监听器 ---------- */
 
     @Override
     public void onStateUpdate(DuelState state) {
@@ -101,13 +88,11 @@ public final class BattlefieldReporter implements DuelListener {
         emit("🔌 连接关闭");
     }
 
-    /* ---------- 渲染 ---------- */
 
     private String anchorOf(DuelState state) {
         return packer != null ? packer.anchorPack(state).stripTrailing() : fallbackAnchor(state);
     }
 
-    /** 无卡库时的最小局面（只有卡号，够核对张数）。 */
     private String fallbackAnchor(DuelState state) {
         StringBuilder sb = new StringBuilder();
         sb.append("[局面] 第 ").append(state.turnNumber()).append(" 回合，")
@@ -123,7 +108,6 @@ public final class BattlefieldReporter implements DuelListener {
         return sb.toString();
     }
 
-    /** 独立于锚点的张数核对：按槽位统计。 */
     private String countCheck(DuelState state) {
         return "[核对] 我：怪兽 %d、魔陷 %d（盖 %d / 表侧 %d）、灵摆 %d、场地 %d、手牌 %d ｜ 对：怪兽 %d、魔陷 %d、手牌 %d"
                 .formatted(
@@ -190,7 +174,6 @@ public final class BattlefieldReporter implements DuelListener {
         file.flush();
     }
 
-    /** 兜底：外部若需要知道是否已拿到局面。 */
     public boolean hasState() {
         return last != null;
     }

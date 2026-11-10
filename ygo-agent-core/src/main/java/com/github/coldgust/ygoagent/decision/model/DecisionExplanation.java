@@ -3,9 +3,6 @@ package com.github.coldgust.ygoagent.decision.model;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 结构化解释：结论 + 证据 + 否决原因 + 分项。
- */
 public record DecisionExplanation(
         String conclusion,
         List<String> evidence,

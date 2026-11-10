@@ -16,7 +16,7 @@ import java.util.Locale;
 public record TurnPlan(
         String planId,
         int turnNumber,
-        String thinking,          // 回合战斗思路（叙事，能力观察的原始语料）
+        String thinking,
         String goal,
         List<PlanStep> steps,
         List<TurnBranch> branches,
@@ -46,7 +46,6 @@ public record TurnPlan(
         }
     }
 
-    /** 计划步的请求类型映射：MAIN1/MAIN→MAIN_PHASE，BATTLE→BATTLE_PHASE，EP→MAIN_PHASE（end_turn）。 */
     public static RequestKind requestKindOf(String when) {
         return switch (when == null ? "" : when.trim().toUpperCase(Locale.ROOT)) {
             case "MAIN1", "MAIN", "MAIN2", "EP", "END_PHASE" -> RequestKind.MAIN_PHASE;

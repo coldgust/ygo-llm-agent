@@ -30,10 +30,8 @@ public interface RecordedComboSource {
     /** 数据源是否可用（表不存在/库不可达/无记录都算不可用，调用方静默跳过）。 */
     boolean available();
 
-    /** 库里实际有哪些主题（供 find_combos 在模型没传 archetype 时列可用值）。 */
     List<String> archetypes();
 
-    /** 按主题取最近的录入记录（创建时间倒序），供"选定主题注入上下文"。 */
     List<Entry> recentByArchetype(String archetype, int limit);
 
     /**

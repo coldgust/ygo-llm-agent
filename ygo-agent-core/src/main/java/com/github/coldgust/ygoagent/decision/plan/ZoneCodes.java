@@ -11,14 +11,7 @@ import java.util.regex.Pattern;
 
 /**
  * 区域格子的"人机共同语"：<b>一个稳定编码</b>，给模型看、也让模型写回来。
- *
- * <p>为什么必须有它：位置是决策点（把怪兽放到哪一格、盖牌盖哪一格），
- * 但自然语言写"我方主怪兽区第3格"会被模型写成十种格式，解析层只能靠猜。
- * 所以上下文里一律用编码（{@code MMZ-3}），计划 JSON 的 {@code zone} 字段也要求写编码；
- * 中文写法仍然接受（模型偶尔不听话），但只作为兜底。
- *
  * <p>编号从 <b>1</b> 起（对应玩家看到的"第 3 格"），与协议 sequence（0 起）差一。
- * 协议下标对模型毫无意义，反而容易让它把 {@code MMZ-0} 当成"最左"。
  */
 public final class ZoneCodes {
 
@@ -29,7 +22,6 @@ public final class ZoneCodes {
     private ZoneCodes() {
     }
 
-    /* ---------- 编码 ---------- */
 
     /** 区域 → 编码（{@code MMZ-3}）。非场上区域给 {@code HAND/GY/BAN/DECK/EXD}。 */
     public static String code(ZoneRef zone) {
@@ -50,7 +42,6 @@ public final class ZoneCodes {
         };
     }
 
-    /** 区域 → 中文短名（{@code 我方主怪兽区#3}），用于展示与 rationale。 */
     public static String label(ZoneRef zone) {
         if (zone == null) {
             return "?";
@@ -70,19 +61,11 @@ public final class ZoneCodes {
         };
     }
 
-    /** 编码 + 中文名（{@code MMZ-3（我方主怪兽区#3）}），首次出现时用。 */
     public static String describe(ZoneRef zone) {
         return code(zone) + "（" + label(zone) + "）";
     }
 
-    /* ---------- 解析 ---------- */
 
-    /**
-     * 编码/中文 → 区域。
-     *
-     * @param raw           模型写的原文，如 {@code MMZ-3}、{@code 我方主怪兽区#3}、{@code 额外怪兽区}
-     * @param fallbackOwner 没写归属时按此方算；null 视为我方（位置决策几乎总是自己放自己的格）
-     */
     public static Optional<ZoneRef> parse(String raw, PlayerSide fallbackOwner) {
         if (raw == null || raw.isBlank()) {
             return Optional.empty();
@@ -90,7 +73,6 @@ public final class ZoneCodes {
         String text = raw.trim();
         PlayerSide owner = ownerOf(text, fallbackOwner == null ? PlayerSide.SELF : fallbackOwner);
 
-        // 归一：去掉分隔符与量词，只留字母/数字/中文，方便统一匹配
         String s = text.toUpperCase(Locale.ROOT)
                 .replaceAll("[\\s#＃:：,，、_\\-—/|]", "")
                 .replace("格", "")

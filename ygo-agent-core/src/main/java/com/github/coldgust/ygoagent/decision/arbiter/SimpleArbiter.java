@@ -13,7 +13,6 @@ import com.github.coldgust.ygoagent.decision.reflex.FallbackIntents;
 import java.util.ArrayList;
 import java.util.List;
 
-/** 单路仲裁（P0）：直接采用快路径最优行；Deep 比较在 P2 接入。 */
 public final class SimpleArbiter implements DecisionArbiter {
 
     @Override

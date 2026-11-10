@@ -20,10 +20,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 战场镜像的计数正确性（回归：盖 3 张被数成 6 张）。
- *
- * <p>引擎的"从手牌盖放"是两条消息：MSG_MOVE（携带真实卡号）落到魔陷区，
- * 紧接着 MSG_SET（code 恒 0）通知翻里侧。旧实现给 MSG_SET 无条件新建实例，
- * 旧实例留在 cards 里不撤出 → 同一格两张卡 → 张数翻倍。
  */
 class StateProjectorTest {
 
@@ -176,9 +172,7 @@ class StateProjectorTest {
 
     /**
      * 实机 MSG_UPDATE_DATA（player=0, loc=HAND, 5 张）的原始字节。
-     *
      * <p>每块 72 字节：{@code [u32 块长=72][u32 flags=0x00681FFF][u32 卡号][u32 位置打包字]…}。
-     * 曾因块长被读两次而整体前移一格，位置字 {@code 0x0A000200} 被当成卡号写入。
      */
     private static final String HAND_UPDATE_DATA_HEX = ""
             + "000248000000ff1f68006885dc050002000a6885dc05020001000000000000000000000000000000000000"

@@ -5,7 +5,6 @@ import com.github.coldgust.ygodomain.duel.PlayerSide;
 /**
  * 一个具体的区域格子。
  *
- * @param kind     区域种类
  * @param owner    区域归属方（相对视角：SELF / OPPONENT）
  * @param sequence 格内序号：主怪兽区 0–4；额外怪兽区 0–1（0 = 本方使用的那个，1 = 对方使用的那个）；
  *                 魔陷区 0–4；灵摆区 0（左）/ 1（右）；场地 0；其余列表区域为 0

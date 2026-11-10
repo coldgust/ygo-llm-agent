@@ -10,7 +10,6 @@ public interface DecisionTraceWriter {
 
     void append(DecisionPoint point, DuelDecision decision);
 
-    /** 旁路事件（Deep 触发/shadow/超时/统计等），默认忽略。 */
     default void event(String kind, Map<String, Object> payload) {
     }
 

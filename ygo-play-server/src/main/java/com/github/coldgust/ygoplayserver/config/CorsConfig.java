@@ -4,10 +4,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
-/**
- * 前后端分离：允许 Svelte 开发服务器（Vite :5173）跨域访问 /api/**。
- * 生产部署可直接由后端托管 web/dist（WebStaticConfig），此时无需 CORS。
- */
 @Configuration
 public class CorsConfig implements WebMvcConfigurer {
 

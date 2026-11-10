@@ -12,7 +12,6 @@ import java.security.NoSuchAlgorithmException;
 import java.util.Comparator;
 import java.util.List;
 
-/** 规范化指纹：用于缓存、幂等与回放对齐（只包含可见信息）。 */
 public final class Fingerprint {
 
     public static String stateHash(DuelState state) {

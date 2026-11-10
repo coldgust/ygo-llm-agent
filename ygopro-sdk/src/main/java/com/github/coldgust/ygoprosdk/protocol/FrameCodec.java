@@ -12,7 +12,6 @@ public final class FrameCodec {
     private FrameCodec() {
     }
 
-    /** 编码一帧。 */
     public static byte[] encode(int type, byte[] payload) {
         int len = 1 + (payload == null ? 0 : payload.length);
         if (len > 0xFFFF) {
@@ -28,7 +27,6 @@ public final class FrameCodec {
         return out;
     }
 
-    /** 一条完整帧：type + payload。 */
     public record Frame(int type, byte[] payload) {
     }
 

@@ -39,9 +39,6 @@ public final class ContextPackBuilder {
 
     /**
      * 规则速查上限：它是通用背景知识，不能挤掉局面与候选，超长同样截断。
-     * <p>实测证明"够用即止"的摘要不够用——模型会自己补规则，补出来的往往是错的
-     * （把"手牌的速攻魔法"当成"对手回合能用"、把"无效效果"当成"压打点"）。
-     * 所以宁可多花这点上下文，也要把高频误区和判定判据写全；前段是最高频的错误源。
      */
     private static final int RULE_DIGEST_LIMIT = 8_000;
 
@@ -52,7 +49,6 @@ public final class ContextPackBuilder {
     private final String deckStrategy;
     private final String ruleDigest;
     private final String selfArchetype;
-    /** 实战连招参考（PG combo 库按主题取最近 N 条的渲染文本，可为空）。 */
     private final String comboReference;
     /** 顾问模式：计划只有战术建议、没有可执行步骤（{@code PLANNER_PATH_PLANNING=false}）。 */
     private final boolean advisoryPlan;
@@ -243,7 +239,6 @@ public final class ContextPackBuilder {
         return comboReference != null;
     }
 
-    /** 回合锚点（规划器 session 的锚点消息）：局面 + 卡面 + 数学，无候选。 */
     public String anchorPack(DuelState state) {
         StringBuilder sb = new StringBuilder();
         appendSelfArchetype(sb);
@@ -271,29 +266,17 @@ public final class ContextPackBuilder {
 
     /**
      * 规划器专用锚点：{@link #anchorPack} + {@code [卡面]} 段。
-     *
-     * <p>为什么单独给规划器：判断"卡与卡怎么配合"必须看到效果原文。只给卡名，
-     * 模型只能凭训练记忆猜——实测就退化成"这张卡能检索""那张卡能特召"的逐张单卡评价，
-     * 而说不出"零衣解放→燎里回收墓地魔法→交闪再检索"这类闭环。
-     *
-     * <p>为什么不加进 {@link #anchorPack}：决策包每个决策点都拼一次锚点，
-     * 一局 60 多次调用，多一两千字是实打实的成本；而规划器每回合只发一两次锚点。
      */
     public String plannerAnchorPack(DuelState state) {
         return anchorPack(state) + cardFactsSection(state) + deckSection();
     }
 
-    /** [卡组] 段预算。 */
     private static final int DECK_SECTION_LIMIT = 7_000;
     private static final int DECK_EFFECT_LIMIT_EXTRA = 160;
     private static final int DECK_EFFECT_LIMIT_MAIN = 110;
 
     /**
      * {@code [卡组]}：己方整副卡组（主+额外）的卡名/种类/攻守/效果摘要。
-     *
-     * <p>为什么要给全：规划器要判断"这张检索能拿到什么""额外卡组有没有能出的东西"，
-     * 只靠 {@code find_card} 现查，一轮就是好几秒，而卡组是自己的、本来就是已知信息。
-     * 效果做长度分层：额外卡组（真会出场的）给得全，主卡组只留摘要，控制体积。
      */
     private String deckSection() {
         if (deckPasscodes.isEmpty()) {
@@ -349,7 +332,6 @@ public final class ContextPackBuilder {
         return sb.toString();
     }
 
-    /** 单卡效果原文的预算：卡片数上限、每张截断长度、整段上限。 */
     private static final int CARD_FACT_MAX_CARDS = 14;
     private static final int CARD_FACT_EFFECT_LIMIT = 180;
     private static final int CARD_FACT_TOTAL_LIMIT = 2_200;
@@ -367,7 +349,6 @@ public final class ContextPackBuilder {
         owned.addAll(state.monsters(PlayerSide.SELF));
         owned.addAll(state.spellTraps(PlayerSide.SELF));
         // 对手的**明牌**也一起给：场上表侧的怪兽/魔陷是公开信息，本来就要拿来判断"会不会被无效/除外"。
-        // 不预置的话模型会为每一张明牌各调一次工具，实测一个回合光查卡就 10s+。
         owned.addAll(state.monsters(PlayerSide.OPPONENT));
         owned.addAll(state.spellTraps(PlayerSide.OPPONENT));
         for (CardInstance card : owned) {
@@ -404,16 +385,9 @@ public final class ContextPackBuilder {
 
     /**
      * [卡组思路]：用户手写的本卡组打法（展开路线、关键 combo、留牌偏好、禁忌操作）。
-     *
-     * <p>放在最前面而不是夹在中间：它管的是"这回合要往哪走"的方向问题，
-     * 先给方向再看局面，比先看局面再被一堆细节牵着走更容易保持一致。
-     * 措辞上明确"冲突时以此为准"，但保留"局面硬事实优先"的边界——
-     * 否则模型会用一句"卡组思路说先展开"去硬做当前根本做不了的操作。
      */
     /**
      * [卡组主题]：己方系列由前端指定，直接作为已知事实给出。
-     * <p>为什么不让模型自己推断：它会从手牌/场面猜系列，猜错就会去查错的 combo，
-     * 而且这种错误很难从输出里看出来。前端已经有这个输入，就没有理由让模型猜。
      */
     private void appendSelfArchetype(StringBuilder sb) {
         if (selfArchetype == null) {
@@ -437,9 +411,6 @@ public final class ContextPackBuilder {
 
     /**
      * [实战连招参考]：PG combo 库里本主题最近的真实对局录入（LLM 摘要 + 逐步操作）。
-     *
-     * <p>与 [卡组思路] 的分工：思路是人写的"应该怎么打"，这里是机器录的"实际怎么打过"。
-     * 放在思路之后、规则速查之前——具体路线的优先级低于方向性思路，但高于通用规则。
      */
     private void appendComboReference(StringBuilder sb) {
         if (comboReference == null) {
@@ -452,10 +423,6 @@ public final class ContextPackBuilder {
 
     /**
      * [规则速查]：游戏王通用规则的浓缩版，预置在锚点里。
-     *
-     * <p>为什么要预置：召唤条件、连锁咒文速度、战斗结算这些是<b>每次决策都要用到的常识</b>，
-     * 让模型为它们反复发起检索既慢又费额度；而精确条文（某张卡的裁定、冷门判定）才值得查原文。
-     * 所以这里放"够用即止"的摘要，并明确它是资料不是指令。
      */
     private void appendRuleDigest(StringBuilder sb) {
         if (ruleDigest == null) {
@@ -468,21 +435,12 @@ public final class ContextPackBuilder {
                 .append(text).append("\n\n");
     }
 
-    /** 决策包（执行器 one-shot / 规划器紧急决策）：锚点 + [候选] 白名单。 */
     public String decisionPack(DecisionPoint point) {
         return decisionPack(point, null);
     }
 
     /**
      * 决策包（带计划版）。
-     * <p>④ one-shot 如果不带计划，就变成单点最优化：规划器已经想好"先通召零衣、再抓锚解场"，
-     * one-shot 却在孤立的局面上重新权衡，容易选出一个打断计划连续性、甚至自相矛盾的动作
-     * （例如计划第 1 步还没做完就先结束回合）。
-     *
-     * <p>位置不单独成一次提问：如果本次选的动作用得着格子，请在<b>同一次回答</b>里用
-     * {@code zone} 一起给出（见 [场地槽位]）；没给或给不了，系统取第一个可放置区域。
-     *
-     * @param plan 当前回合计划；null = 计划未就绪，退化为纯局面决策
      */
     public String decisionPack(DecisionPoint point, TurnPlan plan) {
         return decisionPack(point, plan, DecisionMemory.NONE);
@@ -490,13 +448,6 @@ public final class ContextPackBuilder {
 
     /**
      * 决策包（带"当前效果出处"版）。
-     *
-     * <p>{@code effectScope} 是"你刚才发动/正在结算的那个效果"（卡名 + 本次发动的那一条条款）。
-     * 为什么必须显式给：一个效果会展开成**好几个决策点**——零露②就要先选卡组里的零衣+露世特召，
-     * 再选场上 1 张卡破坏。到了第二个决策点，上下文只剩"[候选] 选 1–1 张"，
-     * 模型根本不知道自己在执行哪个效果的哪一步，于是把"必选的破坏目标"当成
-     * "要不要做某个动作"，写完"无净收益、弃权"就随手交了第一个候选（实战就是选到
-     * 『不会被效果破坏』的龙骑士，整次除去白给）。
      */
     public String decisionPack(DecisionPoint point, TurnPlan plan, String effectScope) {
         return decisionPack(point, plan, DecisionMemory.of(effectScope, List.of(), ""));
@@ -504,9 +455,6 @@ public final class ContextPackBuilder {
 
     /**
      * 决策包（带"记忆"版）：本回合已做的动作 + 上一手的判断 + 正在结算的效果。
-     *
-     * <p>one-shot 每手都是独立单轮，没有对话历史，所以"我刚做过什么"必须由代码显式补上；
-     * 否则模型会频繁推翻自己——判了"保留零露作终盘阻抗"，几十秒后又把它解放掉。
      */
     public String decisionPack(DecisionPoint point, TurnPlan plan, DecisionMemory memory) {
         DecisionMemory remembered = memory == null ? DecisionMemory.NONE : memory;
@@ -550,11 +498,6 @@ public final class ContextPackBuilder {
 
     /**
      * {@code [本回合已做]}：把"你已经做过什么、上一手怎么想的"补进上下文。
-     *
-     * <p>one-shot 不带对话历史，模型看不到自己前面的决定，这是"前后矛盾"的根源：
-     * 上一手判"泡影留给对方上级怪兽"，下一手在检索环节就交了；上一手判"零露是终盘阻抗"，
-     * 后面又把它解放掉。这里只列<b>既成事实</b>，并把这条约束说清：
-     * <b>可以改主意，但要在 rationale 里说明为什么改</b>。
      */
     private String historySection(DecisionPoint point, DecisionMemory memory) {
         if (memory == null || memory.turnActions().isEmpty() && memory.lastIntent().isEmpty()) {
@@ -778,7 +721,6 @@ public final class ContextPackBuilder {
         return flat.length() <= limit ? flat : flat.substring(0, limit) + "…";
     }
 
-    /** 候选白名单的可读渲染（按请求类型分组）。 */
     public String candidatesSection(DecisionPoint point) {
         StringJoiner sj = new StringJoiner("\n");
         ChoiceRequest request = point.request();
@@ -807,15 +749,6 @@ public final class ContextPackBuilder {
             appendChainEffects(sj, point, c);
             appendDeclines(sj, point);
         } else if (request instanceof ChoiceRequest.EffectYesNoRequest y) {
-            // 必须说清"要发动的是哪一条效果"。只给卡名 + 效果号时，模型只能凭记忆套——
-            // 实机：零衣在墓地、引擎问的是 ②（从墓地自身特召），模型却按 ①（解放自身）判断，
-            // 得出"①无法解放自身 → 不发动，保留资源"，把一次免费的资源回收当成了空过。
-            //
-            // 注意：这个请求的 description 并不总是"卡号<<4|序号"——引擎的触发型确认
-            // （MSG_SELECT_EFFECTYN）塞的是提示文 id（0/221/31/94…），解不出是哪一条。
-            // 解不出时绝不能把"全部条款"写成"这次要发动的是"（实机 seq=10：奇亚诺丝①特召成功后
-            // 引擎问②，模型把 ①②③ 全列表读成①，答"①已用过、再丢魔法卡无净收益 → 不发动"，
-            // 白丢一次免费的露世特召）。解不出就如实说明，并给出排除法。
             long passcode = y.card().identity().passcode();
             Optional<String> firedClause = cardText.clauseOf(passcode, y.description());
             sj.add("是否发动：" + effectCardLabel(y.card())
@@ -826,8 +759,6 @@ public final class ContextPackBuilder {
                 appendUnlabeledEffectClauses(sj, passcode);
             }
             // 这一句是必须的：引擎只有在"这个效果此刻可以发动"时才会发这个请求。
-            // 不写的话模型会拿卡面条件去验（实机：零衣在墓地，它写"①②均不满足，无法发动"，
-            // 而引擎正是因为条件成立才来问的——一次可发的资源点被当成空过）。
             sj.add("  ↑ 引擎只在「这个效果此刻可以发动」时才会问这一句：这是**要不要发**，不是**能不能发**。"
                     + "不要在理由里写「条件不满足 / 无法发动」——那说明你记错了规则，此时请重读上面的效果原文。");
             // 候选行只给编号 + 卡名：条款在上面已经列过（解不出时是全部条款），
@@ -840,8 +771,6 @@ public final class ContextPackBuilder {
             appendDeclines(sj, point);
         } else if (request instanceof ChoiceRequest.UnselectRequest u) {
             // 这一步几乎总是"上一个动作的后续"（选素材/选送墓/选保留），不是独立决策点。
-            // 以前它落到兜底分支，模型只看到"候选 1 个"，就把 C0 当成"空过/结束回合"用，
-            // 于是取消→动作回滚→引擎再问一遍→再取消，形成死循环。
             sj.add("上一动作的选卡步骤：需选 [" + u.min() + "," + u.max() + "] 张"
                     + "（已选 " + u.selected().size() + " 张）");
             appendGroup(sj, "可选", point.candidatesOf(Candidate.CardC.class).stream()
@@ -874,15 +803,9 @@ public final class ContextPackBuilder {
         return sj.toString();
     }
 
-    /* ---------- 渲染细节 ---------- */
 
     /**
      * 主阶段的卡类候选按"实际能做什么"分组。
-     *
-     * <p>以前一律打成"通常召唤"：把只能盖放的魔法、只能特招的额外怪兽都标成"通常召唤"，
-     * 模型据此选出来的动作经常不是它以为的那个；而位置决策又恰恰取决于动词
-     * （召唤落怪兽区、盖魔陷落魔陷区），标签错了位置也必然跟着错。
-     * 分组顺序与 {@code Candidates.from} 的生成顺序一致；万一不一致就退化成统一标签，不猜。
      */
     private void appendMainPhaseCards(StringJoiner sj, DecisionPoint point,
                                       ChoiceRequest.MainPhaseRequest m) {
@@ -913,18 +836,12 @@ public final class ContextPackBuilder {
 
     /**
      * 连锁上下文：当前链的每一环（发动者 / 卡名 / 效果号 / 该卡效果摘要）。
-     * <p>没有这块，模型只能看到"有 3 个效果可连锁"，却不知道现在到底在响应什么——
-     * 而连锁判断的第一依据正是"我现在要打断的是哪一环"。
-     * <p>实测教训：只给卡名+效果号时，模型会自己臆测"对方这个效果没什么用"从而漏断，
-     * 所以每一环都附上该卡效果文本（含发动条件）。
      */
     private void appendChainBlock(StringJoiner sj, DecisionPoint point, ChoiceRequest.ChainRequest request) {
         List<ChainNode> chain = point.state().currentChain();
         if (chain.isEmpty()) {
             sj.add("当前连锁：无（本次时点还没有发动）");
         } else {
-            // 链必须完整：每一环都要在。缺环 → 模型会自己补因果（实机：链上少了被无效的那一环，
-            // 模型就断言"对方那个效果已被我方无效"，从而把一个还会结算的展开当成已经断了）。
             sj.add("当前连锁（" + chain.size() + " 环；结算次序 " + resolveOrder(chain)
                     + "，后发的先结算）：");
             for (ChainNode node : chain) {
@@ -935,16 +852,9 @@ public final class ContextPackBuilder {
                                 null, null, null), facts)
                         + "（" + ZoneCodes.describe(node.source()) + "）"
                         + (node.negated() ? "  ← 已被无效：这一环不会生效" : ""));
-                // 关键：明确"这一环发动的是哪一条效果"。完整条款不打折：
-                // 以前只给"从 ① 起的前 120 字"，多效果卡的后面几条会被整段切掉：
-                // 实机事故——对方「王之仆人-黑魔术师」发动 ③（对方场上魔陷全部破坏），
-                // 上下文只有 ①②（当作黑魔术师 / 手卡特召），模型看不到任何"破坏"，
-                // 于是判"弃权保留两张速攻与机关"，而这一环结算后正是把这三张全部破坏。
                 List<String> clauses = cardText.clauses(passcode);
                 Optional<String> fired = cardText.clauseOf(passcode, clauses, node.effectDescription());
                 // 对象必须点名：卡面只写"以…为对象"，不写是哪张。
-                // 实机：黑魔导阵②"以对方场上1张卡为对象除外"，模型自己补成"要除外我方燎里"，
-                // 实际对象是我方后场的速攻魔法——猜错对象就会选错应对牌。
                 if (!node.targets().isEmpty()) {
                     sj.add("      对象：" + targetLabels(node.targets(), point.state()));
                 } else if (fired.isPresent() && fired.get().contains("为对象")) {
@@ -1022,16 +932,6 @@ public final class ContextPackBuilder {
         return DuelMathService.labelOf(instanceOf(card), facts);
     }
 
-    /**
-     * "是否发动"定位不到是哪一条时的退化渲染：逐条列出 + 用排除法引导，<b>不许</b>写成
-     * "这次要发动的是：①…／②…／③…"——那等于把第一条说成本次效果。
-     *
-     * <p>实机事故（最新一局 seq=10）：奇亚诺丝①特召成功后，引擎问的是 <b>②</b>（从卡组·墓地特召
-     * 露世）。MSG_SELECT_EFFECTYN 的 description 是提示文 id（0/221），解不出序号，旧实现退回
-     * "列出全部条款"，却仍冠以"这次要发动的是："，模型读成①，答"①已用过、再丢魔法卡无净收益 →
-     * 不发动"，把一次白赚的露世特召丢了。所以这里要明说"协议没标出是哪一条"，并把唯一可靠的
-     * 定位手段（排除本回合已发动的 + 对齐当前时点）写出来。
-     */
     private void appendUnlabeledEffectClauses(StringJoiner sj, long passcode) {
         List<String> clauses = cardText.clauses(passcode);
         if (clauses.isEmpty()) {
@@ -1048,7 +948,6 @@ public final class ContextPackBuilder {
                 + "刚有卡加入手牌…）；③ 不要默认按 ① 的代价与收益来判断，按你定位到的那一条算净收益。");
     }
 
-    /** 效果文的分条标记（多效果卡）。 */
     private static final String CLAUSE_MARKS = "①②③④⑤⑥⑦⑧";
 
     /** 除"本次发动"那条以外的其他条款（避免上下文里同一句话出现两遍）。 */
@@ -1063,19 +962,11 @@ public final class ContextPackBuilder {
         }
     }
 
-    /** 候选卡面预算。 */
     private static final int CANDIDATE_FACT_MAX_CARDS = 6;
     private static final int CANDIDATE_FACT_TOTAL_LIMIT = 1_200;
 
     /**
      * {@code [候选卡面]}：本次可选的卡的效果摘要。
-     *
-     * <p>为什么需要：候选行只有"名字（种类）"，讲不出"选了会不会白费"。
-     * 实战事故——零露②要求"破坏场上 1 张卡"，模型把对方「超魔导龙骑士」选了进去，
-     * 而那张卡 ① 明写『这张卡不会被效果破坏，双方不能把这张卡作为效果的对象』，
-     * 整次除去直接白给（同一局它自己在上一句还写着"破坏龙骑士以外的卡"）。
-     *
-     * <p>只给候选里的卡、且逐条列（不只第一条），总量有上限——决策包每回合要发几十次，不能无限长。
      */
     private void appendCandidateCardFacts(StringJoiner sj, DecisionPoint point) {
         List<ChoiceRequest.CardChoice> choices = new ArrayList<>();
@@ -1117,11 +1008,6 @@ public final class ContextPackBuilder {
 
     /**
      * {@code [本回合可用性]}：把手牌里"这一回合发不出来的魔法卡"直接点名。
-     *
-     * <p>为什么由代码说：这是**规则事实**，不是判断——手牌里的魔法卡（速攻/通常/永续/装备/场地/仪式）
-     * 在对手回合发不出来；连"留到对手回合用"都不成立。模型已经在这条上错了三次
-     * （不盖抓锚 → 对手回合空转 → 自己回合为了用掉又乱发），每次都要靠人发现。
-     * 只列魔法卡、不列陷阱：陷阱里有"可以从手牌发动"的例外，点错了比不说更糟。
      */
     private void appendHandSpellUsability(StringBuilder sb, DuelState state) {
         List<CardInstance> hand = state.player(PlayerSide.SELF).hand();
@@ -1155,14 +1041,10 @@ public final class ContextPackBuilder {
             return "（无）";
         }
         StringJoiner sj = new StringJoiner("、");
-        // 带种类标记：手牌里的〔速攻魔法〕〔通常陷阱〕和〔怪兽/手坑〕在"对手回合能不能用"上
-        // 完全不同，而这个区别恰恰决定"要不要现在盖下去"。不标的话模型只看到卡名，
-        // 就会把手里那张速攻当成对手回合的阻抗（实机反复出现）。
         hand.forEach(c -> sj.add(DuelMathService.labelOf(c, facts) + typeTagOf(c)));
         return sj.toString();
     }
 
-    /** 手牌/场上卡的种类标记（非怪兽卡才有）。 */
     private String typeTagOf(CardInstance card) {
         if (card == null || card.identity() == null || card.identity().passcode() <= 0) {
             return "";
@@ -1291,10 +1173,6 @@ public final class ContextPackBuilder {
 
     /**
      * 非怪兽卡补一个种类标记（{@code 〔永续魔法〕〔速攻魔法〕〔通常陷阱〕}…）。
-     *
-     * <p>不标这一条，模型判不出"这张盖下去能不能在对手回合发动"——实战里它把
-     * {@code 永续魔法} 当阻抗盖下去，还写进回合计划当第一步，结果这一步永远执行不了。
-     * 卡库里本来就有 {@code card_type}，只是以前没进决策上下文。
      */
     private String typeTag(ChoiceRequest.CardChoice choice) {
         if (choice == null || choice.identity() == null || choice.identity().passcode() <= 0) {
@@ -1375,13 +1253,6 @@ public final class ContextPackBuilder {
 
     /**
      * {@code [收尾审计]}：这一步可以结束回合时，把"还摆着哪几类可选动作"逐类摊开。
-     *
-     * <p>为什么需要：模型结束回合时常常只回答"当前没有净收益的动作"，但它**并没有逐项看过**
-     * 候选——实机里计划写了"把抓锚与双纽闪门盖下去"，它却在主阶段直接结束回合，
-     * 理由只谈特召与格子，连"盖放魔陷"这一行有 3 个候选都没提。
-     *
-     * <p>所以把"还没评估的类别"直接列在结束回合旁边：这是候选集的另一种排法（事实），
-     * 不是替它做判断。要求它逐类给出放弃理由，才能算真的评估过。
      */
     private void appendEndTurnAudit(StringJoiner sj, DecisionPoint point, ChoiceRequest.MainPhaseRequest m) {
         boolean canEndTurn = point.candidatesOf(Candidate.FlagC.class).stream()
@@ -1427,14 +1298,6 @@ public final class ContextPackBuilder {
 
     /**
      * "结束回合"这个选项的附注：手上还有几张能盖的速攻/陷阱没盖。
-     *
-     * <p>为什么挂在选项上：这是"最后一刻"的位置。实测模型会在计划里写"把抓锚盖下去"，
-     * 到了主阶段却选"结束回合"，理由只谈特召与格子——因为"盖放"没有即时收益，
-     * 而"不要为用而用"这条纪律又把它推向结束。把成本/收益直接印在选项上，
-     * 它做选择时就不可能"没看见"。
-     *
-     * <p>只数 {@code 速攻魔法} 与 {@code 陷阱}：这两类盖下去确实能在对手回合用；
-     * 通常/永续/装备/场地/仪式魔法盖了也用不了，数进来只会误导。
      */
     private String endTurnNote(DecisionPoint point) {
         if (!point.state().isMyTurn()) {

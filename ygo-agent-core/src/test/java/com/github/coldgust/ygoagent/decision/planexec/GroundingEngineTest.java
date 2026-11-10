@@ -168,7 +168,6 @@ class GroundingEngineTest {
     @Test
     void handChainResponseIsNotGroundedByPlan() {
         // 手牌响应（G/灰/速攻）的时机由对手这一环决定，计划里的"对手特召时交G"不能在这种窗口硬发。
-        // 实机：计划写"对手首次特召/检索时交G"，T4 末端只要候选里有 G 就照发。
         var state = TestDuels.state(2, false, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
         var effect = TestDuels.effectChoice(80, TestDuels.HORNET, 1001); // 手牌
         var request = new ChoiceRequest.ChainRequest(List.of(

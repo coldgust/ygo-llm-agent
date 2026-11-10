@@ -36,7 +36,6 @@ public interface DuelListener {
     default void onEffectActivated(int controllerSeat, long passcode, long description) {
     }
 
-    /** 对局结束。 */
     default void onDuelEnd(DuelResult result) {
     }
 
@@ -44,7 +43,6 @@ public interface DuelListener {
     default void onError(Throwable error) {
     }
 
-    /** 连接关闭。 */
     default void onDisconnected() {
     }
 }

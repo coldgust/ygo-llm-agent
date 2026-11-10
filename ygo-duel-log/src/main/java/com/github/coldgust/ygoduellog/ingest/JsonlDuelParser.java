@@ -18,9 +18,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 将 recorder 的 JSONL 解析为对局元信息 + 决策 episode（L1 只做结构化，不解析完整 DuelState）。
- */
 public final class JsonlDuelParser {
 
     private static final ObjectMapper MAPPER = JsonMapper.builder()
@@ -147,7 +144,6 @@ public final class JsonlDuelParser {
         return null;
     }
 
-    /** 可见局面摘要（只取组合匹配需要的字段）。 */
     private record StateSummary(List<Long> hand, List<Long> field, int selfLp, int oppLp) {
 
         private static StateSummary empty() {

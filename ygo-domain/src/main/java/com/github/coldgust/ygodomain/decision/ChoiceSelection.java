@@ -21,9 +21,7 @@ public sealed interface ChoiceSelection {
         public static final Cancel INSTANCE = new Cancel();
     }
 
-    /* ================= 主要阶段 ================= */
 
-    /** 主阶段的一个动作。 */
     sealed interface MainPhaseAction permits Summon, SpecialSummon, Reposition,
             SetMonster, SetSpellTrap, Activate, EnterBattlePhase, EndTurn, ShuffleHand {
     }
@@ -61,9 +59,7 @@ public sealed interface ChoiceSelection {
     record MainPhaseSelection(MainPhaseAction action) implements ChoiceSelection {
     }
 
-    /* ================= 战斗阶段 ================= */
 
-    /** 战斗阶段的一个动作。 */
     sealed interface BattlePhaseAction permits BattleActivate, Attack, EnterMainPhase2, EndBattlePhase {
     }
 
@@ -84,7 +80,6 @@ public sealed interface ChoiceSelection {
     record BattlePhaseSelection(BattlePhaseAction action) implements ChoiceSelection {
     }
 
-    /* ================= 选卡族 ================= */
 
     /** 选卡：selected 为所选手卡（数量须在 [min, max] 内）。 */
     record CardSelection(List<ChoiceRequest.CardChoice> selected) implements ChoiceSelection {
@@ -131,7 +126,6 @@ public sealed interface ChoiceSelection {
     record UnselectSelection(UnselectStep step) implements ChoiceSelection {
     }
 
-    /* ================= 连锁 ================= */
 
     /** 连锁应答：respond = 发动某个效果；decline = 不连锁（有强制效果时非法）。 */
     sealed interface ChainAnswer extends ChoiceSelection {
@@ -149,7 +143,6 @@ public sealed interface ChoiceSelection {
     record ChainSelection(ChainAnswer answer) implements ChoiceSelection {
     }
 
-    /* ================= 区域与表示形式 ================= */
 
     /** 选区域：zones 为选定的格子（数量须等于请求的 count）。 */
     record PlaceSelection(List<ZoneRef> zones) implements ChoiceSelection {
@@ -162,11 +155,9 @@ public sealed interface ChoiceSelection {
         }
     }
 
-    /** 选表示形式。 */
     record PositionSelection(Position position) implements ChoiceSelection {
     }
 
-    /* ================= 是/否与选项 ================= */
 
     record EffectYesNoSelection(boolean activate) implements ChoiceSelection {
     }
@@ -178,7 +169,6 @@ public sealed interface ChoiceSelection {
     record OptionSelection(int index) implements ChoiceSelection {
     }
 
-    /* ================= 宣言族 ================= */
 
     record DeclareRaceSelection(Set<MonsterRace> races) implements ChoiceSelection {
         public DeclareRaceSelection {
@@ -200,7 +190,6 @@ public sealed interface ChoiceSelection {
     record DeclareNumberSelection(int index) implements ChoiceSelection {
     }
 
-    /* ================= 排序与指示物 ================= */
 
     /** 排序：ordered 为新顺序（原候选的一个排列）。 */
     record SortSelection(List<ChoiceRequest.CardChoice> ordered) implements ChoiceSelection {

@@ -1,15 +1,5 @@
 package com.github.coldgust.ygoagent.decision.model;
 
-/**
- * 决策路径来源（写入 trace，用于 A/B 与复盘）。
- *
- * <p>命名原则：一眼看出"<b>这次是谁做的决定</b>"，而不是描述内部机制。
- * 旧名的问题是：{@code REFLEX} 让人以为"反应快"，实际是"没得选"；
- * {@code LLM_ONESHOT} 是术语，看不出是"临时叫一次模型"；{@code PLAN_EXACT} 描述的是匹配算法，
- * 而使用者只关心"是不是照计划走的"。
- *
- * <p>每个值带一个中文标签（{@link #label()}），日志与前端直接用，不必再翻译一遍。
- */
 public enum PathKind {
     /** 引擎只给了唯一合法（或结构上无歧义）的选项：没有策略判断的余地。 */
     ONLY_CHOICE("唯一合法"),
@@ -32,7 +22,6 @@ public enum PathKind {
         this.label = label;
     }
 
-    /** 中文短标签（日志 / 前端徽标）。 */
     public String label() {
         return label;
     }

@@ -56,7 +56,6 @@ public sealed interface ChoiceIntent {
         };
     }
 
-    /* ---------- 主阶段 ---------- */
     record Summon(CandidateId card) implements ChoiceIntent {
     }
 
@@ -84,7 +83,6 @@ public sealed interface ChoiceIntent {
     record ShuffleHand() implements ChoiceIntent {
     }
 
-    /* ---------- 战斗阶段 ---------- */
     record BattleActivate(CandidateId effect) implements ChoiceIntent {
     }
 
@@ -97,14 +95,12 @@ public sealed interface ChoiceIntent {
     record EndBattlePhase() implements ChoiceIntent {
     }
 
-    /* ---------- 连锁 ---------- */
     record ChainDecline() implements ChoiceIntent {
     }
 
     record ChainRespond(CandidateId option) implements ChoiceIntent {
     }
 
-    /* ---------- 是/否与选项 ---------- */
     record EffectYesNo(boolean activate) implements ChoiceIntent {
     }
 
@@ -114,7 +110,6 @@ public sealed interface ChoiceIntent {
     record Option(int index) implements ChoiceIntent {
     }
 
-    /* ---------- 选卡族 ---------- */
     record Select(List<CandidateId> cards) implements ChoiceIntent {
         public Select {
             cards = cards == null ? List.of() : List.copyOf(cards);
@@ -145,7 +140,6 @@ public sealed interface ChoiceIntent {
     record Cancel() implements ChoiceIntent {
     }
 
-    /* ---------- 区域/形式 ---------- */
     record Place(List<CandidateId> zones) implements ChoiceIntent {
         public Place {
             zones = zones == null ? List.of() : List.copyOf(zones);
@@ -155,7 +149,6 @@ public sealed interface ChoiceIntent {
     record PositionChoice(Position position) implements ChoiceIntent {
     }
 
-    /* ---------- 宣言族 ---------- */
     record DeclareRace(Set<MonsterRace> races) implements ChoiceIntent {
         public DeclareRace {
             races = races == null ? Set.of() : Set.copyOf(races);
@@ -174,7 +167,6 @@ public sealed interface ChoiceIntent {
     record DeclareNumber(int index) implements ChoiceIntent {
     }
 
-    /* ---------- 排序/指示物 ---------- */
     record Sort(List<CandidateId> order) implements ChoiceIntent {
         public Sort {
             order = order == null ? List.of() : List.copyOf(order);

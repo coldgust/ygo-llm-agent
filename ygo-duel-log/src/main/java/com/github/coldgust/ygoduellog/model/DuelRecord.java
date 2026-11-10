@@ -2,7 +2,6 @@ package com.github.coldgust.ygoduellog.model;
 
 import java.util.List;
 
-/** 一局对局的入库结果。 */
 public record DuelRecord(DuelMeta meta, List<DecisionEpisode> episodes, int requested, int answered,
                          int contextProvided, boolean valid) {
 

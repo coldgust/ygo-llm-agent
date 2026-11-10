@@ -20,13 +20,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import org.slf4j.LoggerFactory;
 
-/**
- * 内存版记录器 + 查询实现（{@link DuelRecorder} + {@link DuelLog}）。
- *
- * <p>线程模型：{@link #append} 把事件交给**单写者线程**——seq 分配、订阅分发、
- * Sink 落盘都在写者线程完成，保证 seq 与落盘顺序一致，生产者线程永不阻塞。
- * 内存索引为只追加列表，查询通过加锁快照读取。
- */
 public final class InMemoryDuelLog implements DuelRecorder, DuelLog {
 
     private record Context(int turn, String phase, long turnStartWallMillis) {
@@ -38,7 +31,6 @@ public final class InMemoryDuelLog implements DuelRecorder, DuelLog {
         return t;
     });
 
-    /** 只追加；读写均在锁内取快照。 */
     private final List<DuelEvent> events = new ArrayList<>();
     private final List<Consumer<DuelEvent>> subscribers = new CopyOnWriteArrayList<>();
     private final List<DuelEventSink> sinks = new CopyOnWriteArrayList<>();
@@ -48,7 +40,6 @@ public final class InMemoryDuelLog implements DuelRecorder, DuelLog {
     private volatile boolean closed;
     private int selfSeat = -1;
 
-    /* ================= DuelRecorder ================= */
 
     @Override
     public long append(String actor, DuelEventKind kind, DuelEventPayload payload) {
@@ -99,7 +90,6 @@ public final class InMemoryDuelLog implements DuelRecorder, DuelLog {
         }
     }
 
-    /** 记录视角方座位（对局开始时由生产者标注）。 */
     public void markSelfSeat(int seat) {
         this.selfSeat = seat;
     }
@@ -125,7 +115,6 @@ public final class InMemoryDuelLog implements DuelRecorder, DuelLog {
         }
     }
 
-    /* ================= DuelLog ================= */
 
     @Override
     public DuelInfo duelInfo() {
@@ -225,9 +214,7 @@ public final class InMemoryDuelLog implements DuelRecorder, DuelLog {
         }
     }
 
-    /* ================= 测试辅助 ================= */
 
-    /** 同步排空写者队列（仅测试与关闭前使用）。 */
     public void awaitDrain() {
         try {
             writer.shutdown();

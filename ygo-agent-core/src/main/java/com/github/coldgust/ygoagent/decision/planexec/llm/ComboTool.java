@@ -26,7 +26,6 @@ import tools.jackson.databind.json.JsonMapper;
 public final class ComboTool {
 
     public static final String NAME = "find_combos";
-    /** 一次检索最多返回的条数。 */
     public static final int SEARCH_LIMIT = 3;
 
     private static final Logger log = LoggerFactory.getLogger(ComboTool.class);
@@ -45,7 +44,6 @@ public final class ComboTool {
         return recorded != null && recorded.available();
     }
 
-    /** 工具声明。 */
     public List<ChatClient.Tool> tools() {
         Map<String, Object> archetype = new LinkedHashMap<>();
         archetype.put("type", "string");

@@ -12,7 +12,6 @@ public interface FallbackPolicy {
     /**
      * 为请求生成保守应答。
      *
-     * @param request    待回答的请求
      * @param retryCount 本请求已被 MSG_RETRY 打回的次数（0 = 首次）
      */
     ChoiceSelection fallback(ChoiceRequest request, int retryCount);

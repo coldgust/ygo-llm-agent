@@ -22,10 +22,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
 
-/**
- * Tactical v0：单步展开 + 静态打分（无 LLM、无知识库）。
- * <p>每类候选给基础分，按局面做少量修正，取前 N 条。
- */
 public final class TacticalPlannerImpl implements TacticalPlanner {
 
     private static final int MAX_LINES = 6;
@@ -90,7 +86,6 @@ public final class TacticalPlannerImpl implements TacticalPlanner {
         return rank(lines);
     }
 
-    /** 连招命中时把"首步"转成当前候选的意图（找不到可执行候选则视为未命中）。 */
     private Optional<Line> comboLine(DecisionPoint point) {
         if (!(point.request() instanceof ChoiceRequest.MainPhaseRequest request)) {
             return Optional.empty();

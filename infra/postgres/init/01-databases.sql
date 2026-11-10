@@ -1,5 +1,4 @@
 -- 由 docker-entrypoint-initdb.d 在首次初始化时执行
--- 目的：建立两个 database，并各自启用 pgvector
 --   ygo     : 决策服务业务表（match / decision / cards）
 --   ygo_rag : LightRAG 的 KV / 向量 / 文档状态表
 

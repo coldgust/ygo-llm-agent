@@ -8,7 +8,6 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
-/** 思考强度配置项（LLM_REASONING_PLANNER / LLM_REASONING_DECISION）。 */
 class LlmTuningTest {
 
     @Test

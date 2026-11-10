@@ -1,6 +1,5 @@
 package com.github.coldgust.ygoagent.decision.model;
 
-/** 决策输出：意图 + 路径来源 + 置信度 + 解释 + 耗时。 */
 public record DuelDecision(
         ChoiceIntent intent,
         PathKind pathKind,

@@ -137,7 +137,6 @@ class PlanExecutorDecisionPortTest {
 
     @Test
     void optionalChainIsNotSwallowedByReflex() {
-        // 回归：旧 REFLEX 对"可选连锁"直接弃权，导致连锁永远走不到规划器
         Rig rig = rig(fastWait(), "{\"choice\":\"C0\",\"rationale\":\"保留手牌，这一环不值得断\",\"confidence\":0.7}");
         var state = TestDuels.state(2, false, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
         var effect = TestDuels.effectChoice(20, TestDuels.ENGAGE, 1001);
@@ -170,7 +169,7 @@ class PlanExecutorDecisionPortTest {
         assertEquals(PathKind.PLAN_STEP, decision.pathKind());
         assertEquals(ChoiceIntent.Activate.class, decision.intent().getClass());
         assertEquals(0, rig.delegateCalls().get());
-        assertEquals(1, rig.planner().currentPlan().orElseThrow().cursor()); // 已推进
+        assertEquals(1, rig.planner().currentPlan().orElseThrow().cursor());
     }
 
     @Test
@@ -297,8 +296,6 @@ class PlanExecutorDecisionPortTest {
 
         DuelDecision place = rig.port().decide(placePoint(), DecisionDeadline.of(1000));
         // "不再问"由路径种类兜底：位置若没被兑现，这里会是 LLM_CALL/TACTICAL 而非 PLAN_STEP。
-        // 不要在这里数 chat 调用总数——summon 决策后规划器还会异步排队 replan/events checkpoint，
-        // 后台线程何时消费 FakeChat 序列取决于调度（CI 上就因此 4≠5 翻过车）。
         assertEquals(PathKind.PLAN_STEP, place.pathKind(), "位置应由 one-shot 同一次回答给出并兑现");
         assertEquals(List.of("C2"), ((ChoiceIntent.Place) place.intent()).zones().stream()
                 .map(id -> id.value()).toList(), "模型给 MMZ-2，就该提交 C2");
@@ -325,7 +322,6 @@ class PlanExecutorDecisionPortTest {
     @Test
     void chainWindowDoesNotAbandonAnActivePlan() {
         // 连锁在计划里只是"预测"（对手检索就丢灰）：预测没命中不等于主计划破产。
-        // 旧行为是任何非主线请求接不上地就作废整份计划 → 对手回合几乎每个窗口都要重规划。
         Rig rig = rig(fastWait(),
                 planJson("summon", TestDuels.HORNET),
                 "{\"keep\": true}",
@@ -453,7 +449,6 @@ class PlanExecutorDecisionPortTest {
 
     @Test
     void similarBranchMatchesWhenMainLineMisses() {
-        // 分支在 main_line 内部（§3.1 schema）
         String plan = """
                 {"thinking": "t", "goal": "g",
                  "main_line": {"steps": [{"when": "MAIN1", "verb": "activate", "passcode": 999}],
@@ -551,8 +546,6 @@ class PlanExecutorDecisionPortTest {
 
     @Test
     void waitingForPlanDoesNotEatTheDecisionBudget() {
-        // 用户要求：等计划是"额外时间"。连锁预算 1.2s，先等 1s 仍没拿到计划，
-        // 之后 one-shot 必须还有完整预算——旧实现只剩 0.2s，直接放弃。
         PlannerSettings cfg = new PlannerSettings(true, settings().baseUrl(), settings().apiKey(),
                 settings().model(), 150, 1_000, 20_000, 6, 0.80, 5_000,
                 settings().plannerCallTimeoutMs(), settings().plannerCooldownMs(),

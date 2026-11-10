@@ -21,18 +21,6 @@ import java.util.Deque;
 
 /**
  * 规划器 JSON → TurnPlan 的确定性解析（v6 §3.1 输出 schema）。
- *
- * <p>解析策略：<b>外层宽容、内层严格</b>。
- * <ul>
- *   <li>外层宽容：模型常带 ```json 围栏、前后寒暄、中文动词、字符串卡号、甚至 JSON 被截断，
- *       这些都先做确定性修复再解析——宁可修，不要因为格式噪音丢掉整份计划。</li>
- *   <li>内层严格：动作词必须落在封闭词表里（未知动词 = 不按 schema 说话，整份拒绝）。
- *       卡号则宽松：卡库里查不到只打 {@code unknownPasscode} 标（卡库可能滞后于新卡），
- *       <b>"没写卡号"更不算非法</b>——计划常引用
- *       "先检索再通召"这种当前还看不见的卡，逼它写卡号只会逼出编造；
- *       {@code passcode=0} 在接地层是通配符，接不上地会触发"计划作废 + 重规划"，
- *       比整份丢掉温和得多（实机一局因此整回合没有计划）。</li>
- * </ul>
  */
 public final class PlanTreeParser {
 
@@ -48,7 +36,6 @@ public final class PlanTreeParser {
             "attack", "place", "select", "reposition", "link",
             "end_turn", "enter_battle", "enter_main2", "end_battle");
 
-    /** 不需要卡号的动作（选择类/流程类）。 */
     private static final Set<String> NO_PASSCODE = Set.of(
             "place", "select", "end_turn", "enter_battle", "enter_main2", "end_battle");
 
@@ -115,13 +102,6 @@ public final class PlanTreeParser {
         return sb.toString().trim();
     }
 
-    /**
-     * 取一段文本；如果给的是<b>动作序列数组</b>（{@code ["A","B","C"]} 或 {@code [{"do":"A"},…]}），
-     * 就按 {@code A → B → C} 连起来。
-     *
-     * <p>为什么要支持数组：规划器被要求"把整条线写成动作序列"后，最自然的输出就是数组；
-     * 只认字符串会让整条线被丢弃（渲染成空行），计划看起来又变成"只有一句话"。
-     */
     private static String sequence(JsonNode item, String... keys) {
         for (String key : keys) {
             JsonNode node = item.get(key);
@@ -288,7 +268,6 @@ public final class PlanTreeParser {
                 steps, branches, confidence, dropped[0]), null);
     }
 
-    /* ================= 结构解析 ================= */
 
     /** 分支也转成 step（供 ③ 相似匹配接地）。分支步骤允许缺卡号（只是提示性假设）。 */
     private static TurnPlan.TurnBranch parseBranch(JsonNode branchNode, int[] dropped,
@@ -325,7 +304,6 @@ public final class PlanTreeParser {
         return new TurnPlan.TurnBranch(name, assumes, steps);
     }
 
-    /** 单步构建结果：成功给 step，失败给人类可读原因。 */
     private record StepOutcome(PlanStep step, String problem) {
     }
 
@@ -347,8 +325,6 @@ public final class PlanTreeParser {
         // 解析失败只丢位置、不丢整步——位置写错（"中间那格"）远比动作写错轻。
         JsonNode zoneNode = child(stepNode, "zone", "place_to", "dest", "destination", "area", "zoneCode");
         ZoneRef zone = parseZone(zoneNode);
-        // 缺卡号（passcode=0）一律放行：它常是"稍后检索到手的卡"，接地层按动词通配；
-        // 硬拒的代价是整份计划作废（实机一局因此整回合没有计划）。
         boolean wildcard = passcode <= 0 && !NO_PASSCODE.contains(verb)
                 && !WILDCARD_PASSCODE.contains(verb) && !lenientPasscode;
         // 卡号给了但卡库里没有：**只打标，不拒绝**。卡库（15k 张）可能滞后于新卡，
@@ -418,7 +394,6 @@ public final class PlanTreeParser {
         return ZoneCodes.parse(encoded, side).orElse(null);
     }
 
-    /* ================= 词表归一 ================= */
 
     private static String canonicalVerb(String raw) {
         if (raw == null || raw.isBlank()) {
@@ -443,7 +418,6 @@ public final class PlanTreeParser {
         return trimmed;
     }
 
-    /** 归一化：小写 + 去掉空白/下划线/连字符/点/斜杠。 */
     private static String normalizeKey(String raw) {
         StringBuilder sb = new StringBuilder(raw.length());
         for (char c : raw.trim().toLowerCase(Locale.ROOT).toCharArray()) {
@@ -500,12 +474,7 @@ public final class PlanTreeParser {
         }
     }
 
-    /* ================= JSON 提取与修复 ================= */
 
-    /**
-     * 从模型输出里取出 JSON 对象：剥 ``` 围栏、丢前后寒暄、按括号配对截断；
-     * 若被截断（括号/引号未闭合）则补齐后再试。
-     */
     static String extractJson(String raw) {
         if (raw == null || raw.isBlank()) {
             return null;
@@ -533,7 +502,6 @@ public final class PlanTreeParser {
         return json.replaceAll(",\\s*([}\\]])", "$1");
     }
 
-    /** 返回与首个 '{' 配对的 '}' 下标；未闭合返回 -1。 */
     private static int matchBrace(String s) {
         int depth = 0;
         boolean inString = false;
@@ -611,7 +579,6 @@ public final class PlanTreeParser {
         return repaired.equals(s) ? null : repaired;
     }
 
-    /* ================= 小工具 ================= */
 
     private static JsonNode child(JsonNode node, String... keys) {
         if (node == null) {

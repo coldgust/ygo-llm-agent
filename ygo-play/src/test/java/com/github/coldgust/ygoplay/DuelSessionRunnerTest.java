@@ -40,8 +40,6 @@ class DuelSessionRunnerTest {
 
     @Test
     void cancelOnMandatoryUnselectIsRejectedAndAdvances() throws Exception {
-        // 实机死循环：主阶段特招 → 选素材（Unselect min=1）→ 取消 → 回主阶段 → 再特招…127 次。
-        // 取消"至少选 1 张"的选择 = 回滚上一步，引擎会重问；映射层必须判非法并兜底成"选第一张"。
         CardInstance material = monster(7, 37351133);
         DuelState state = state(List.of(material));
         var choice = choice(material);
@@ -70,8 +68,6 @@ class DuelSessionRunnerTest {
 
     @Test
     void alternatingLoopIsBrokenByWindowDetection() throws Exception {
-        // 真实死循环是"两个动作交替"：主阶段反复特招 ↔ 选择时反复取消。
-        // 连续判重永远命中不了，必须用窗口判重。
         CardInstance settable = hand(8, 63166095);
         CardInstance material = monster(9, 37351133);
         DuelState state = state(List.of(settable));
@@ -110,8 +106,6 @@ class DuelSessionRunnerTest {
 
     @Test
     void reportsWhatWasActuallySubmitted() throws Exception {
-        // 前端原来只显示"决策路径 + 意图类型"，看不出到底放了哪个区。
-        // 运行器必须把最终应答翻成一句话交出去。
         CardInstance summoned = hand(1, 89631139);
         DuelState state = state(List.of(summoned));
         var summonChoice = choice(summoned);

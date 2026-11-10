@@ -1,4 +1,3 @@
-/* 共享样式：表单/按钮/事件流 */
 form.controls {
   display: flex;
   flex-wrap: wrap;

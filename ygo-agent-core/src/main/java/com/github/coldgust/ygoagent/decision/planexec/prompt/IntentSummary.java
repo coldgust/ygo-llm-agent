@@ -13,16 +13,6 @@ import java.util.stream.Collectors;
 
 /**
  * 把"已经提交出去的一手"压成一句人话，用于给下一次决策交代上下文。
- *
- * <p>为什么需要：one-shot 每手都是<b>独立单轮调用</b>（system + 当前局面），它看不到自己刚才
- * 做过什么、也不知道自己上一手说过什么。于是常见两种自相矛盾：
- * <ul>
- *   <li>上一手判"保留零露作终场阻抗"，几十秒后另一手把它解放掉；</li>
- *   <li>上一手写"泡影要留给对方上级怪兽"，下一手在检索环节就交了。</li>
- * </ul>
- * 这不是模型"健忘"，是上下文里根本没有这段历史。
- *
- * <p>这里只做<b>事实摘要</b>（选了什么、放到哪），不做评价——评价属于 rationale。
  */
 public final class IntentSummary {
 
@@ -32,7 +22,6 @@ public final class IntentSummary {
         this.cardText = new CardText(facts);
     }
 
-    /** 一句短语，如"通常召唤 闪刀姬-零衣(26077387) → MMZ-3"。 */
     public String of(ChoiceIntent intent, DecisionPoint point) {
         if (intent == null) {
             return "";
@@ -105,7 +94,6 @@ public final class IntentSummary {
                 .collect(Collectors.joining("、"));
     }
 
-    /** 卡/效果候选的显示名：名字（种类）。 */
     private String label(Candidate candidate) {
         return switch (candidate) {
             case Candidate.CardC c -> cardText.card(c.value().identity().passcode());

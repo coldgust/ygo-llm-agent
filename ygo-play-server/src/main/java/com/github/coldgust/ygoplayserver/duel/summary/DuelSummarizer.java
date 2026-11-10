@@ -9,24 +9,13 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * 一次赛后复盘调用。
- *
- * <p>刻意做得"能失败"：返回 {@link Optional#empty()} 表示这次没拿到可用复盘，
- * 调用方退回确定性模板。摘要属于旁路产物，绝不能因为它挂掉而对局结果受影响。
- *
- * <p>除 7 个固定小节外，模型还要给「入库判定」小节（这局有没有值得沉淀的经验）。
- * 判定与正文一起返回：正文已剥离判定节（元信息不进对局库），判定供 auto 入库策略裁决。
- */
 public final class DuelSummarizer {
 
     private static final Logger log = LoggerFactory.getLogger(DuelSummarizer.class);
 
-    /** 模型写在「入库判定」小节里的否定标记（肯定标记缺失视同值得，见 {@link #worth}）。 */
     static final String NOT_WORTH_MARK = "判定：不值得入库";
     private static final String VERDICT_HEADING = "## 入库判定";
 
-    /** 复盘正文（已剥掉入库判定节）+ 模型判定。 */
     public record Review(String body, boolean worthStoring) {
     }
 
@@ -64,18 +53,11 @@ public final class DuelSummarizer {
         }
     }
 
-    /**
-     * 解析「入库判定」小节。
-     *
-     * <p>按第一行标记「判定：不值得入库」判否（不能模糊查"不值得"，理由里可能出现这个字样）。
-     * 判定缺失或格式不符时按值得处理——模型已经写出完整复盘，宁可多收一条，也不因漏一行就丢。
-     */
     static boolean worth(String body) {
         String verdict = section(body, VERDICT_HEADING);
         return !verdict.contains(NOT_WORTH_MARK);
     }
 
-    /** 剥掉入库判定节（含节标题到下一个 ## 之前）；没有该节则原样返回。 */
     static String stripVerdict(String body) {
         int start = body.indexOf(VERDICT_HEADING);
         if (start < 0) {
@@ -88,7 +70,6 @@ public final class DuelSummarizer {
         return (head + tail).trim();
     }
 
-    /** 取一个小节的正文（标题行之后到下一个 ## 之前）。 */
     private static String section(String body, String heading) {
         int start = body.indexOf(heading);
         if (start < 0) {

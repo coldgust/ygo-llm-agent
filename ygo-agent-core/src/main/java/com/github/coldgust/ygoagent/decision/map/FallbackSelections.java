@@ -11,10 +11,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-/**
- * 映射失败时的直接保底：从请求对象构造第一个合法 ChoiceSelection。
- * 只用于异常兜底，正常路径不会走到这里。
- */
 public final class FallbackSelections {
 
     public static ChoiceSelection firstLegal(ChoiceRequest r) {

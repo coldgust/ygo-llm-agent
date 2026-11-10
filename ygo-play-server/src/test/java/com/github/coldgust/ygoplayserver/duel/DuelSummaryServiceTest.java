@@ -14,9 +14,6 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * 赛后复盘：文档头必须确定，正文优先由 LLM 写，LLM 不可用时退回模板。
- */
 class DuelSummaryServiceTest {
 
     private static final String TRACE = """
@@ -75,11 +72,9 @@ class DuelSummaryServiceTest {
             String summary = new DuelSummaryService(new MockEnvironment(), fake)
                     .build("d2", spec(log, trace), null);
 
-            // 头是代码给的，正文是模型给的
             assertTrue(summary.startsWith("domain: duel\n"), summary);
             assertTrue(summary.contains("## 一句话结论"), summary);
             assertFalse(summary.contains("由模板生成"), summary);
-            // 素材里必须有可读动作与计划目标，否则模型只能瞎猜
             assertTrue(seen[0].contains("盖放魔陷 双纽闪门"), seen[0]);
             assertTrue(seen[0].contains("先手空过，盖双纽闪门留作资源"), seen[0]);
             assertTrue(seen[0].contains("没有能特召的怪，先盖后场"), seen[0]);
@@ -96,7 +91,6 @@ class DuelSummaryServiceTest {
         try {
             Files.writeString(trace, TRACE);
             Files.writeString(log, "");
-            // 少了固定小节 → 判为不可用
             ChatClient rambling = (messages, options) -> "这局打得还行，下次注意资源。";
 
             String summary = new DuelSummaryService(new MockEnvironment(), rambling)
@@ -157,7 +151,6 @@ class DuelSummaryServiceTest {
 
     @Test
     void narrativeCapsRunawayActionLists() {
-        // 40 条相同动作：不能把提示词撑爆
         StringBuilder trace = new StringBuilder();
         for (int i = 0; i < 40; i++) {
             trace.append("{\"kind\":\"SUBMITTED\",\"seq\":").append(i)
@@ -187,7 +180,6 @@ class DuelSummaryServiceTest {
         assertTrue(narrative.timeline().contains("我方回合"), narrative.timeline());
     }
 
-    /** 模型判定不值得入库 → draft.worth=false，且判定节不出现在最终文档里。 */
     @Test
     void judgedDraftRejectsWorthlessDuelAndStripsVerdict() throws Exception {
         Path trace = Files.createTempFile("duel-trace", ".jsonl");
@@ -221,7 +213,6 @@ class DuelSummaryServiceTest {
         }
     }
 
-    /** 判定缺失（模型忘了写）按值得处理——正文本身是完整的。 */
     @Test
     void missingVerdictDefaultsToWorth() throws Exception {
         Path trace = Files.createTempFile("duel-trace", ".jsonl");
@@ -229,7 +220,6 @@ class DuelSummaryServiceTest {
         try {
             Files.writeString(trace, TRACE);
             Files.writeString(log, "");
-            // 够长（looksUsable 要求 ≥80 字）但没有「入库判定」节 → 按值得处理
             ChatClient fake = (messages, options) -> """
                     ## 一句话结论
                     我方后手顶住对手第一波场面后，抓住对手断资源的一回合完成反打并带走比赛。
@@ -249,7 +239,6 @@ class DuelSummaryServiceTest {
         }
     }
 
-    /** auto 策略下 LLM 完全不可用（模板兜底不含判断）→ 不产出可入库正文。 */
     @Test
     void judgedDraftWithoutLlmIsNotMarkedFromLlm() throws Exception {
         Path log = Files.createTempFile("duel-log", ".jsonl");

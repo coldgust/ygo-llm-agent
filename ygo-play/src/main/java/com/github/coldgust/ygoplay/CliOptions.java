@@ -3,9 +3,6 @@ package com.github.coldgust.ygoplay;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 命令行参数：只表达"用户显式给了什么"，未给的留空，由 {@link RuntimeConfig} 合并环境/.env/默认值。
- */
 public record CliOptions(
         String host, Integer port, String name, String ydkPath, String move,
         String tracePath, String duelLogPath,

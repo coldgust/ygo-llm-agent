@@ -15,7 +15,6 @@ public interface Transport extends AutoCloseable {
     /** 发送一帧原始字节（帧由 {@code FrameCodec.encode} 构造）。 */
     void send(byte[] frame) throws Exception;
 
-    /** 是否已建立连接。 */
     boolean isConnected();
 
     @Override

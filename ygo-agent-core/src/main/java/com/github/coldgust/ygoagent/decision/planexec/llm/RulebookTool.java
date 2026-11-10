@@ -19,13 +19,6 @@ import java.util.Map;
 
 /**
  * 规则书检索工具：把"查规则"这件事做成模型可自主调用的函数（OpenAI tools / function calling）。
- *
- * <p>为什么不让系统每步都预检索：绝大多数决策（召唤哪只、打不打）只需要常识，
- * 真正需要精确条文的只是少数（冷门裁定、连锁速度的边界、区域归属）。让模型自己判断
- * "这一步要不要翻规则书"，比每步都检索更省、也更贴合人类牌手的做法。
- *
- * <p>底层是 LightRAG 的 {@code /query/data}（只取证据、不额外调 LLM 生成），
- * 因此检索结果不会被二次改写，能保留规则书原文与来源页码。
  */
 public final class RulebookTool {
 
@@ -60,10 +53,6 @@ public final class RulebookTool {
 
     /**
      * 从配置构建：优先进程环境，其次当前/上级目录的 {@code .env}。
-     *
-     * <p>为什么要补文件回退：web 端用 {@code spring-boot:run} 时工作目录在子模块，
-     * 仓库根的 {@code .env} 不会进 {@code System.getenv()}；只读环境变量会让检索带着空 key
-     * 打过去 401（LightRAG 开了 AUTH_ACCOUNTS 后必然如此）。CLI 直接跑在仓库根则命中同一份配置。
      */
     public static RulebookTool fromEnv() {
         return new RulebookTool(
@@ -76,10 +65,6 @@ public final class RulebookTool {
 
     /**
      * 单 workspace 多域共存时的检索侧隔离：规则工具只接受规则域来源。
-     *
-     * <p>判定用"排除法"而不是白名单：新数据会带 {@code rule:} 前缀，但历史数据
-     * （{@code rulebook_v10_en_pX}）没有前缀，不能因此判成非规则。只有明确属于
-     * 卡牌 / combo / 对局域的来源才排除。
      */
     static boolean isRuleDomain(String source) {
         // 域名判定集中在一处，`rule:` 与 `rule-`（upload 拒绝冒号）等价
@@ -131,7 +116,6 @@ public final class RulebookTool {
         return null;
     }
 
-    /** 工具声明：名称、何时使用、参数 schema。 */
     public List<ChatClient.Tool> tools() {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("type", "object");
@@ -217,7 +201,6 @@ public final class RulebookTool {
         }
     }
 
-    /** 结构化结果压成模型能读的纯文本：优先 chunks，其次实体描述。 */
     private String render(JsonNode root) {
         JsonNode data = root.path("data");
         StringBuilder sb = new StringBuilder();

@@ -30,34 +30,10 @@ import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/**
- * 对局复盘 → LightRAG。
- *
- * <p>定位：对局记忆是<b>叙事记忆</b>。每局结束后由 LLM 写一份复盘，写入同一个 workspace，
- * 来源前缀 {@code duel:<id>}；模型需要参考历史经验时通过 {@code search_duels} 自主检索。
- *
- * <p>分工是本类的要点：
- * <ul>
- *   <li><b>代码</b>只负责"不许模型猜"的部分——素材整理（{@link DuelNarrative}）与文档头
- *       （id / 日期 / 主题 / 先后手 / 胜负 / 应答次数）；</li>
- *   <li><b>LLM</b> 负责"关键信息"——走向、转折点、失误与代价、下次怎么办
- *       （{@link DuelSummaryPrompts}）；</li>
- *   <li>LLM 不可用或输出不合结构时，退回确定性模板（{@code buildTemplate}），
- *       保证"至少有一条能检索的记录"，但那种摘要不含判断，只作兜底。</li>
- * </ul>
- *
- * <p>模式由 {@code DUEL_SUMMARY_MODE} 控制：{@code llm}（默认）/ {@code template}（不调 LLM）。
- * 是否写库由每次开局请求的 {@code archivePolicy} 决定（见 {@link DuelRequest}）：
- * {@code always} 直接写；{@code auto} 由模型在复盘末尾判定价值，判定不值得就不写；
- * {@code ask} 挂起等用户决定（确认后走 {@link #ingestAsync}）；缺省 {@code never} 不写。
- *
- * <p>装配见 {@code SummaryConfig}：LLM 凭据齐全时注入 {@code ChatClient}，否则退化为模板摘要。
- */
 public class DuelSummaryService {
 
     private static final Logger log = LoggerFactory.getLogger(DuelSummaryService.class);
 
-    /** 逐回合记录的字符预算：给足上下文，又不至于把 32k 窗口的模型顶满。 */
     private static final int DEFAULT_NARRATIVE_CHARS = 8_000;
 
     private final String endpoint;
@@ -70,14 +46,10 @@ public class DuelSummaryService {
     private final JsonMapper mapper = JsonMapper.builder().build();
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
-    /** 只写模板摘要（测试与"不想花 LLM 配额"的部署用）。 */
     public DuelSummaryService(Environment environment) {
         this(environment, null);
     }
 
-    /**
-     * @param chat 复盘用的模型客户端；null = 退化为模板摘要
-     */
     public DuelSummaryService(Environment environment, ChatClient chat) {
         String base = environment.getProperty("LIGHTRAG_URL", "http://localhost:9621").trim();
         if (base.endsWith("/")) {
@@ -102,7 +74,6 @@ public class DuelSummaryService {
         }
     }
 
-    /** 按环境构建（LLM 配置齐全时才建客户端）。 */
     public static DuelSummaryService fromEnvironment(Environment environment) {
         String apiKey = environment.getProperty("LLM_API_KEY", "");
         ChatClient chat = null;
@@ -120,11 +91,9 @@ public class DuelSummaryService {
         return enabled;
     }
 
-    /** 一次复盘的产出：最终文档 + 模型是否判定值得入库 + 正文是否真出自 LLM。 */
     record Draft(String text, boolean worth, boolean fromLlm) {
     }
 
-    /** 对局结束后异步写复盘；失败只记日志，不影响对局结果。（全部入库 / 询问后确认入库走这里） */
     public void ingestAsync(String duelId, DuelRunSpec spec, DuelRunResult result) {
         if (!enabled) {
             return;
@@ -141,12 +110,6 @@ public class DuelSummaryService {
         });
     }
 
-    /**
-     * 模型判定入库（auto 策略）：先由 LLM 写复盘并给出「入库判定」，判定不值得就不写库。
-     *
-     * <p>拿不到判定就不写：LLM 不可用退回的模板不含判断，替模型做"值得入库"的决定
-     * 等于架空这个策略——那一局的素材仍在 trace / duel-log 文件里，没有丢失。
-     */
     public void ingestJudgedAsync(String duelId, DuelRunSpec spec, DuelRunResult result) {
         if (!enabled) {
             return;
@@ -170,11 +133,6 @@ public class DuelSummaryService {
         });
     }
 
-    /**
-     * 组装最终文档：确定性文档头 + 复盘正文。
-     *
-     * <p>文档头固定用 {@code key: value} 形式（供域过滤与结构化检索），正文是 Markdown。
-     */
     String build(String duelId, DuelRunSpec spec, DuelRunResult result) {
         return draft(duelId, spec, result).text();
     }
@@ -197,12 +155,6 @@ public class DuelSummaryService {
         return new Draft(sb.toString(), review.get().worthStoring(), true);
     }
 
-    /**
-     * 确定性模板：只记事实，不做判断。
-     *
-     * <p>它的价值不是"够用"，而是**保证每条对局都有可检索记录**——LLM 配额耗尽、端点故障、
-     * 输出跑偏时，历史里至少还留有"这局打了什么"。真正有用的判断仍以 LLM 复盘为准。
-     */
     String buildTemplate(String duelId, DuelRunSpec spec, DuelRunResult result,
                          DuelRecord record, DuelTraceReader.TraceView trace) {
         StringBuilder sb = new StringBuilder(header(duelId, spec, result, record));
@@ -219,7 +171,6 @@ public class DuelSummaryService {
         return sb.toString();
     }
 
-    /** 模板路径下的"关键决策"：优先用轨迹，因为它是可读的。 */
     private void appendTraceHighlights(StringBuilder sb, DuelTraceReader.TraceView trace) {
         int lastTurn = Integer.MIN_VALUE;
         int perTurn = 0;
@@ -243,7 +194,6 @@ public class DuelSummaryService {
         }
     }
 
-    /** 没有轨迹时的退路：读日志里的选择串（可读性差，仅作最后兜底）。 */
     private void appendKeyDecisions(StringBuilder sb, DuelRecord record) {
         int lastTurn = Integer.MIN_VALUE;
         int perTurn = 0;
@@ -268,7 +218,6 @@ public class DuelSummaryService {
         }
     }
 
-    /** 文档头：这些字段不许模型猜，全部由代码给。 */
     private static String header(String duelId, DuelRunSpec spec, DuelRunResult result, DuelRecord record) {
         StringBuilder sb = new StringBuilder();
         sb.append("domain: duel\n");

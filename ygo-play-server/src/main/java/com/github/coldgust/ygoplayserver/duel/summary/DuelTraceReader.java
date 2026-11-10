@@ -16,16 +16,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 决策轨迹（{@code <tracePath>}）的只读视图。
- *
- * <p>轨迹里已经写好了复盘需要的东西：**可读动作**（"盖放魔陷 闪刀亚式-双纽闪门"）、
- * **决策来源**（照计划 / 决策器判断 / 兜底…）、**当时的理由**、以及**回合计划目标**。
- * 对局日志（duel log）给的是协议级选择串（{@code MainPhaseSelection[action=Summon[...passcode=...]]}），
- * 人名都读不出来——所以复盘素材以轨迹为主，日志只补充 LP / 手牌 / 胜负。
- *
- * <p>解析刻意做得很宽松：轨迹是旁路产物，字段缺失最多丢掉一条线索，不该让摘要失败。
- */
 public final class DuelTraceReader {
 
     private static final Logger log = LoggerFactory.getLogger(DuelTraceReader.class);
@@ -33,19 +23,9 @@ public final class DuelTraceReader {
             .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS)
             .build();
 
-    /** 回合计划：目标 + 思路（规划器给的，不代表一定执行了）。 */
     public record TurnPlanView(int turn, String goal, String thinking) {
     }
 
-    /**
-     * 一次已提交的决策。
-     *
-     * @param level     决策来源标签（照计划/走预案/决策器判断/唯一合法/兜底…）
-     * @param request   请求类型标签（主要阶段/连锁响应/选择位置…）
-     * @param submitted 可读的提交内容（"发动 增殖的G(23434538)我方手牌"）
-     * @param rationale 当时的理由（可能为空：规则层直接答的没有理由）
-     * @param fallback  是否走的机械保底
-     */
     public record Action(int turn, String level, String request, String submitted,
                          String rationale, boolean fallback) {
     }

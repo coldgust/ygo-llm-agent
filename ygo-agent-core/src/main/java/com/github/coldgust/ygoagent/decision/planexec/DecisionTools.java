@@ -21,18 +21,15 @@ public record DecisionTools(RulebookTool rulebook, ComboTool combo, CardTool car
 
     public static final DecisionTools NONE = new DecisionTools(null, null, null, null);
 
-    /** 兼容三工具构造（不含历史对局检索）。 */
     public DecisionTools(RulebookTool rulebook, ComboTool combo, CardTool card) {
         this(rulebook, combo, card, null);
     }
 
-    /** 有至少一个可用工具。 */
     public boolean isEmpty() {
         return (rulebook == null) && (combo == null || !combo.available())
                 && (card == null || !card.available()) && (duel == null);
     }
 
-    /** 工具声明（只含可用的）。 */
     public List<ChatClient.Tool> tools() {
         List<ChatClient.Tool> tools = new ArrayList<>();
         if (rulebook != null) {
@@ -50,7 +47,6 @@ public record DecisionTools(RulebookTool rulebook, ComboTool combo, CardTool car
         return tools;
     }
 
-    /** 统一分发：按工具名路由到对应实现。 */
     public ChatClient.ToolHandler handler(Collection<Long> visibleCards) {
         return call -> {
             if (rulebook != null && RulebookTool.NAME.equals(call.name())) {

@@ -7,12 +7,6 @@ import com.github.coldgust.ygodomain.duel.DuelState;
 import com.github.coldgust.ygoduellog.model.CandidateView;
 import java.util.List;
 
-/**
- * 对局事件的载荷（与 {@link DuelEventKind} 一一对应）。
- *
- * <p>全部为不可变 record；JSON 序列化时以 {@code type} 字段区分子类型，
- * 便于事后从 JSONL 反序列化回放。
- */
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type")
 @JsonSubTypes({
         @JsonSubTypes.Type(value = DuelEventPayload.DuelStarted.class, name = "DUEL_STARTED"),
@@ -56,22 +50,10 @@ public sealed interface DuelEventPayload permits
         DuelEventPayload.StateSnapshot,
         DuelEventPayload.RawFrame {
 
-    /* ---------- 生命周期 ---------- */
 
-    /** 一名玩家的开局信息。 */
     record PlayerInfo(int seat, String name, int mainDeckSize, int extraDeckSize) {
     }
 
-    /**
-     * 对局开始。
-     *
-     * @param players          双方信息（seat 为绝对座位）
-     * @param masterRule       大师规则版本
-     * @param startLp          初始 LP
-     * @param startHand        初始手牌数
-     * @param drawCount        每回合抽卡数
-     * @param timeLimitSeconds 每回合计时（0 = 不限时）
-     */
     record DuelStarted(
             List<PlayerInfo> players,
             int masterRule,
@@ -89,7 +71,6 @@ public sealed interface DuelEventPayload permits
     record DuelEnded(String winner, String reason, int totalTurns) implements DuelEventPayload {
     }
 
-    /* ---------- 时点切换 ---------- */
 
     /** 回合开始：player 为 "P0"/"P1"。 */
     record TurnStarted(String player, int turnNumber) implements DuelEventPayload {
@@ -108,11 +89,9 @@ public sealed interface DuelEventPayload permits
     record ChainWindowClosed(int chainLength) implements DuelEventPayload {
     }
 
-    /** 单环结算完成。 */
     record ChainResolved(int chainIndex, long card, long desc) implements DuelEventPayload {
     }
 
-    /* ---------- 决策 ---------- */
 
     /** 决策可见度：ygopro 协议中对手被问的内容不可见。 */
     enum Visibility {
@@ -122,15 +101,6 @@ public sealed interface DuelEventPayload permits
         RESULT_ONLY
     }
 
-    /**
-     * 被问（决策请求）。
-     *
-     * @param player         "P0"/"P1"
-     * @param requestType    请求类型（如 MainPhaseRequest）
-     * @param visibility     可见度
-     * @param candidateCount 候选动作数
-     * @param summary        人类可读摘要（供 LLM 直接阅读）
-     */
     record DecisionRequested(
             String player,
             String requestType,
@@ -140,17 +110,6 @@ public sealed interface DuelEventPayload permits
     ) implements DuelEventPayload {
     }
 
-    /**
-     * 已作答。
-     *
-     * @param requestSeq       对应 DECISION_REQUESTED 事件的 seq（配对锚点）
-     * @param player           "P0"/"P1"
-     * @param requestType      请求类型
-     * @param selectionSummary 决策摘要（人类可读）
-     * @param source           来源：PLAYER=决策者主动 / FALLBACK=重试保底 / TIMEOUT_FALLBACK=超时兜底
-     * @param thinkMs          思考耗时（请求到达 → 应答发出）
-     * @param retryCount       提交前累计的 RETRY 次数
-     */
     record DecisionMade(
             long requestSeq,
             String player,
@@ -162,14 +121,6 @@ public sealed interface DuelEventPayload permits
     ) implements DuelEventPayload {
     }
 
-    /**
-     * 未作答（超时被跳过 / SDK 自动跳过且未发出应答）。
-     *
-     * @param requestSeq  对应 DECISION_REQUESTED 事件的 seq
-     * @param player      "P0"/"P1"
-     * @param requestType 请求类型
-     * @param reason      原因（TIMEOUT / AUTO_DECLINE_CHAIN / …）
-     */
     record DecisionSkipped(long requestSeq, String player, String requestType, String reason)
             implements DuelEventPayload {
     }
@@ -178,9 +129,6 @@ public sealed interface DuelEventPayload permits
     record RetryIssued(String player, int retryCount, String requestType) implements DuelEventPayload {
     }
 
-    /**
-     * 决策候选集快照：回放/评测重建决策点所需（体积较大，默认关闭，仅调试输出）。
-     */
     record DecisionContext(
             String requestType,
             DecisionRequested.Visibility visibility,
@@ -194,20 +142,11 @@ public sealed interface DuelEventPayload permits
             candidates = candidates == null ? List.of() : List.copyOf(candidates);
         }
 
-        /** 单个候选的语义摘要（不含协议细节）。 */
         public record CandidateView(String kind, long passcode, String zone, long description, boolean directAttack) {
         }
     }
 
-    /* ---------- 状态变化 ---------- */
 
-    /**
-     * 万能卡移动（抽卡/召唤/盖放/送墓/除外/回卡组/翻转/表示形式变更统一表达）。
-     * from 或 to 为 null 表示该端不可见（如从卡组抽出）或事件不适用。
-     *
-     * @param passcode 卡的 passcode（未知卡为 0）
-     * @param identity 卡名描述（未知卡为 "unknown"）
-     */
     record CardMoved(
             long passcode,
             String identity,
@@ -223,7 +162,6 @@ public sealed interface DuelEventPayload permits
     record LpChanged(String player, int delta, int lpAfter, String cause) implements DuelEventPayload {
     }
 
-    /** 指示物变动。 */
     record CounterChanged(String card, String counterType, int delta) implements DuelEventPayload {
     }
 
@@ -235,13 +173,10 @@ public sealed interface DuelEventPayload permits
     record AttackDeclared(String player, long attackerPasscode, String target) implements DuelEventPayload {
     }
 
-    /* ---------- 快照与审计 ---------- */
 
-    /** 战场镜像全量快照（不可变 DuelState）。 */
     record StateSnapshot(DuelState duelState) implements DuelEventPayload {
     }
 
-    /** 原始协议帧（可选审计层）。 */
     record RawFrame(String direction, int msgType, String payloadHex) implements DuelEventPayload {
     }
 }

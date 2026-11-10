@@ -10,7 +10,6 @@ import java.util.Set;
  * 同名卡（含马甲 alias）最多 3 张）。
  *
  * @param main  主卡组 passcode（顺序无关）
- * @param extra 额外卡组 passcode
  * @param side  副卡组 passcode（换备用）
  */
 public record Deck(List<Long> main, List<Long> extra, List<Long> side) {

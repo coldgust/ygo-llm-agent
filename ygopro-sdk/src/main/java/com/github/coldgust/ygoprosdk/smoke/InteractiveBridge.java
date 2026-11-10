@@ -64,7 +64,6 @@ final class InteractiveBridge {
         return (name == null ? "?" : name) + "(" + code + ")";
     }
 
-    /* ================= 描述 ================= */
 
     String describe(DuelState state, ChoiceRequest request) {
         StringBuilder b = new StringBuilder();
@@ -220,7 +219,6 @@ final class InteractiveBridge {
         return base + (z.owner() == PlayerSide.SELF ? "" : "(对方)");
     }
 
-    /* ================= 决策文件交互 ================= */
 
     void ask(String dump) throws InterruptedException {
         try {
@@ -259,7 +257,6 @@ final class InteractiveBridge {
         return d;
     }
 
-    /* ================= 指令解析 ================= */
 
     ChoiceSelection parse(ChoiceRequest request, String line) {
         if (line == null || line.isBlank()) {

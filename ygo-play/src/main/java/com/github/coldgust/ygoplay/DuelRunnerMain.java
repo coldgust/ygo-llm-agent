@@ -11,19 +11,6 @@ import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicReference;
 import java.nio.file.Files;
 
-/**
- * 实机入口：连房间 → 上传卡组 → 就绪 → 决策循环 → 打印统计。
- *
- * <pre>
- * java DuelRunnerMain [host] [port] [name] [.ydk] [first|second]
- *      [--trace 路径] [--duel-log 路径]
- *      [--archetype SKY_STRIKER] [--combos 路径] [--library 目录]
- *      [--env .env]
- * </pre>
- *
- * 配置优先级：CLI &gt; 环境变量/.env &gt; 默认值（见 {@link RuntimeConfig}）。
- * v6 Planner–Executor 由 PLAN_EXEC_ENABLED / LLM_API_KEY 等 env 键启用（见 PlanExecSettingsResolver）。
- */
 public final class DuelRunnerMain {
 
     private static final Logger log = LoggerFactory.getLogger(DuelRunnerMain.class);
@@ -64,10 +51,6 @@ public final class DuelRunnerMain {
                         : result.duelResult().winner() + "/" + result.duelResult().reason());
     }
 
-    /**
-     * 实况战场播报：{@code BATTLE_REPORT=1}（默认写 /tmp/ygo-live/battlefield.log）
-     * 或指定文件路径时启用。每个决策点输出规划器看到的同一份局面 + 独立张数核对。
-     */
     private static DuelListener reporter(
             PlannerSettings planExec) {
         String target = System.getenv("BATTLE_REPORT");
@@ -92,10 +75,6 @@ public final class DuelRunnerMain {
         }
     }
 
-    /**
-     * 卡组思路（CLI 通道）：`DECK_STRATEGY_FILE` 指向文本文件优先，其次 `DECK_STRATEGY` 直接给文本。
-     * <p>Web 通道由前端文本框传入（见 DuelRequest.deckStrategy）。
-     */
     private static String deckStrategy() {
         String file = System.getenv("DECK_STRATEGY_FILE");
         if (file != null && !file.isBlank()) {

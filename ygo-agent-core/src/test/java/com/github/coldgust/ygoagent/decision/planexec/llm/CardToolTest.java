@@ -11,9 +11,6 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * find_card：按卡号精确查 / 按卡名模糊查 / 未知与空输入的处理。
- */
 class CardToolTest {
 
     private static CardFacts facts() {

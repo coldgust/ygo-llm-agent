@@ -1,10 +1,8 @@
 # ygo-llm-agent 对局服务镜像（ygo-play-server + Svelte 前端产物）
-#
 # 构建上下文 = 仓库根；数据（data/）不进镜像，运行时挂载（见 compose.yaml server 服务）。
 #   docker compose build server
 #   docker compose up -d
 
-# ---------- 1/3 前端构建 ----------
 FROM node:22-alpine AS web
 WORKDIR /src/web
 # pnpm 版本由 package.json 的 packageManager 字段决定（corepack），按锁文件安装
@@ -13,7 +11,6 @@ RUN corepack enable && pnpm install --frozen-lockfile
 COPY web/ ./
 RUN pnpm build
 
-# ---------- 2/3 后端构建 ----------
 FROM eclipse-temurin:25-jdk AS build
 WORKDIR /src
 # 先拷构建描述，尽量缓存依赖下载
@@ -34,7 +31,6 @@ COPY ygo-play/ ygo-play/
 COPY ygo-play-server/ ygo-play-server/
 RUN ./mvnw -B -q -DskipTests package
 
-# ---------- 3/3 运行 ----------
 FROM eclipse-temurin:25-jre
 WORKDIR /app
 COPY --from=build /src/ygo-play-server/target/ygo-play-server-*.jar app.jar

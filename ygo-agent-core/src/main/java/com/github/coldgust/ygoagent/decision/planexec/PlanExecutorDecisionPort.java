@@ -63,25 +63,17 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
     private static final Logger log = LoggerFactory.getLogger(PlanExecutorDecisionPort.class);
 
     private final ReflexPolicy reflex;
-    /** 把已提交的意图压成一句人话（本回合动作记录用）。 */
     private final IntentSummary intentSummary;
 
     /**
      * 正在结算的效果（卡号 + 本次发动的那一条描述码），只在本回合内有效。
-     *
-     * <p>为什么需要：一个效果会展开成多个**从属决策点**——零露②要先选卡组里的零衣+露世特召，
-     * 再选场上 1 张卡破坏。到第二个决策点时，上下文只剩"选 1–1 张"，
-     * 模型不知道自己在执行哪个效果的哪一步，于是把"必选的破坏目标"当成"要不要做某个动作"，
-     * 写完"无净收益、弃权"就交了第一个候选（实战选到『不会被效果破坏』的龙骑士，除去白给）。
      */
     private volatile int pendingEffectTurn = -1;
     private volatile long pendingEffectCard;
     private volatile long pendingEffectDesc;
 
-    /** 本回合已提交的动作摘要（给下一次决策"我刚做过什么"用；换回合清空）。 */
     private final List<String> turnActions = new ArrayList<>();
     private volatile int turnActionsTurn = -1;
-    /** 最近一手自己写的判断（截断，只作"刚才怎么想的"提示）。 */
     private volatile String lastIntent = "";
     private final PlannerSession planner;
     private final ContextPackBuilder packer;
@@ -92,7 +84,6 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
     private final DecisionPort delegate;
     private final DecisionTraceWriter traceWriter;
     private final GroundingEngine grounding = new GroundingEngine();
-    /** 本回合是否已经"第一次将要走 one-shot"（不问请求类型，主阶段/连锁/选卡都算）。 */
     private final Set<Integer> turnFirstOneshotSeen =
             ConcurrentHashMap.newKeySet();
     /**
@@ -122,9 +113,6 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
                 DecisionTools.NONE);
     }
 
-    /**
-     * @param rulebook 规则检索工具（可空）。非空时 one-shot 可自主调用 {@code search_rulebook} 查规则书原文。
-     */
     public PlanExecutorDecisionPort(ReflexPolicy reflex, PlannerSession planner,
                                     ContextPackBuilder packer, ChatClient chat,
                                     PlannerSettings settings, CardFacts facts,
@@ -134,10 +122,6 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
                 rulebook, null);
     }
 
-    /**
-     * @param rulebook 规则检索工具（可空）：查规则书原文。
-     * @param combo    连招查询工具（可空）：按卡组主题查路线。
-     */
     public PlanExecutorDecisionPort(ReflexPolicy reflex, PlannerSession planner,
                                     ContextPackBuilder packer, ChatClient chat,
                                     PlannerSettings settings, CardFacts facts,
@@ -147,9 +131,6 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
                 new DecisionTools(rulebook, combo, null));
     }
 
-    /**
-     * @param tools 本次决策可用的工具集合（规则 / 连招 / 查卡，均可空）。
-     */
     public PlanExecutorDecisionPort(ReflexPolicy reflex, PlannerSession planner,
                                     ContextPackBuilder packer, ChatClient chat,
                                     PlannerSettings settings, CardFacts facts,
@@ -265,7 +246,6 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
         }
     }
 
-    /** 这个意图会不会引发"放到哪个格子"的追问。 */
     private static boolean placesOnField(ChoiceIntent intent) {
         return intent instanceof ChoiceIntent.Summon
                 || intent instanceof ChoiceIntent.SpecialSummon
@@ -337,7 +317,6 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
         return Optional.empty();
     }
 
-    /* ---------- 决策流水线 ---------- */
 
     /**
      * 记下"这一手发动的是哪张卡的哪一条效果"，供随后的从属决策点（选卡/选位置/选表示形式）使用。
@@ -375,10 +354,6 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
 
     /**
      * 记一笔"我刚做过什么、刚才是怎么想的"。
-     *
-     * <p>one-shot 每手都是独立单轮调用，没有对话历史——不给它这段记忆，它就会推翻自己：
-     * 上一手判"泡影留给对方上级怪兽"，下一手在检索环节就交了；上一手判"零露是终盘阻抗"，
-     * 几十秒后又把它解放掉。连续相同的动作（比如一串弃权）折叠成 {@code ×N}，避免刷屏。
      */
     private void recordTurnAction(DecisionPoint point, DuelDecision decision) {
         if (point.turn() != turnActionsTurn) {
@@ -424,18 +399,10 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
             return new DuelDecision(quick.get(), PathKind.ONLY_CHOICE, 1.0,
                     DecisionExplanation.of("规则直觉命中"), Timing.ZERO);
         }
-        // REFLEX 没把握的请求一律进入 ②③④：
-        // 连锁（CHAIN）、是否发动（EFFECT_YES_NO）、选卡/祭品/排序都在此列——
-        // 以前只放行 MAIN/BATTLE，导致这些请求直接掉到 ⑤ 的机械保底，等于又被"规则直觉"答了。
-        // 空候选（无事可做）才直接 ⑤，不烧 LLM。
         if (!point.candidates().isEmpty()) {
             Optional<TurnPlan> planOpt = planner.currentPlan()
                     .filter(p -> p.turnNumber() == point.turn());
             if (planOpt.isEmpty()) {
-                // 整回合只等一次，且不问是哪个阶段/哪类请求：第一次要现场答题时计划还没到，
-                // 这个时刻最值钱——拿到第一份深度计划后，后面每次 one-shot 都有主线可参考。
-                // 等待时间是**额外**的：等完把截止时间整体后移，决策本身仍有完整预算
-                // （例如连锁窗口等了 7s，随后的 one-shot 依旧有完整的 4–6s 可用）。
                 long waitMs = planWaitMs(turnFirstOneshotSeen.contains(point.turn()),
                         settings, planner.remainingTurnBudget());
                 if (waitMs > 0 && planner.healthy()) {
@@ -465,8 +432,6 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
                     missReasons.add("计划已走完（cursor=" + plan.cursor() + "/"
                             + plan.steps().size() + "）");
                 } else if (subChoice(point.kind())) {
-                    // 位置/表示形式/选卡这类"动作的附属选择"：计划主线没写它就作废整份计划，
-                    // 等于每召唤一次就把计划扔掉一次（实机上表现为主阶段长期走 TACTICAL）。
                     missReasons.add("本决策点是附属选择（" + point.kind().label()
                             + "），计划主线仍然有效，按决策器判断");
                 } else {
@@ -484,8 +449,6 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
                         missReasons.add("相似匹配跳过（高 stakes）");
                     }
                     // ②③ 全落空 → 这份计划的前提已经不成立：整份作废，退回决策器判断。
-                    // 不"跳一步继续"：计划有前后依赖，第 1 步做不成，后面步骤的前提也崩了，
-                    // 硬接地只会拿到自相矛盾的答案（实机一局 81 次"计划步未接地"正是这么来的）。
                     abandonUngroundedPlan(plan, point, missReasons);
                     plan = null;
                 }
@@ -537,10 +500,6 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
 
     /**
      * 计划接地失败 → 整份作废 + 请求重新规划。
-     *
-     * <p>判断依据：{@code tryExact} 已经从 cursor 开始扫过所有"请求类型匹配"的剩余步，
-     * 一步都接不上地，说明这份计划的前提已经不成立（卡被用掉/条件不满足/对手改变场面）。
-     * 此时继续拿它去接地、或者跳一步继续，都只会产生自相矛盾的决策。
      */
     private void abandonUngroundedPlan(TurnPlan plan, DecisionPoint point, List<String> missReasons) {
         int cursor = plan.cursor();
@@ -577,10 +536,6 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
         };
     }
 
-    /**
-     * ② 主计划匹配：优先当前步；接不上时向后找第一个可接地的步并跳过卡住的步
-     * （实机 r3/r5 教训：计划第 1 步在当前时点不合法时，cursor 卡死会让整份计划作废）。
-     */
     private Optional<DuelDecision> tryExact(DecisionPoint point, TurnPlan plan) {
         if (!plan.active()) {
             return Optional.empty();
@@ -588,7 +543,7 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
         for (int i = plan.cursor(); i < plan.steps().size(); i++) {
             PlanStep step = plan.steps().get(i);
             if (step.expectedRequest() != point.kind()) {
-                continue; // 该步属于其他请求类型，看下一步
+                continue;
             }
             Optional<DuelDecision> decision = buildFromStep(point, step, PathKind.PLAN_STEP,
                     "计划步#" + step.index() + " " + explainStep(step)
@@ -614,7 +569,6 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
                         + String.format(Locale.ROOT, "%.2f", match.get().score()));
     }
 
-    /** ②③ 共用：接地 → 意图 → 决策。 */
     private Optional<DuelDecision> buildFromStep(DecisionPoint point, PlanStep step,
                                                  PathKind kind, String evidence) {
         Optional<ChoiceIntent> intent = grounding.toIntent(point, step);
@@ -632,11 +586,9 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
                 DecisionExplanation.of(evidence), Timing.ZERO));
     }
 
-    /** ④ 的产出：决策 + 模型在同一次回答里给出的位置（可为空）。 */
     private record Drafted(DuelDecision decision, ZoneRef zone) {
     }
 
-    /** 采纳先到的那一路：把它的位置记为"本次决策给出的位置"。 */
     private DuelDecision accept(Drafted drafted) {
         lastDecisionZone = drafted.zone();
         return drafted.decision();
@@ -644,11 +596,6 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
 
     /**
      * ④ 投机双路：one-shot 立即 + 规划器紧急回复，先到先得；planner 信息全则优先（§2.2.5）。
-     *
-     * <p>两条路产出的都只是<b>建议草案</b>：决策（校验、采纳、提交）始终由本端口完成，
-     * 规划器与 one-shot 没有直接定案权。用户面文案用「规划器抢答」/「单轮直答」
-     * 标注<b>理由的来源</b>——抢答＝规划会话在双路竞速窗口里先交上可用草案被采纳；
-     * 它说的是"谁先到"，不是"谁拍板"。
      */
     private Optional<DuelDecision> escalate(DecisionPoint point, DecisionDeadline deadline,
                                             List<String> missReasons) {
@@ -673,11 +620,6 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
                                   return buildFromDraft(point, draft.get(), "规划器抢答", notes);
                               })
                         : CompletableFuture.completedFuture(Optional.empty());
-        // one-shot 要带着规划器的计划去决策：否则它只做单点最优化，
-        // 容易选出让计划失去连续性的动作（实测：计划是"通召→抓锚→结束"，
-        // one-shot 在第 1 步的窗口里直接结束回合）。
-        // 计划上下文给最新的那份（planSection 会给过期的打"上回合制定，仅供参考"）：
-        // 规划器常在新回合回 keep，续期后本就是本回合的；真过期时也比"完全没有主线"强。
         TurnPlan planForOneshot = planner.currentPlan().orElse(null);
         // 这一手是在执行哪个效果的哪一步：从属决策点（选卡/选位置/选表示形式）全靠它才有语义
         String effectScope = pendingEffectTurn == point.turn()
@@ -722,9 +664,6 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
                             return Optional.<Drafted>empty();
                         });
                     }
-                    // 编号越界（典型：主阶段拿 C0 表达"结束回合"，而本请求没有 C0）：
-                    // 直接把可选编号告诉它重答一次。不修的话整条决策会降级成经验规则——
-                    // 实战就是这样把灰流丽通召上场、连盖两张泡影的，代价远大于一次重问。
                     notes.add("单轮直答选择越界：" + draft.get().choice().value()
                             + "（候选 " + point.candidates().size() + " 个），已要求重答");
                     List<ChatClient.Msg> retryMessages = new ArrayList<>(messages);
@@ -781,7 +720,6 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
                 return Optional.empty();
             }
         }
-        // 阶段 2：只等 one-shot 到硬截止
         long remaining = Math.max(0, deadlineMs - (System.currentTimeMillis() - start));
         if (remaining <= 0) {
             oneshotFuture.cancel(true);
@@ -887,7 +825,6 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
         return clean.isEmpty() ? source : source + "：" + clean;
     }
 
-    /** 当前决策点可选的编号（给"越界重答"用）。 */
     private static String candidateCodes(DecisionPoint point) {
         return point.candidates().stream()
                 .map(c -> c.id().value())
@@ -901,7 +838,6 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
                 || "不响应".equals(v) || "弃权".equals(v) || "取消".equals(v);
     }
 
-    /** 伪候选 C0 在各请求类型下的语义。 */
     private static Optional<ChoiceIntent> noneIntent(DecisionPoint point) {
         ChoiceRequest r = point.request();
         if (r instanceof ChoiceRequest.ChainRequest) {
@@ -933,7 +869,6 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
         return kind == RequestKind.CHAIN || kind == RequestKind.EFFECT_YES_NO;
     }
 
-    /** 从解释文本里取出"计划步#N"（②③ 命中的步号），供前端高亮。 */
     private static Integer planStepOf(String conclusion) {
         if (conclusion == null) {
             return null;
@@ -953,7 +888,6 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
                 || state.self().lifePoints() <= 3000;
     }
 
-    /* ---------- trace ---------- */
 
     private void event(DecisionPoint point, String kind, Map<String, Object> payload) {
         try {

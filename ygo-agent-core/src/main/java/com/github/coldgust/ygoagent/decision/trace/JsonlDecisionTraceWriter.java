@@ -19,7 +19,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 决策轨迹的 JSONL 落盘（每决策一行；DB 落库是预留的扩展点）。
  * <p>同步写但量级很小（每决策一行），失败只告警不影响决策。
  */
 public final class JsonlDecisionTraceWriter implements DecisionTraceWriter {

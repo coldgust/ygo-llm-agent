@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # P0 实机运行：连房间 → 上传卡组 → 决策循环。
-#
 #   ./ygo-play/run.sh [host] [port] [name] [.ydk] [first|second]
-#
 # 依赖：JDK 25。可用 MAVEN_REPO_LOCAL 指定本地仓库（沙箱环境常用）。
 set -euo pipefail
 
@@ -18,7 +16,6 @@ fi
 JAVA_HOME="$JAVA_HOME" $MVN ${REPO_ARG[@]+"${REPO_ARG[@]}"} -DskipTests -Dspring-boot.repackage.skip=true \
   -pl ygo-play -am install
 
-# 2) 生成运行时 classpath
 JAVA_HOME="$JAVA_HOME" $MVN ${REPO_ARG[@]+"${REPO_ARG[@]}"} -pl ygo-play \
   dependency:build-classpath -Dmdep.outputFile=target/classpath.txt
 

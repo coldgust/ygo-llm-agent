@@ -10,7 +10,6 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 /**
- * 回调式轨迹写入器：把 append/event 转成 Map 事件交给消费者（Web 事件总线用）。
  * <p>消费者不得抛异常（实现内部自行兜底）；本类也不抛。
  */
 public final class CallbackTraceWriter implements DecisionTraceWriter {

@@ -12,23 +12,14 @@ public enum Position {
     FACE_UP_DEFENSE,
     FACE_DOWN_DEFENSE;
 
-    /**
-     * 是否表侧（face-up）。
-     */
     public boolean isFaceUp() {
         return this == FACE_UP_ATTACK || this == FACE_UP_DEFENSE;
     }
 
-    /**
-     * 是否攻击表示。
-     */
     public boolean isAttack() {
         return this == FACE_UP_ATTACK || this == FACE_DOWN_ATTACK;
     }
 
-    /**
-     * 是否守备表示。
-     */
     public boolean isDefense() {
         return this == FACE_UP_DEFENSE || this == FACE_DOWN_DEFENSE;
     }

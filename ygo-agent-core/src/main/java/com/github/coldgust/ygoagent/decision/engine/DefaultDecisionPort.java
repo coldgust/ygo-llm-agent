@@ -16,11 +16,6 @@ import com.github.coldgust.ygoagent.decision.port.ReflexPolicy;
 import com.github.coldgust.ygoagent.decision.port.TacticalPlanner;
 import com.github.coldgust.ygoagent.decision.reflex.FallbackIntents;
 
-/**
- * 保底决策链路（v6 执行器 ⑤）：Reflex → Tactical → Arbiter，异常降级到保底意图。
- * <p>v6 中它作为 {@link PlanExecutorDecisionPort}
- * 的最后一道兜底；单独使用时即 v2 的完整快路径。
- */
 public final class DefaultDecisionPort implements DecisionPort {
 
     private final ReflexPolicy reflex;

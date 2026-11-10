@@ -12,18 +12,6 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * 把决策轨迹事件同时打到日志（可关）。
- *
- * <p>和 JSONL 轨迹的区别是"人能直接读、和 LLM 请求在同一个时间线上"：
- * 打开 {@code YGO_VERBOSE_LOG} 后，日志里会按发生顺序出现
- * {@code [LLM→]} → {@code [TOOL→]} → {@code [决策]} → {@code [事件]}，
- * 不用再开一个 jsonl 文件对照时间戳。
- *
- * <p>只记"旁路事件"（计划发布/放弃、位置线索、最终提交、收尾统计）。
- * 每次决策的级别与未命中原因由 {@code PlanExecutorDecisionPort} 直接记，
- * 这里再记一遍会重复。
- */
 public final class TraceLogWriter implements DecisionTraceWriter {
 
     private static final Logger log =
@@ -47,8 +35,6 @@ public final class TraceLogWriter implements DecisionTraceWriter {
     }
 
     /**
-     * 事件载荷转成一行可读的 key=value。
-     *
      * <p>刻意不用 JSON：日志要能一眼扫过去。值过长时截断，避免一步把整份计划刷屏。
      */
     static String format(Map<String, Object> payload) {
@@ -80,6 +66,5 @@ public final class TraceLogWriter implements DecisionTraceWriter {
     private TraceLogWriter() {
     }
 
-    /** 单例：无状态，装配处直接用。 */
     public static final TraceLogWriter INSTANCE = new TraceLogWriter();
 }

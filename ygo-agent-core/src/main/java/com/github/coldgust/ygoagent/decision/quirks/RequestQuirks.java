@@ -9,7 +9,6 @@ public final class RequestQuirks {
     public static final long DEFAULT_DECLARE_CARD = 14558127L;
 
     /**
-     * Place/Disfield 的应答区域数。
      * <p>服务端 quirk：count=0 但存在候选区时，必须答 1 个区域，否则服务端不接受/卡死。
      */
     public static int placeZoneCount(int requestedCount, int availableZones) {

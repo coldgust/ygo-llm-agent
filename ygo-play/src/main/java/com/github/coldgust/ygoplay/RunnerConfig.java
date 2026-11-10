@@ -5,9 +5,6 @@ import com.github.coldgust.ygoagent.decision.model.RequestKind;
 import java.util.EnumMap;
 import java.util.Map;
 
-/**
- * 决策预算表（数值仅用于 deadline 传播；v6 复杂决策等待见 PlanExecSettings）。
- */
 public record RunnerConfig(long pollMillis, long defaultBudgetMillis, Map<RequestKind, Long> budgets) {
 
     public RunnerConfig {
@@ -16,9 +13,6 @@ public record RunnerConfig(long pollMillis, long defaultBudgetMillis, Map<Reques
 
     public static RunnerConfig defaults() {
         EnumMap<RequestKind, Long> budgets = new EnumMap<>(RequestKind.class);
-        // REFLEX 现在只答"零策略"请求；凡是让行的请求（连锁/是否发动/选卡/表示形式…）都要真算一遍，
-        // 预算必须够一次 LLM 往返。实测 deepseek-flash 单次决策 ≈2.4s（小 prompt），
-        // 带完整局面的 decisionPack 通常 3–6s，所以这里给到 3–5s，主阶段更高。
         budgets.put(RequestKind.CHAIN, 6_000L);
         budgets.put(RequestKind.EFFECT_YES_NO, 4_000L);
         budgets.put(RequestKind.POSITION, 3_000L);

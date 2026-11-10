@@ -41,7 +41,6 @@ public enum MonsterType {
     SPIRIT,
     /** 同盟怪兽：可装备为装备卡，解除装备后回到怪兽状态。 */
     UNION,
-    /** 卡通怪兽。 */
     TOON,
     /** 反转怪兽：反转时发动效果。 */
     FLIP;
@@ -49,12 +48,10 @@ public enum MonsterType {
     /** 额外卡组怪兽类别（融合/同调/超量/连接；灵摆以表侧形式入额外卡组）。 */
     public static final Set<MonsterType> EXTRA_DECK_KINDS = EnumSet.of(FUSION, SYNCHRO, XYZ, LINK);
 
-    /** 是否属于额外卡组怪兽。 */
     public boolean isExtraDeckKind() {
         return this == FUSION || this == SYNCHRO || this == XYZ || this == LINK;
     }
 
-    /** 是否为灵摆怪兽（灵摆召唤规则适用）。 */
     public boolean isPendulumKind() {
         return this == PENDULUM;
     }

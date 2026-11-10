@@ -75,7 +75,6 @@ public final class PlannerSession implements AutoCloseable {
         return t;
     });
 
-    /* --- 对外状态（不可变快照） --- */
     private final AtomicReference<TurnPlan> currentPlan = new AtomicReference<>();
     private final AtomicReference<Instant> degradedUntil = new AtomicReference<>(Instant.EPOCH);
     private final AtomicLong checkpointCount = new AtomicLong();
@@ -86,7 +85,6 @@ public final class PlannerSession implements AutoCloseable {
             new AtomicBoolean();
     private final AtomicLong turnBudgetUsedMs = new AtomicLong();
 
-    /* --- 段内状态（仅 planner 线程访问） --- */
     private String segmentKey = "";
     private final List<ChatClient.Msg> history = new ArrayList<>();
     private final List<String> pendingEvents = new ArrayList<>();
@@ -105,9 +103,6 @@ public final class PlannerSession implements AutoCloseable {
                 (DecisionTools) null);
     }
 
-    /**
-     * @param rulebook 规则检索工具（可空）。非空时规划器在制定/修订计划时可以自主查规则书原文。
-     */
     public PlannerSession(ChatClient client, ContextPackBuilder packer, CardFacts facts,
                           PlannerSettings settings,
                           DecisionTraceWriter traceWriter,
@@ -117,11 +112,6 @@ public final class PlannerSession implements AutoCloseable {
                         : new DecisionTools(rulebook, null, null));
     }
 
-    /**
-     * @param tools 规划器可用的工具（可空）。除了查规则，必须能查卡面——
-     *              只给卡名时模型只能凭训练记忆判断"这两张能不能配合"，
-     *              实测会退化成逐张单卡评价，还会编效果。
-     */
     public PlannerSession(ChatClient client, ContextPackBuilder packer, CardFacts facts,
                           PlannerSettings settings,
                           DecisionTraceWriter traceWriter,
@@ -135,7 +125,6 @@ public final class PlannerSession implements AutoCloseable {
                 ? DecisionTraceWriter.NOOP : traceWriter;
     }
 
-    /** 规划器事件落盘/总线（ANCHOR/PLAN_PUBLISHED/KEEP/PARSE_FAILED/DEGRADED/URGENT_RESULT）。 */
     private void planEvent(String kind, Map<String, Object> payload) {
         try {
             Map<String, Object> event = new LinkedHashMap<>(payload);
@@ -145,9 +134,7 @@ public final class PlannerSession implements AutoCloseable {
         }
     }
 
-    /* ---------- 执行器线程调用 ---------- */
 
-    /** 每个决策点进入时调用：检测回合切换 → 旋转段 + 锚点 checkpoint（异步）。 */
     public void observePoint(DecisionPoint point) {
         String key = point.turn() + ":" + point.state().turnPlayer();
         if (!key.equals(segmentKey)) {
@@ -159,7 +146,6 @@ public final class PlannerSession implements AutoCloseable {
         }
     }
 
-    /** 决策应答后调用：事件批累积（checkpoint 时整批发送）。 */
     public void observeAnswered(DecisionPoint point, ChoiceIntent intent) {
         String line = "第" + point.turn() + "回合 " + point.phase() + " 应答 "
                 + point.kind() + ": " + describe(point, intent);
@@ -207,11 +193,6 @@ public final class PlannerSession implements AutoCloseable {
 
     /**
      * 作废当前计划并请求重新规划（执行器发现"剩余步骤全部接不上地"时调用）。
-     *
-     * <p>为什么整份作废而不是跳过那一步：计划的每一步都建立在前一步的结果上，
-     * 第 1 步（比如"发动交闪"）在当前局面做不了，后面"用检索到的卡展开"这类步骤
-     * 前提已经不成立，硬接地只会得到自相矛盾的答案。所以直接清空计划，
-     * 让决策退回"决策器判断"，同时请规划器基于当前局面重新给一份。
      */
     public void abandonAndReplan(String reason) {
         TurnPlan stale = currentPlan.getAndSet(null);
@@ -252,7 +233,6 @@ public final class PlannerSession implements AutoCloseable {
         return Optional.ofNullable(currentPlan.get());
     }
 
-    /** ② 精确命中后推进 cursor（支持跳过卡住的步）。 */
     public void advanceCursorTo(int nextCursor) {
         TurnPlan plan = currentPlan.get();
         if (plan != null && nextCursor > plan.cursor()) {
@@ -287,9 +267,6 @@ public final class PlannerSession implements AutoCloseable {
             turnBudgetUsedMs.addAndGet(System.currentTimeMillis() - start);
         }
         // 超时标记：本回合不再重复等待。
-        // 但"被小预算截断的等待"不算数——例如本回合第一枪是连锁窗口（6s 预算），
-        // 只等得起 2.9s 而计划要 4s；若就此标记整回合放弃，后面的主阶段（12s 预算）
-        // 明明等得起却再也不会等，整回合都没有计划。所以只有"等满一次普通额度"才算用尽。
         if (waitMs >= settings.waitPerDecisionMs()) {
             planWaitExhausted.add(turn);
         }
@@ -305,7 +282,6 @@ public final class PlannerSession implements AutoCloseable {
         return !degraded();
     }
 
-    /** 测试与运维钩子：等待队列中的规划任务全部完成。 */
     public void drainForTests() {
         try {
             worker.submit(() -> {
@@ -320,7 +296,6 @@ public final class PlannerSession implements AutoCloseable {
         worker.shutdownNow();
     }
 
-    /* ---------- planner 线程内部 ---------- */
 
     private void rotateAndAnchor(String key, int turn, String side, String anchor, List<Long> handCodes) {
         String handoff = segmentKey.isEmpty() ? "" : handoffSummary();
@@ -335,8 +310,6 @@ public final class PlannerSession implements AutoCloseable {
             history.add(ChatClient.Msg.user("===上一段摘要接力===\n" + handoff));
         }
         boolean oppTurn = side.contains("对方");
-        // 顾问模式必须换掉锚点模板：原版在对方回合明确要求"steps 至少 1–2 条"，
-        // 那是硬指令，留着会让顾问模式在对方回合又产出步骤。
         boolean pathPlanning = settings.pathPlanning();
         String anchorRequest;
         if (pathPlanning) {
@@ -360,13 +333,6 @@ public final class PlannerSession implements AutoCloseable {
 
     /**
      * checkpoint：发送事件批并请求 keep/新计划（异步）。
-     *
-     * <p><b>同一时刻只允许一个事件检查点在途。</b>以前是"每次决策都排一个任务"：
-     * 一回合 25 次决策 → 队列里 25 个串行 LLM 调用，而单次「深度档」要 10–20s，
-     * 结果第一份可用计划在<b>回合末尾</b>才出现（实机：整回合 25 次"计划尚未就绪"，
-     * 计划全部堆在第 1 回合结束时才发布，连第 2 回合的锚点也被堵在队列后面）。
-     * <p>现在：在途时直接返回，事件继续累积；当前检查点结束后再看有没有新事件，
-     * 有就接着发一批——队列深度恒为 1，plan 能第一时间产出。
      */
     public void flushEvents() {
         if (segmentKey.isEmpty()) {
@@ -425,7 +391,6 @@ public final class PlannerSession implements AutoCloseable {
         });
     }
 
-    /** 有工具就走 function calling（工具轮对上层透明），没有就普通补全。 */
     private String withTools(List<ChatClient.Msg> messages, ChatClient.ChatOptions options) {
         if (tools == null || tools.isEmpty()) {
             return client.complete(messages, options);
@@ -462,13 +427,7 @@ public final class PlannerSession implements AutoCloseable {
             rememberAssistant(raw);
             checkpointCount.incrementAndGet();
             if (isKeep(raw)) {
-                // keep 的语义是"旧计划仍然有效"，但它带的是旧回合号 → 执行器按 turn 过滤会直接丢掉，
-                // 新回合就变成"没有计划"（实测一局 94 次决策只产出 2 份计划，其余全是 keep，
-                // "计划尚未就绪"出现 15 次，one-shot 全程没有主线）。
                 if (currentPlan.get() == null) {
-                    // 根本没有可沿用的计划却回了 keep（锚点解析失败后的常见退化）：
-                    // 之前这里是静默 return，于是整回合每个 checkpoint 都空转（实机 25 次"计划未就绪"）。
-                    // 改成明确要一份：每段只补一次，避免刷爆 checkpoint 配额。
                     log.info("规划器回 keep 但当前没有计划（kind={}），改请求重新规划", kind);
                     planEvent("PLAN_KEEP_WITHOUT_PLAN", Map.of("checkpoint", String.valueOf(kind)));
                     if (keepWithoutPlanRetried.add(segmentKey)) {
@@ -548,7 +507,7 @@ public final class PlannerSession implements AutoCloseable {
         TurnPlan previous = currentPlan.get();
         int turn = turnNumberOfSegment();
         if (previous == null || previous.turnNumber() == turn) {
-            return; // 没有可续期的计划，或本来就是本回合的：保持不动
+            return;
         }
         double confidence = Math.max(0.3, previous.confidence() * 0.7);
         currentPlan.set(new TurnPlan(previous.planId(), turn, previous.thinking(), previous.goal(),
@@ -612,7 +571,6 @@ public final class PlannerSession implements AutoCloseable {
         degradedUntil.set(Instant.now().plusMillis(settings.plannerCooldownMs()));
     }
 
-    /** 决策的可读描述（事件批用）。 */
     private String describe(DecisionPoint point, ChoiceIntent intent) {
         String label = candidateLabel(point, intent);
         return switch (intent) {
@@ -727,7 +685,6 @@ public final class PlannerSession implements AutoCloseable {
         }
     }
 
-    /** one-shot/紧急输出的解析。 */
     public static final class ChoiceDraftParser {
         private static final Pattern CONFIDENCE = Pattern.compile("\"confidence\"\\s*:\\s*([0-9.]+)");
 

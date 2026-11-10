@@ -81,8 +81,6 @@
     const iTac = raw.indexOf('战术：')
     const iCombo = raw.indexOf('combo：')
 
-    // 场面段的终点取所有分段标记中最早出现的那个：顾问模式模型可能不输出方案比较，
-    // 若只认方案比较，场面段会把战术/combo 整段吞进去，再叠加兜底原文就三遍重复
     const markers = [iOpt, iTac, iCombo].filter((i) => i >= 0)
     const headEnd = markers.length ? Math.min(...markers) : raw.length
     const head = raw.slice(0, headEnd)
@@ -190,8 +188,6 @@
       return
     }
     if (e.kind === 'EXEC_DECISION' && e.seq !== undefined) execSeqs.add(e.seq)
-    // 只有 v6 开启、且同一 seq 已有精简版 EXEC_DECISION 时才丢 DECISION；
-    // v6 关闭时后端只产出 DECISION，必须保留，否则信息流全空。
     if (e.kind === 'DECISION' && e.seq !== undefined && execSeqs.has(e.seq)) return
 
     const key = dedupeKey(e)
@@ -231,7 +227,6 @@
         stopSse = null
       }
     }
-    // 最新 80 条
     events = [e, ...events].slice(0, 80)
   }
 
@@ -560,7 +555,6 @@
 {/if}
 
 <style>
-  /* 卡组思路输入框 */
   .strategy {
     margin: 0 0 12px;
     padding: 8px 10px;
@@ -613,7 +607,6 @@
     margin-top: 3px;
   }
 
-  /* 入库询问行：ask 模式对局结束后等用户决定 */
   .askline {
     display: flex;
     flex-wrap: wrap;
@@ -676,7 +669,6 @@
     color: #c7ccd8;
     margin-bottom: 4px;
   }
-  /* 分段：场面 / 战术 / combo —— 原文一整段，读不出结构 */
   .plan .seg {
     color: #9aa4b8;
     font-size: 12px;
@@ -686,7 +678,6 @@
   }
   .plan .seg.combo { color: #8fb3a8; }
 
-  /* 候选方案：选中项用绿色左边框 + 底色凸显 */
   .opts {
     display: flex;
     flex-direction: column;
@@ -774,13 +765,11 @@
   .plansteps li .why {
     color: #8b94a7;
   }
-  /* 计划指定的放置位置（MMZ-3 等）：与卡号区分开，一眼看出"这一步要放哪格" */
   .plansteps li .zone {
     color: #6fd0b8;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 0.92em;
   }
-  /* 已执行 = 暗 + 删除线；当前待执行 = 高亮 */
   .plansteps li.done {
     opacity: 0.45;
     border-left-color: #2f4470;
@@ -812,7 +801,6 @@
     color: #4b5468;
     margin: 0 4px;
   }
-  /* 决策路径流水线 */
   .pathrow {
     display: flex;
     flex-wrap: wrap;
@@ -839,7 +827,6 @@
     border-radius: 10px;
     padding: 1px 8px;
   }
-  /* 最终提交的操作：决策链路的落点，比赛过哪一级更重要 */
   .submitted {
     margin: 3px 0 0 52px;
     color: #7fd1a3;

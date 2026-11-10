@@ -19,17 +19,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 不变量：<b>凡是给模型看的卡面/效果，都必须带得出自然语言，且不许出现裸效果码。</b>
- *
- * <p>这条测试是给 {@link CardText} 兜底的。过去四个线上事故的形态完全一样——
- * 模型拿不到它该判断的那条信息，只能凭记忆猜，并且每次猜错：
- * <ol>
- *   <li>链环只给"从 ① 起前 120 字" → 看不到对方 ③ 的效果，判"弃权保留后场"；</li>
- *   <li>候选身份被协议 code=0 覆盖 → 全是"未知卡"；</li>
- *   <li>先手第 1 回合缺"结束回合"候选 → 想说空过却投了通召；</li>
- *   <li>`是否发动：零衣 [效果#417238193]` → 按 ① 判断，白丢墓地起跳。</li>
- * </ol>
- * 所以这里不测"某段文字长什么样"，而是扫**整份决策包**的两条硬规矩：
- * ① 不出现 {@code [效果#数字]}；② 不出现"冒号后面空无一物"的效果行。
  */
 class PromptCardTextInvariantTest {
 
@@ -99,7 +88,6 @@ class PromptCardTextInvariantTest {
                 .map(c -> c.contains("②：这张卡召唤·特殊召唤的场合")).orElse(false));
     }
 
-    /* ======================= 各决策点的包 ======================= */
 
     private String effectYesNoPack() {
         DuelState state = TestDuels.state(2, false, List.of(), List.of(), List.of(), List.of(), 7000, 8000);

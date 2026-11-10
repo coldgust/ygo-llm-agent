@@ -1,21 +1,5 @@
 package com.github.coldgust.ygoplayserver.duel.summary;
 
-/**
- * 对局复盘的提示词。
- *
- * <p>这里只做一件事：把"素材"变成"经验"。素材是确定性的时间线（{@link DuelNarrative}），
- * 经验必须由 LLM 写——因为"这局为什么输、下次怎么做"不是模板能枚举的。
- *
- * <p>提示词的三条设计取向：
- * <ol>
- *   <li><b>先给结构，再谈自由</b>：固定 8 个小节。段落名固定后，LightRAG 切块与
- *       {@code search_duels} 的召回都可预期，不会出现"这段在讲什么"要靠猜的情况。</li>
- *   <li><b>把"禁止编造"写成可检查的规则</b>：材料只给卡号就写卡号；没写的信息写"材料未包含"。
- *       模型最危险的失败不是写得差，而是写得像真的。</li>
- *   <li><b>要求可执行</b>："下次怎么办"必须写清"什么局面 + 先做什么 + 注意什么"，
- *       不接受"要注意资源管理"这种正确的废话。</li>
- * </ol>
- */
 public final class DuelSummaryPrompts {
 
     private DuelSummaryPrompts() {
@@ -74,10 +58,6 @@ public final class DuelSummaryPrompts {
             【长度】正文控制在 800 字以内。宁可少写一条，也不要注水。
             """;
 
-    /**
-     * @param facts    固定事实（duel id / 主题 / 先后手 / 胜负 / 应答与兜底次数）
-     * @param timeline 逐回合记录（LP、手牌数、计划目标、实际动作与当时理由）
-     */
     public static String user(String facts, String timeline) {
         return """
                 【对局材料 · 固定事实】
@@ -90,7 +70,6 @@ public final class DuelSummaryPrompts {
                 """.formatted(facts, timeline);
     }
 
-    /** 模型偶尔会把整段包进 ```markdown 代码块，或者加一句"以下是复盘"。这里只剥壳，不改内容。 */
     public static String stripWrapper(String raw) {
         if (raw == null) {
             return "";
@@ -110,7 +89,6 @@ public final class DuelSummaryPrompts {
         return text;
     }
 
-    /** 结构性校验：至少要有一句话结论 + 局面走向，否则视为不可用（退回模板摘要）。 */
     public static boolean looksUsable(String body) {
         return body != null
                 && body.contains("## 一句话结论")

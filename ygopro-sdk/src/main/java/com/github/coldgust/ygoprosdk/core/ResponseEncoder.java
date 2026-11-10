@@ -21,10 +21,8 @@ public final class ResponseEncoder {
     /**
      * 编码应答。
      *
-     * @param request      待回答的请求
      * @param selection    决策结果（必须与请求类型匹配）
      * @param selfSeat     我方绝对座位号（区域应答的 player 字段需要）
-     * @return CTOS_RESPONSE payload
      */
     public static byte[] encode(ChoiceRequest request, ChoiceSelection selection, int selfSeat) {
         if (selection instanceof ChoiceSelection.Cancel) {
@@ -61,7 +59,6 @@ public final class ResponseEncoder {
         return i32(-1);
     }
 
-    /* ---------- 主要 / 战斗阶段 ---------- */
 
     private static byte[] encodeMainPhase(ChoiceRequest.MainPhaseRequest r, ChoiceSelection.MainPhaseSelection sel) {
         return switch (sel.action()) {
@@ -93,7 +90,6 @@ public final class ResponseEncoder {
         return type | (index << 16);
     }
 
-    /* ---------- 选卡族 ---------- */
 
     private static byte[] encodeCardSelect(ChoiceRequest.CardSelectRequest r, ChoiceSelection.CardSelection sel) {
         ByteWriter w = new ByteWriter().u8(sel.selected().size());
@@ -151,7 +147,6 @@ public final class ResponseEncoder {
         throw new IllegalArgumentException("未知的选择步骤");
     }
 
-    /* ---------- 连锁 ---------- */
 
     private static byte[] encodeChain(ChoiceRequest.ChainRequest r, ChoiceSelection.ChainSelection sel) {
         if (sel.answer() instanceof ChoiceSelection.ChainAnswer.Decline) {
@@ -163,7 +158,6 @@ public final class ResponseEncoder {
         throw new IllegalArgumentException("未知的连锁应答");
     }
 
-    /* ---------- 区域（§8.5：count × 3 字节，无前置计数）---------- */
 
     private static byte[] encodePlace(ChoiceRequest request, ChoiceSelection.PlaceSelection sel, int selfSeat) {
         int count = request instanceof ChoiceRequest.PlaceRequest p ? p.count()
@@ -183,7 +177,6 @@ public final class ResponseEncoder {
         return w.toByteArray();
     }
 
-    /* ---------- 表示形式 ---------- */
 
     private static byte[] encodePosition(ChoiceRequest.PositionRequest r, ChoiceSelection.PositionSelection sel) {
         int bit = ZoneMapper.fromPosition(sel.position());
@@ -193,7 +186,6 @@ public final class ResponseEncoder {
         return i32(bit);
     }
 
-    /* ---------- 宣言族 ---------- */
 
     private static byte[] encodeRace(ChoiceRequest.DeclareRaceRequest r, ChoiceSelection.DeclareRaceSelection sel) {
         int mask = 0;
@@ -211,7 +203,6 @@ public final class ResponseEncoder {
         return i32(mask);
     }
 
-    /* ---------- 排序与指示物 ---------- */
 
     private static byte[] encodeSort(ChoiceRequest.SortRequest r, ChoiceSelection.SortSelection sel) {
         ByteWriter w = new ByteWriter();
@@ -236,7 +227,6 @@ public final class ResponseEncoder {
         return w.toByteArray();
     }
 
-    /* ---------- 助手 ---------- */
 
     /**
      * 按引用相等求候选下标。

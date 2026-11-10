@@ -1,5 +1,3 @@
-// 后端 API 的类型与 REST/SSE 封装（前后端分离：只经 /api 通信）
-
 export interface DuelRequest {
   host: string
   port: number
@@ -33,7 +31,6 @@ export interface DuelView {
   error: string | null
   tracePath: string
   duelLogPath: string
-  /** 入库策略（ask/auto/always/never） */
   archivePolicy?: string | null
   /** ask 模式下的入库决定状态：PENDING 等用户决定 → ACCEPTED / DECLINED */
   archiveState?: string | null
@@ -178,8 +175,6 @@ export const api = {
     onError?: (message: string, fatal: boolean) => void,
   ): () => void {
     const source = new EventSource(`/api/duels/${duelId}/events`)
-    // 注意：服务端用 SSE 的 event name 区分类型，这里必须逐个注册监听；
-    // 新增事件类型（如 SUBMITTED）忘了加进来，前端就"永远收不到"，而且不报错。
     const names = ['DECISION', 'EXEC_DECISION', 'SUBMITTED', 'PLAN_EVENT',
       'DUEL_STATUS', 'COMBO_RECORDED', 'connected']
     const handlers = names.map((name) => {

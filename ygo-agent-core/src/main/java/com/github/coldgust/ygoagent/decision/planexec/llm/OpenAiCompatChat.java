@@ -70,8 +70,6 @@ public final class OpenAiCompatChat implements ChatClient {
             return completeOnce(messages, options, traceId);
         } catch (ChatException e) {
             if (isTimeout(e)) {
-                // 超时说明这次调用已经把预算花完了；再重试一次等于把等待翻倍
-                // （实测深度复核 45s 超时 + 重试成功 → 59.8s，直接把回合时间吃光）。
                 throw e;
             }
             if (options.reasoning() != null && e.getMessage() != null
@@ -111,18 +109,6 @@ public final class OpenAiCompatChat implements ChatClient {
         return content.asText();
     }
 
-    /**
-     * 带工具（function calling）的补全：模型先决定"要不要查规则"，需要就发 tool_call，
-     * 我们执行检索把结果回填，再让它继续——整个回路对上层透明，最终仍返回一段文本
-     * （规划器/one-shot 拿到的还是它们要的 JSON）。
-     *
-     * <p>两个刻意设计：
-     * <ul>
-     *   <li>工具轮 remove 掉 {@code response_format=json_object}：deepseek 对两者同时使用时
-     *       会拒绝调用或让模型不再发 tool_calls，先放开让模型自由决定；</li>
-     *   <li>任何异常都降级为普通 {@link #complete}：检索不可用不能拖垮决策。</li>
-     * </ul>
-     */
     @Override
     public String completeWithTools(List<Msg> messages, ChatOptions options,
                                     List<Tool> tools, ToolHandler handler) {
@@ -187,8 +173,6 @@ public final class OpenAiCompatChat implements ChatClient {
             String text = content.isMissingNode() || content.isNull() ? "" : content.asText();
             LlmTrace.response(traceId, elapsedSince(start), text, "tool-rounds-exhausted");
             if (text.isBlank()) {
-                // 实测：工具轮用尽后再要正文，模型有时会返回一段纯空白（像是"还在等工具结果"）。
-                // 这时必须再要一次，否则上层拿到空串 → 整份建议/计划作废。
                 log.warn("工具轮用尽后正文为空，补要一次（并明确禁止再调工具）");
                 List<Map<String, Object>> retry = new ArrayList<>(wire);
                 retry.add(Map.of("role", "user",
@@ -226,7 +210,6 @@ public final class OpenAiCompatChat implements ChatClient {
         return out;
     }
 
-    /** 请求体公共部分：model / messages / 采样参数 / 思考开关。 */
     private Map<String, Object> baseBody(List<Map<String, Object>> messages, ChatOptions options) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", model);

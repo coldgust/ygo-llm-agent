@@ -34,7 +34,6 @@ public final class CardTool {
         return facts != null && facts.knownCount() > 0;
     }
 
-    /** 工具声明。 */
     public List<ChatClient.Tool> tools() {
         Map<String, Object> query = new LinkedHashMap<>();
         query.put("type", "string");

@@ -122,7 +122,6 @@ class PlanTreeParserTest {
         assertEquals(0.66, draft.get().confidence(), 1e-9);
     }
 
-    /* ---------- 实机常见的"格式噪音"回归 ---------- */
 
     @Test
     void parsesFencedJsonWithChitchat() {
@@ -188,9 +187,6 @@ class PlanTreeParserTest {
 
     @Test
     void missingPasscodeIsWildcardNotAFailure() {
-        // 实机事故：模型写"交闪检索零衣 → 通召零衣"，但零衣此时还不在手（卡号未知），
-        // 于是 passcode=0；旧策略判"缺少卡号"整份拒绝 → 整回合没有计划（25 次"计划未就绪"）。
-        // 现在：缺卡号按通配处理（接地层 matchSpec 对 0 本来就是通配），接地失败会作废重规划。
         String raw = """
                 {"thinking":"交闪检索零衣后通召","goal":"建立交闪循环","main_line":{"steps":[
                   {"when":"MAIN1","verb":"activate","passcode":63166095,"why":"检索零衣"},
@@ -307,7 +303,6 @@ class PlanTreeParserTest {
 
     @Test
     void urgentChoiceParsesEvenWithoutCandidateContext() {
-        // 解析器不做候选界校验（越界拒绝在执行器 buildFromDraft，§2.2.5）
         var draft = PlannerSession.ChoiceDraftParser.parse("{\"choice\": \"C99\", \"confidence\": 0.5}");
         assertTrue(draft.isPresent());
         assertEquals("C99", draft.get().choice().value());

@@ -3,7 +3,6 @@ package com.github.coldgust.ygoagent.decision.model;
 import java.util.List;
 import java.util.Map;
 
-/** 一条候选行：动作序列 + 期望值 + 分项。 */
 public record Line(
         String id,
         List<ChoiceIntent> steps,

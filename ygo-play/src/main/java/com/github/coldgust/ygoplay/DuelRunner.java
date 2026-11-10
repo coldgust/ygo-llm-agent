@@ -43,10 +43,6 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 
-/**
- * 一局的完整执行：连房间 → 上传卡组 → 就绪 → 决策循环 → 统计。
- * <p>CLI（{@link DuelRunnerMain}）与 HTTP 服务（ygo-play-server）共用。
- */
 public final class DuelRunner {
 
     private static final Logger log = LoggerFactory.getLogger(DuelRunner.class);
@@ -56,9 +52,6 @@ public final class DuelRunner {
     private final DuelListener extraListener;
     private final CardFacts cardFactsOverride;
 
-    /**
-     * @param planExecSettings v6 Planner–Executor 配置；null = 走原快路径（Reflex/Tactical）
-     */
     public DuelRunner(PlannerSettings planExecSettings) {
         this(planExecSettings, null);
     }
@@ -68,18 +61,12 @@ public final class DuelRunner {
         this(planExecSettings, webHooks, null);
     }
 
-    /**
-     * @param extraListener 附加观察者（如实况战场播报）；只读局面，不参与决策
-     */
     public DuelRunner(PlannerSettings planExecSettings,
                       DuelWebHooks webHooks,
                       DuelListener extraListener) {
         this(planExecSettings, webHooks, extraListener, null);
     }
 
-    /**
-     * @param cardFactsOverride 卡牌事实来源（可空）。服务端传 PG 实现；CLI 传 null 用本地 jsonl。
-     */
     public DuelRunner(PlannerSettings planExecSettings,
                       DuelWebHooks webHooks,
                       DuelListener extraListener,
@@ -274,7 +261,6 @@ public final class DuelRunner {
         return dot > 0 ? name.substring(0, dot) : name;
     }
 
-    /** 提交事件的载荷：既给人看（summary），也给机器用（seq / 意图）。 */
     private static Map<String, Object> submissionPayload(DuelSessionRunner.Submission s) {
         Map<String, Object> payload = new LinkedHashMap<>();
         if (s.point() != null) {
@@ -292,7 +278,6 @@ public final class DuelRunner {
         return payload;
     }
 
-    /** 决策超时（看门狗）：默认 25s，`DUEL_CHOICE_TIMEOUT_MS` 可覆盖；0 表示不启用。 */
     private static long choiceTimeoutMillis() {
         String raw = System.getenv("DUEL_CHOICE_TIMEOUT_MS");
         if (raw == null || raw.isBlank()) {
@@ -334,7 +319,6 @@ public final class DuelRunner {
     private static boolean waitForDuelStart(DuelSession session, BooleanSupplier stopRequested)
             throws InterruptedException {
         long start = System.currentTimeMillis();
-        // 等待对手进房的时长：实机调试常常"先起客户端、再手动开对手"，180s 经常不够
         long limitMs = startWaitMillis();
         while (!(session.stage() == DuelSession.Stage.DUEL
                 && session.state().turnNumber() >= 1
@@ -351,7 +335,6 @@ public final class DuelRunner {
         return true;
     }
 
-    /** {@code DUEL_START_WAIT_MS}（默认 180s）：等对手进房的上限。 */
     private static long startWaitMillis() {
         String raw = System.getenv("DUEL_START_WAIT_MS");
         if (raw == null || raw.isBlank()) {
@@ -364,18 +347,6 @@ public final class DuelRunner {
         }
     }
 
-    /**
-     * 解析 {@code data/...} 这类相对资源：先按当前工作目录找，找不到就逐级向上找，
-     * 直到看到 {@code data} 目录为止（最多 5 层）。
-     *
-     * <p>为什么需要：{@code mvn spring-boot:run} 把工作目录设成模块目录 {@code ygo-play-server/}，
-     * 而数据都在仓库根的 {@code data/} 下。结果就是"卡库能加载、连招库却报不存在"——
-     * 实战里表现为 {@code find_combos} 工具静默不注册、规划器拿不到路线提示。
-     */
-    /**
-     * 己方主题的实战连招参考文本：PG combo 库按创建时间倒序取最近 {@code COMBO_CONTEXT_LIMIT}
-     * 条（默认 10），渲染成上下文段落。没有主题 / 库为空 / 不可用时返回 null（不注入）。
-     */
     private static String comboReferenceText(
             RecordedComboSource recorded,
             String archetype) {
@@ -415,7 +386,6 @@ public final class DuelRunner {
         return sb.toString().trim();
     }
 
-    /** 实战连招注入条数上限：{@code COMBO_CONTEXT_LIMIT}（默认 10）。 */
     private static int comboContextLimit() {
         String raw = System.getenv("COMBO_CONTEXT_LIMIT");
         if (raw == null || raw.isBlank()) {
@@ -428,7 +398,6 @@ public final class DuelRunner {
         }
     }
 
-    /** 卡组清单（额外在前：这些是真正会出场的，值得先看到）。 */
     private static List<Long> deckPasscodes(
             Deck deck) {
         List<Long> all = new ArrayList<>(deck.extra());
@@ -437,7 +406,6 @@ public final class DuelRunner {
     }
 
 
-    /** 主动停止（close 连接）时抛出，由服务层标记 STOPPED。 */
     public static final class DuelStoppedException extends RuntimeException {
         public DuelStoppedException() {
             super("对局已停止");

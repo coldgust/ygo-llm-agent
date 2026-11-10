@@ -11,8 +11,6 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      # PG18+ 官方镜像要求挂载整个 /var/lib/postgresql（数据实际落在 /var/lib/postgresql/18/data），
-      # 以支持 pg_upgrade --link。挂到 .../data 会在启动时报 "unused mount/volume" 并拒绝启动。
       - pgdata:/var/lib/postgresql
       - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
@@ -56,17 +54,14 @@ services:
       WORKING_DIR: /app/data/rag_storage
       INPUT_DIR: /app/data/inputs
       WORKSPACE: ygo
-      # ---------- 官方 WebUI 品牌化 ----------
       WEBUI_TITLE: ${WEBUI_TITLE:-YGO 知识图谱 · LightRAG}
       WEBUI_DESCRIPTION: ${WEBUI_DESCRIPTION:-游戏王规则与卡牌知识图谱 RAG}
-      # ---------- 认证（WebUI 与 API 暴露后必须开启）----------
       # WebUI 登录账号：格式 user:password，多账号用逗号分隔
       AUTH_ACCOUNTS: ${RAG_AUTH_ACCOUNTS:-ygo:changeme}
       # JWT 签名密钥，生产环境请改为强随机值（可放根目录 .env）
       TOKEN_SECRET: ${RAG_TOKEN_SECRET:-please-change-this-token-secret}
       # REST API 访问密钥（可选；设置后所有 API 调用需带 x-api-key）
       LIGHTRAG_API_KEY: ${LIGHTRAG_API_KEY:-}
-      # ---------- 存储：Neo4j 存图，pgvector 存向量 ----------
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: ${POSTGRES_USER:-ygo}
@@ -79,12 +74,10 @@ services:
       LIGHTRAG_VECTOR_STORAGE: PGVectorStorage
       LIGHTRAG_DOC_STATUS_STORAGE: PGDocStatusStorage
       LIGHTRAG_GRAPH_STORAGE: Neo4JStorage
-      # ---------- 生成模型（OpenAI 兼容）----------
       LLM_BINDING: openai
       LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
       LLM_BINDING_HOST: ${LLM_BASE_URL:-https://api.deepseek.com}/v1
       LLM_BINDING_API_KEY: ${LLM_API_KEY:-}
-      # ---------- Embedding（维度必须与向量表一致）----------
       EMBEDDING_BINDING: openai
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
       EMBEDDING_DIM: ${EMBEDDING_DIM:-1024}

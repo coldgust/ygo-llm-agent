@@ -126,11 +126,6 @@ public final class MsgFraming {
 
     /**
      * SELECT_CHAIN：头部 12（type + player + count + speCount + hint×2）+ 每条 14。
-     *
-     * <p>count 在 <b>off+2</b>（off 是 type，off+1 是 player）。这里曾经误读 off+1：
-     * 对手被问时（player=1）凑巧当作 1 条选项，只切出第一条；轮到我们（player=0）时
-     * 被当成 0 条 → 整段选项被切掉，解码器只能补占位项 → 所有连锁窗口都退化成"不响应"
-     * （实测：闪刀姬-零衣被黑魔导阵指定时，引擎其实给了它的效果，我们却答了弃权）。
      */
     private static int chainSize(byte[] b, int off) {
         return 12 + 14 * u(b, off + 2);
@@ -175,7 +170,6 @@ public final class MsgFraming {
         return 4 + 7 * u(b, off + 3);
     }
 
-    /* ---------- 结构校验（规范 §10.3.2）---------- */
 
     /**
      * 已知请求的结构形态检查；返回 false 表示切分结果不可信（误对齐）。

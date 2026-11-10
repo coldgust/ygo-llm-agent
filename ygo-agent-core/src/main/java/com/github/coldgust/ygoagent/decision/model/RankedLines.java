@@ -2,7 +2,6 @@ package com.github.coldgust.ygoagent.decision.model;
 
 import java.util.List;
 
-/** 排序后的候选行 + 置信度。 */
 public record RankedLines(List<Line> lines, double confidence, String reason) {
 
     public RankedLines {

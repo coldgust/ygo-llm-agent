@@ -75,7 +75,6 @@ public final class DuelSession implements AutoCloseable {
     /** -Dygo.debug.raw=true 时逐条打印内层 MSG 的十六进制转储（协议对账用）。 */
     private static final boolean RAW_DEBUG = Boolean.getBoolean("ygo.debug.raw");
 
-    /** 会话阶段。 */
     public enum Stage { CONNECTING, LOBBY, DUEL, ENDED, CLOSED }
 
     private final SessionConfig config;
@@ -143,7 +142,6 @@ public final class DuelSession implements AutoCloseable {
         return session;
     }
 
-    /* ================= 大厅 API ================= */
 
     /**
      * 上传卡组（规范 §6：main+extra 合并计数 + side 计数）。
@@ -209,7 +207,6 @@ public final class DuelSession implements AutoCloseable {
         sendFrame(ProtocolIds.CTOS_HS_START);
     }
 
-    /** 等待对局开始。 */
     public void awaitDuelStart() throws InterruptedException {
         duelStartLatch.await();
     }
@@ -219,7 +216,6 @@ public final class DuelSession implements AutoCloseable {
         return duelStartLatch.await(timeout.toMillis(), TimeUnit.MILLISECONDS);
     }
 
-    /* ================= 决策交互 API ================= */
 
     /**
      * 阻塞获取下一个"问自己"的请求。
@@ -280,18 +276,15 @@ public final class DuelSession implements AutoCloseable {
         sendFrame(ProtocolIds.CTOS_REQUEST_FIELD);
     }
 
-    /** 投降。 */
     public void surrender() throws Exception {
         sendFrame(ProtocolIds.CTOS_SURRENDER);
     }
 
-    /** 等待对局结束。 */
     public DuelResult awaitDuelEnd(Duration timeout) throws InterruptedException {
         duelEndLatch.await(timeout.toMillis(), TimeUnit.MILLISECONDS);
         return result;
     }
 
-    /** 当前会话阶段。 */
     public Stage stage() {
         return stage;
     }
@@ -321,7 +314,6 @@ public final class DuelSession implements AutoCloseable {
         duelLog.close();
     }
 
-    /* ================= 内部：发送 ================= */
 
     private void sendPlayerInfo() throws Exception {
         sendFrame(ProtocolIds.CTOS_PLAYER_INFO,
@@ -374,7 +366,6 @@ public final class DuelSession implements AutoCloseable {
         log.debug("CTOS {}", ProtocolIds.name(type));
     }
 
-    /* ================= 内部：接收与分发 ================= */
 
     private void onBytes(byte[] data, int length) {
         accum.write(data, 0, length);
@@ -681,7 +672,6 @@ public final class DuelSession implements AutoCloseable {
         log.info("== 对局结束 ==");
     }
 
-    /* ================= 看门狗（§10.6）================= */
 
     private void watchdogTick() {
         if (stage != Stage.DUEL || pendingRequest == null) {
@@ -704,7 +694,6 @@ public final class DuelSession implements AutoCloseable {
         }
     }
 
-    /* ================= 通知与杂项 ================= */
 
     private volatile DuelState latestStateRef;
 
@@ -862,8 +851,6 @@ public final class DuelSession implements AutoCloseable {
             long knownInstance = projector.instanceIdAt(absController, location, sequence);
             if (code == 0 && knownInstance > 0) {
                 // 协议对部分卡发 code=0（对手场上的卡 / 里侧卡），但投影层早就知道它是什么。
-                // 不回填的话候选全是"未知卡"，模型只能靠槽位猜——实战里它把「超魔导龙骑士」
-                // 选成破坏目标（该卡『不会被效果破坏』），整次除去直接白费。
                 var projected = projector.identityAt(absController, location, sequence);
                 if (!projected.isUnknown()) {
                     identity = projected;

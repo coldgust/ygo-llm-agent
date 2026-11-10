@@ -9,7 +9,6 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 
-/** 内存会话：按序给出请求并记录应答。 */
 final class FakeSessionLink implements SessionLink {
 
     private final Deque<ChoiceRequest> queue = new ArrayDeque<>();

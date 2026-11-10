@@ -12,21 +12,6 @@ import org.slf4j.LoggerFactory;
 
 /**
  * 全链路日志（可关）。
- *
- * <p>决策出问题时，最想知道的三件事是：**发出去的到底是什么、模型回了什么、中间调了什么**。
- * 平时这些信息散在三处（trace JSONL、LightRAG 日志、异常栈），排查时要来回拼。
- * 打开 {@code YGO_VERBOSE_LOG=true} 后，它们会按发生顺序打到同一个 logger（{@code ygo.llm} /
- * {@code ygo.decision}），直接看一条时间线。
- *
- * <p>设计取向：
- * <ul>
- *   <li><b>默认关</b>：全量提示词一次几 KB，开着跑会给日志和磁盘添很多负担；</li>
- *   <li><b>原文优先</b>：默认不截断（{@code YGO_VERBOSE_MAX_CHARS=0}），要看就看全的；
- *       嫌长可以设成 2000/4000 之类的上限；</li>
- *   <li><b>带调用 id</b>：每次调用一个自增 id，工具调用会带着同一个 id，能和请求/响应串起来；</li>
- *   <li><b>可标注来源</b>：{@link #scope(String)} 让调用方声明"这次是规划器还是决策器判断"，
- *       否则日志里只有一堆无主的 messages。</li>
- * </ul>
  */
 public final class LlmTrace {
 
@@ -58,7 +43,6 @@ public final class LlmTrace {
 
     private static final ThreadLocal<String> CURRENT = new ThreadLocal<>();
 
-    /** 作用域：设置线程上下文标签，关闭时恢复。 */
     public static final class Scope implements AutoCloseable {
         static final Scope NOOP = new Scope(null, null, false);
 
@@ -97,7 +81,6 @@ public final class LlmTrace {
         return SEQ.incrementAndGet();
     }
 
-    /** 请求：模型、采样参数、完整 messages。 */
     public static void request(long id, String model, ChatClient.ChatOptions options, List<ChatClient.Msg> messages) {
         if (!ENABLED) {
             return;
@@ -161,7 +144,6 @@ public final class LlmTrace {
         log.warn("[LLM✗] #{} {} {}ms {}", id, label().strip(), elapsedMs, message);
     }
 
-    /** 工具调用的开始（参数是模型给的原文）。 */
     public static void toolCall(long id, String name, String arguments) {
         if (!ENABLED) {
             return;
@@ -198,7 +180,6 @@ public final class LlmTrace {
                 .info("[耗时] {} {}ms {}", what, elapsedMs, detail == null ? "" : detail);
     }
 
-    /** 日志里的一句话摘要（给 record/集合用）。 */
     public static String preview(String text, int limit) {
         if (text == null) {
             return "";

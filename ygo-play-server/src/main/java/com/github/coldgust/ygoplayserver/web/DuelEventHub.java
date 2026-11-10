@@ -13,10 +13,6 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-/**
- * 对局事件总线：每个 duelId 一组 SSE 订阅者；决策/规划器/对局状态事件实时推送前端。
- * <p>发布永不抛异常（订阅者断开由 send 失败清理）。
- */
 @Component
 public class DuelEventHub {
 
@@ -57,7 +53,6 @@ public class DuelEventHub {
         return emitter;
     }
 
-    /** 发布命名事件（payload 序列化为 JSON data）。 */
     public void publish(String duelId, String eventName, Object payload) {
         Deque<HistoryEntry> past = history.computeIfAbsent(duelId, k -> new ArrayDeque<>());
         synchronized (past) {
@@ -79,7 +74,6 @@ public class DuelEventHub {
         }
     }
 
-    /** 对局终结：推一条终态事件后关闭所有订阅。 */
     public void complete(String duelId, String eventName, Object payload) {
         publish(duelId, eventName, payload);
         List<SseEmitter> emitters = subscribers.remove(duelId);

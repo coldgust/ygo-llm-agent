@@ -7,22 +7,6 @@ import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
 
-/**
- * v6 Planner–Executor 的配置解析：CLI 之外的 env/dotenv 入口（与 RuntimeConfig 同风格）。
- *
- * <pre>
- * PLAN_EXEC_ENABLED           总开关（默认：LLM_API_KEY 存在即开）
- * PLANNER_WAIT_DECISION_MS    决策时一次最多等待规划器（默认 4000）
- * PLANNER_FIRST_WAIT_MS       本回合首次 one-shot 前等计划的上限（默认 7000）
- * PLANNER_WAIT_TURN_MS        一回合内等待累计上限（默认 20000）
- * PLANNER_MAX_CHECKPOINTS     每回合后台 checkpoint 上限（默认 6）
- * PLANNER_SIMILARITY_THRESHOLD 相似匹配阈值（默认 0.80）
- * ONESHOT_TIMEOUT_MS          one-shot 硬超时（默认 5000）
- * PLANNER_RUSH_ANSWER         ④升级竞速里规划器抢答的开关（默认开；0/false 关闭）
- * CARD_RAG_PATH               card_rag cards.jsonl（默认 data/card_rag/cards.jsonl）
- * LLM_API_KEY / LLM_BASE_URL / LLM_MODEL   与 RuntimeConfig 共用
- * </pre>
- */
 public final class PlanExecSettingsResolver {
 
     public static Optional<PlannerSettings> resolve(Map<String, String> env) {

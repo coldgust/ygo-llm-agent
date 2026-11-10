@@ -67,7 +67,6 @@ class RequestDecoderTest {
     @Test
     void fieldSpellPlaceIsNotZeroCandidates() {
         // 回归：发动场地魔法时，可用位图只剩场地魔法区那一位。
-        // 该位曾被当成"保留位"丢掉 → PlaceRequest 0 候选 → 应答非法 → 对局卡死。
         // 注意：位图**相对应答者**——应答者自己的场地魔法区是 bit 7（不是 bit 23）。
         int flag = 0xFFFFFFFF & ~(1 << 7);
         byte[] payload = new ByteWriter().u8(1).u8(1).u32(flag).toByteArray();
@@ -84,8 +83,6 @@ class RequestDecoderTest {
 
     @Test
     void ownSpellTrapZonesAreNotLabelledAsOpponentWhenSittingSecond() {
-        // 真实事故：坐 1 号位时整张掩码被按"绝对座位"解释，我方 5 个魔陷格全变成"对方魔陷区"，
-        // UI 显示"放到 对方魔陷区#1"，回包也把牌送到了对面。位图 0–15 相对应答者 = 我方。
         int flag = 0xFFFFFFFF & ~((1 << 8) | (1 << 9) | (1 << 10) | (1 << 11) | (1 << 12));
         byte[] payload = new ByteWriter().u8(1).u8(1).u32(flag).toByteArray();
 
@@ -115,7 +112,6 @@ class RequestDecoderTest {
 
     @Test
     void emptyPlaceBitmapFallsBackToMirrorInsteadOfZeroCandidates() {
-        // 真实事故：位置请求解出 0 候选 → 应答为空 → 引擎等应答 → 对局永久卡住。
         // 兜底必须给至少一个候选，哪怕只是"我方第一个空的主怪兽区"。
         RequestDecoder.MirrorView withEmptyZone = new RequestDecoder.MirrorView() {
             @Override

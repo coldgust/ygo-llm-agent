@@ -10,15 +10,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
-/**
- * 卡牌事实的 PostgreSQL 实现。
- *
- * <p>为什么值得放 PG：内存版虽然单次查找是 O(1)，但每次启动要把 15019 行读进堆（~20MB），
- * 且 web 与 CLI 各读一份；放 PG 后按主键/名字索引查，进程无状态、可共享，
- * 名字模糊搜索也能交给数据库（pg_trgm）。
- *
- * <p>退化策略：表不存在或数据库不可达时 {@link #tryCreate} 返回 null，调用方回退本地 jsonl。
- */
 public final class PgCardFacts implements CardFacts {
 
     private static final String COLUMNS =
@@ -33,7 +24,6 @@ public final class PgCardFacts implements CardFacts {
         this.count = count;
     }
 
-    /** 表存在且可查时返回实现；否则 null。 */
     public static PgCardFacts tryCreate(JdbcClient jdbc) {
         try {
             Long total = jdbc.sql("SELECT count(*) FROM card").query(Long.class).single();
@@ -90,7 +80,6 @@ public final class PgCardFacts implements CardFacts {
                 mergeEffect(rs.getString("monster_effect"), rs.getString("pendulum_effect")));
     }
 
-    /** 与内存版口径一致：灵摆在前、怪兽效果在后。 */
     private static String mergeEffect(String monster, String pendulum) {
         boolean hasPendulum = pendulum != null && !pendulum.isBlank();
         boolean hasMonster = monster != null && !monster.isBlank();

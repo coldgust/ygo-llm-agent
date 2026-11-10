@@ -10,18 +10,8 @@ import java.util.List;
 import java.util.StringJoiner;
 import java.util.function.LongFunction;
 
-/**
- * 把最终提交的 {@link ChoiceSelection} 翻成一句人话，供轨迹/前端展示。
- *
- * <p>为什么需要它：决策事件里只有"意图类型"（如 {@code Place}、{@code Activate}），
- * 看得出走了哪条决策路径，却看不出**到底提交了什么**——是哪个区域、哪张卡、发动还是弃权。
- * 复盘"这一步为什么这么走"时，后半截信息才是关键。
- *
- * <p>只做展示，不参与决策；任何字段缺失都退化成能读的占位（卡号/区域编号），不抛异常。
- */
 public final class SelectionDescriber {
 
-    /** 卡号 → 卡名；null 时只显示卡号。 */
     private final LongFunction<String> nameOf;
 
     public SelectionDescriber() {
@@ -32,7 +22,6 @@ public final class SelectionDescriber {
         this.nameOf = nameOf;
     }
 
-    /** 一句话描述这次提交。 */
     public String describe(ChoiceRequest request, ChoiceSelection selection) {
         if (selection == null) {
             return "（空应答）";
@@ -70,7 +59,6 @@ public final class SelectionDescriber {
         };
     }
 
-    /* ---------- 主/战阶动作 ---------- */
 
     private String action(ChoiceSelection.MainPhaseAction action) {
         return switch (action) {
@@ -114,7 +102,6 @@ public final class SelectionDescriber {
         };
     }
 
-    /* ---------- 小工具 ---------- */
 
     private String card(ChoiceRequest.CardChoice choice) {
         if (choice == null) {
@@ -129,7 +116,6 @@ public final class SelectionDescriber {
         return join(list.stream().map(this::card).toList());
     }
 
-    /** 卡名：优先查表，其次卡定义，最后退回卡号。 */
     private String name(long passcode) {
         if (passcode <= 0) {
             return "未知卡";
@@ -153,8 +139,6 @@ public final class SelectionDescriber {
 
     /**
      * 区域描述统一走 {@link ZoneCodes#label}：格子序号从 1 起、与计划里的 zone 编码同一套。
-     * <p>位置决策是"计划写 MMZ-3 → 提交放到第 3 格"，两边编号必须对得上，
-     * 否则复盘时看到"计划 MMZ-3 / 提交 #2"会以为是放错了格。
      */
     private String zone(ZoneRef zone) {
         return ZoneCodes.label(zone);
