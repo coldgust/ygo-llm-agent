@@ -1,13 +1,27 @@
 package com.github.coldgust.ygoplayserver;
 
+import com.github.coldgust.ygoplayserver.config.AgentProperties;
+import com.github.coldgust.ygoplayserver.config.ComboProperties;
+import com.github.coldgust.ygoplayserver.config.DuelSummaryProperties;
+import com.github.coldgust.ygoplayserver.config.LightRagProperties;
 import com.github.coldgust.ygoplayserver.config.LoggingPaths;
+import com.github.coldgust.ygoplayserver.config.LlmProperties;
+import com.github.coldgust.ygoplayserver.config.PlanExecProperties;
 import com.github.coldgust.ygoplayserver.config.PlayServerProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
 @SpringBootApplication
-@EnableConfigurationProperties(PlayServerProperties.class)
+@EnableConfigurationProperties({
+        PlayServerProperties.class,
+        LightRagProperties.class,
+        AgentProperties.class,
+        PlanExecProperties.class,
+        LlmProperties.class,
+        DuelSummaryProperties.class,
+        ComboProperties.class,
+})
 public class YgoPlayServerApplication {
 
     public static void main(String[] args) {

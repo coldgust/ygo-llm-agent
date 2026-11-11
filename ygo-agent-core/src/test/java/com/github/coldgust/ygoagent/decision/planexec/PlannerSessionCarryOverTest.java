@@ -1,8 +1,10 @@
 package com.github.coldgust.ygoagent.decision.planexec;
 
+import dev.langchain4j.data.message.ChatMessage;
 import com.github.coldgust.ygoagent.decision.model.ChoiceIntent;
 import com.github.coldgust.ygoagent.decision.model.DecisionPoint;
 import com.github.coldgust.ygoagent.decision.planexec.llm.ChatClient;
+import com.github.coldgust.ygoagent.decision.planexec.llm.LlmTrace;
 import com.github.coldgust.ygoagent.decision.planexec.planner.PlannerSession;
 import com.github.coldgust.ygoagent.decision.planexec.planner.TurnPlan;
 import org.junit.jupiter.api.Test;
@@ -85,20 +87,30 @@ class PlannerSessionCarryOverTest {
     void reasoningLevelDrivesTheCheckpointTier() {
         // 一键调控：未配置=推理档（low）；off=快档（旧行为：锚点快出计划）；medium/high=推理档抬强度
         PlannerSettings cfg = settings();
-        assertEquals("low", cfg.checkpointOptions(null).reasoning(), "未配置默认推理档 low");
-        assertTrue(cfg.checkpointOptions(null).maxTokens() >= 8_000, "推理档要给足思维链预算");
+        assertEquals("low", cfg.checkpointOptions().reasoning(), "未配置默认推理档 low");
+        assertTrue(cfg.checkpointOptions().maxTokens() >= 8_000, "推理档要给足思维链预算");
 
-        assertEquals("off", cfg.checkpointOptions("off").reasoning(), "off=快档");
-        assertTrue(cfg.checkpointOptions("off").maxTokens() < 8_000, "快档不需要思维链预算");
+        PlannerSettings off = withReasoning(cfg, "off");
+        assertEquals("off", off.checkpointOptions().reasoning(), "off=快档");
+        assertTrue(off.checkpointOptions().maxTokens() < 8_000, "快档不需要思维链预算");
 
-        assertEquals("medium", cfg.checkpointOptions("medium").reasoning(), "medium/high 覆盖思考强度");
-        assertTrue(cfg.checkpointOptions("medium").maxTokens() >= 8_000);
+        PlannerSettings medium = withReasoning(cfg, "medium");
+        assertEquals("medium", medium.checkpointOptions().reasoning(), "medium/high 覆盖思考强度");
+        assertTrue(medium.checkpointOptions().maxTokens() >= 8_000);
+    }
+
+    private static PlannerSettings withReasoning(PlannerSettings s, String reasoningPlanner) {
+        return new PlannerSettings(s.enabled(), s.baseUrl(), s.apiKey(), s.model(), reasoningPlanner,
+                s.reasoningDecision(), s.waitPerDecisionMs(), s.firstOneshotWaitMs(), s.waitPerTurnMs(),
+                s.maxCheckpointsPerTurn(), s.similarityThreshold(), s.oneshotTimeoutMs(),
+                s.plannerCallTimeoutMs(), s.plannerCooldownMs(), s.cardRagPath(), s.oneshotMaxTokens(),
+                s.pathPlanning(), s.plannerRushAnswer());
     }
 
     @Test
     void replanUsesTheReasoningTierLikeEventsCheckpoints() {
         List<ChatClient.ChatOptions> seen = Collections.synchronizedList(new ArrayList<>());
-        List<List<ChatClient.Msg>> prompts = Collections.synchronizedList(new ArrayList<>());
+        List<List<ChatMessage>> prompts = Collections.synchronizedList(new ArrayList<>());
         ChatClient recorder = (messages, options) -> {
             prompts.add(List.copyOf(messages));
             seen.add(options);
@@ -120,7 +132,7 @@ class PlannerSessionCarryOverTest {
         int replanCall = -1;
         for (int i = 0; i < prompts.size(); i++) {
             boolean marked = prompts.get(i).stream()
-                    .anyMatch(m -> m.content().contains("===重新规划==="));
+                    .anyMatch(m -> LlmTrace.messageText(m).contains("===重新规划==="));
             if (marked) {
                 replanCall = i;
                 break;

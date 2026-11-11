@@ -3,13 +3,16 @@ package com.github.coldgust.ygoplay;
 import com.github.coldgust.ygoagent.decision.planexec.CardFacts;
 import com.github.coldgust.ygoagent.decision.planexec.CardRagFactService;
 import com.github.coldgust.ygoagent.decision.planexec.PlannerSettings;
+import com.github.coldgust.ygoagent.decision.planexec.Texts;
+import com.github.coldgust.ygoagent.decision.planexec.llm.LlmTrace;
 import com.github.coldgust.ygoprosdk.session.DuelListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
-import java.nio.file.Files;
+import java.util.function.Function;
 
 public final class DuelRunnerMain {
 
@@ -19,9 +22,12 @@ public final class DuelRunnerMain {
         CliOptions cli = CliOptions.parse(args);
         RuntimeConfig cfg = RuntimeConfig.resolve(cli);
 
-        var planExec = PlanExecSettingsResolver.resolve(
-                DotEnv.load(Path.of(cli.envPath() == null ? ".env" : cli.envPath())))
-                .orElse(null);
+        // 组装根：全进程唯一读环境变量的地方——OS env 优先，.env 并入，之后一律走配置对象
+        Map<String, String> dotenv = DotEnv.load(Path.of(cli.envPath() == null ? ".env" : cli.envPath()));
+        Function<String, String> lookup = key -> Texts.firstNonBlank(System.getenv(key), dotenv.get(key));
+        LlmTrace.configure(lookup.apply("YGO_VERBOSE_LOG"), lookup.apply("YGO_VERBOSE_MAX_CHARS"));
+
+        var planExec = cfg.planner();
 
         DuelRunSpec spec = new DuelRunSpec(
                 cfg.host(), cfg.port(), cfg.name(), cfg.move(),
@@ -30,7 +36,7 @@ public final class DuelRunnerMain {
                 cfg.archetype(),
                 false,
                 cfg.duelLogPath(), cfg.tracePath(),
-                deckStrategy());
+                cfg.deckStrategy(), cfg.tuning());
 
         log.info("连接 {}:{}", cfg.host(), cfg.port());
         log.info("对局记录 → {}", cfg.duelLogPath());
@@ -42,7 +48,8 @@ public final class DuelRunnerMain {
             log.info("v6 Planner–Executor 未启用（LLM_API_KEY 未配置或 PLAN_EXEC_ENABLED=false），走 Reflex/Tactical 快路径");
         }
 
-        DuelRunner runner = new DuelRunner(planExec, null, reporter(planExec));
+        DuelRunner runner = new DuelRunner(planExec, null, reporter(cfg.battleReport(), planExec),
+                null, cfg.lightRag());
         DuelRunResult result = runner.run(spec, new AtomicReference<>(), () -> false);
 
         log.info("对局结束：应答 {} 次，保底 {} 次，结果 {}",
@@ -51,13 +58,11 @@ public final class DuelRunnerMain {
                         : result.duelResult().winner() + "/" + result.duelResult().reason());
     }
 
-    private static DuelListener reporter(
-            PlannerSettings planExec) {
-        String target = System.getenv("BATTLE_REPORT");
-        if (target == null || target.isBlank() || "0".equals(target)) {
+    private static DuelListener reporter(String battleReport, PlannerSettings planExec) {
+        if (battleReport == null || battleReport.isBlank() || "0".equals(battleReport)) {
             return null;
         }
-        Path path = Path.of("1".equals(target) ? "/tmp/ygo-live/battlefield.log" : target);
+        Path path = Path.of("1".equals(battleReport) ? "/tmp/ygo-live/battlefield.log" : battleReport);
         Path rag = planExec == null
                 ? Path.of("data/card_rag/cards.jsonl") : planExec.cardRagPath();
         CardFacts facts = null;
@@ -73,21 +78,6 @@ public final class DuelRunnerMain {
             log.warn("实况播报启动失败: {}", e.toString());
             return null;
         }
-    }
-
-    private static String deckStrategy() {
-        String file = System.getenv("DECK_STRATEGY_FILE");
-        if (file != null && !file.isBlank()) {
-            try {
-                String text = Files.readString(Path.of(file));
-                log.info("已从 {} 读取卡组思路（{} 字）", file, text.strip().length());
-                return text;
-            } catch (Exception e) {
-                log.warn("读取 DECK_STRATEGY_FILE 失败: {}", e.toString());
-            }
-        }
-        String inline = System.getenv("DECK_STRATEGY");
-        return inline == null || inline.isBlank() ? null : inline;
     }
 
     private DuelRunnerMain() {

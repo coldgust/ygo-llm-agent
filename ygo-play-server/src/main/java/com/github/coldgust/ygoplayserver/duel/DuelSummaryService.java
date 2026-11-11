@@ -2,12 +2,13 @@ package com.github.coldgust.ygoplayserver.duel;
 
 import com.github.coldgust.ygoagent.decision.planexec.Texts;
 import com.github.coldgust.ygoagent.decision.planexec.llm.ChatClient;
-import com.github.coldgust.ygoagent.decision.planexec.llm.OpenAiCompatChat;
 import com.github.coldgust.ygoduellog.ingest.JsonlDuelParser;
 import com.github.coldgust.ygoduellog.model.DecisionEpisode;
 import com.github.coldgust.ygoduellog.model.DuelRecord;
 import com.github.coldgust.ygoplay.DuelRunResult;
 import com.github.coldgust.ygoplay.DuelRunSpec;
+import com.github.coldgust.ygoplayserver.config.LightRagProperties;
+import com.github.coldgust.ygoplayserver.config.DuelSummaryProperties;
 import com.github.coldgust.ygoplayserver.duel.summary.DuelNarrative;
 import com.github.coldgust.ygoplayserver.duel.summary.DuelSummarizer;
 import com.github.coldgust.ygoplayserver.duel.summary.DuelSummaryPrompts;
@@ -15,7 +16,6 @@ import com.github.coldgust.ygoplayserver.duel.summary.DuelTraceReader;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.core.env.Environment;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.net.URI;
@@ -35,8 +35,6 @@ public class DuelSummaryService {
 
     private static final Logger log = LoggerFactory.getLogger(DuelSummaryService.class);
 
-    private static final int DEFAULT_NARRATIVE_CHARS = 8_000;
-
     private final String endpoint;
     private final String apiKey;
     private final boolean enabled;
@@ -47,25 +45,20 @@ public class DuelSummaryService {
     private final JsonMapper mapper = JsonMapper.builder().build();
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
-    public DuelSummaryService(Environment environment) {
-        this(environment, null);
-    }
-
-    public DuelSummaryService(Environment environment, ChatClient chat) {
-        String base = environment.getProperty("LIGHTRAG_URL", "http://localhost:9621").trim();
+    public DuelSummaryService(LightRagProperties lightRag, DuelSummaryProperties properties, ChatClient chat) {
+        String base = lightRag.url().trim();
         if (base.endsWith("/")) {
             base = base.substring(0, base.length() - 1);
         }
         this.endpoint = base + "/documents/text";
-        this.apiKey = environment.getProperty("LIGHTRAG_API_KEY", "");
-        this.enabled = !"false".equalsIgnoreCase(
-                environment.getProperty("DUEL_SUMMARY_ENABLED", "true"));
-        String mode = environment.getProperty("DUEL_SUMMARY_MODE", "llm").trim().toLowerCase(Locale.ROOT);
+        this.apiKey = lightRag.apiKey();
+        this.enabled = properties.enabled();
+        String mode = properties.mode().toLowerCase(Locale.ROOT);
         this.llmMode = !"template".equals(mode) && !"off".equals(mode);
-        this.narrativeChars = intOf(environment, "DUEL_NARRATIVE_MAX_CHARS", DEFAULT_NARRATIVE_CHARS);
+        this.narrativeChars = properties.narrativeMaxChars();
         this.summarizer = chat == null ? null : new DuelSummarizer(chat,
-                intOf(environment, "DUEL_SUMMARY_MAX_TOKENS", 2_000),
-                Duration.ofMillis(intOf(environment, "DUEL_SUMMARY_TIMEOUT_MS", 60_000)));
+                properties.maxTokens(),
+                Duration.ofMillis(properties.timeoutMs()));
         this.http = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofSeconds(3))
@@ -73,19 +66,6 @@ public class DuelSummaryService {
         if (this.enabled && llmMode && this.summarizer == null) {
             log.info("对局复盘：LLM 未配置，退回模板摘要（只记事实，不含判断）");
         }
-    }
-
-    public static DuelSummaryService fromEnvironment(Environment environment) {
-        String apiKey = environment.getProperty("LLM_API_KEY", "");
-        ChatClient chat = null;
-        if (apiKey != null && !apiKey.isBlank()) {
-            chat = new OpenAiCompatChat(
-                    environment.getProperty("LLM_BASE_URL", "https://api.deepseek.com"),
-                    apiKey,
-                    environment.getProperty("DUEL_SUMMARY_MODEL",
-                            environment.getProperty("LLM_MODEL", "deepseek-chat")));
-        }
-        return new DuelSummaryService(environment, chat);
     }
 
     public boolean enabled() {
@@ -289,15 +269,6 @@ public class DuelSummaryService {
             }
         } catch (Exception e) {
             throw new IllegalStateException("写 LightRAG 失败: " + e.getMessage(), e);
-        }
-    }
-
-    private static int intOf(Environment environment, String key, int fallback) {
-        try {
-            String raw = environment.getProperty(key);
-            return raw == null || raw.isBlank() ? fallback : Math.max(1, Integer.parseInt(raw.trim()));
-        } catch (NumberFormatException e) {
-            return fallback;
         }
     }
 

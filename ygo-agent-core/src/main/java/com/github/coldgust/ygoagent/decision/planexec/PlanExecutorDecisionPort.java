@@ -18,10 +18,13 @@ import com.github.coldgust.ygoagent.decision.planexec.prompt.IntentSummary;
 import com.github.coldgust.ygodomain.decision.ChoiceRequest;
 import com.github.coldgust.ygodomain.duel.PlayerSide;
 import com.github.coldgust.ygodomain.zone.ZoneRef;
+import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.UserMessage;
+
 import com.github.coldgust.ygoagent.decision.planexec.llm.ChatClient;
-import com.github.coldgust.ygoagent.decision.planexec.llm.LlmTrace;
-import com.github.coldgust.ygoagent.decision.planexec.llm.LlmTuning;
 import com.github.coldgust.ygoagent.decision.planexec.llm.ComboTool;
+import com.github.coldgust.ygoagent.decision.planexec.llm.LlmTrace;
 import com.github.coldgust.ygoagent.decision.planexec.llm.RulebookTool;
 import com.github.coldgust.ygoagent.decision.planexec.planner.PlannerPrompts;
 import com.github.coldgust.ygoagent.decision.planexec.planner.PlannerSession;
@@ -631,25 +634,20 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
         CompletableFuture<Optional<Drafted>> oneshotFuture =
                 CompletableFuture.supplyAsync(() -> {
                     String pack = packer.decisionPack(point, planForOneshot, memory);
-                    List<ChatClient.Msg> messages = List.of(
-                            ChatClient.Msg.system(PlannerPrompts.ONESHOT_SYSTEM),
-                            ChatClient.Msg.user(pack));
+                    List<ChatMessage> messages = List.of(
+                            SystemMessage.from(PlannerPrompts.ONESHOT_SYSTEM),
+                            UserMessage.from(pack));
                     ChatClient.ChatOptions options = ChatClient.ChatOptions.decision(
                                     settings.oneshotMaxTokens(),
                                     Duration.ofMillis(Math.min(settings.oneshotTimeoutMs(), deadlineMs)))
                             // 思考强度走配置（LLM_REASONING_DECISION）；留空 = 沿用决策档默认（关思考）
-                            .withReasoning(LlmTuning.get().decision());
-                    // 工具按需注册：规则 / 连招 / 查卡，模型自己决定要不要调用（工具轮对上层透明）
-                    List<ChatClient.Tool> toolList = tools.tools();
+                            .withReasoning(settings.reasoningDecision());
+                    // 工具按需注册：规则 / 连招 / 查卡 / 历史对局，模型自己决定要不要调用（工具轮对上层透明）
+                    List<Object> toolList = tools.providers();
                     String raw;
                     try (var ignored = LlmTrace.scope("决策器判断 T" + point.turn() + " " + point.kind())) {
-                        if (toolList.isEmpty()) {
-                            raw = chat.complete(messages, options);
-                        } else {
-                            Set<Long> visibleCards = ComboTool.visibleSelfCards(point.state());
-                            raw = chat.completeWithTools(messages, options, toolList,
-                                    tools.handler(visibleCards));
-                        }
+                        raw = toolList.isEmpty() ? chat.complete(messages, options)
+                                : chat.completeWithTools(messages, options, toolList);
                     }
                     Optional<PlannerSession.ChoiceDraft> draft = PlannerSession.ChoiceDraftParser.parse(raw);
                     if (draft.isEmpty()) {
@@ -666,20 +664,19 @@ public final class PlanExecutorDecisionPort implements DecisionPort, AutoCloseab
                     }
                     notes.add("单轮直答选择越界：" + draft.get().choice().value()
                             + "（候选 " + point.candidates().size() + " 个），已要求重答");
-                    List<ChatClient.Msg> retryMessages = new ArrayList<>(messages);
-                    retryMessages.add(ChatClient.Msg.user(
+                    List<ChatMessage> retryMessages = new ArrayList<>(messages);
+                    retryMessages.add(UserMessage.from(
                             "你的 choice=" + draft.get().choice().value() + " 不在候选集内。"
                                     + "本决策点可选编号：" + candidateCodes(point)
                                     + "（本请求没有 C0）。请只输出 JSON，choice 必须是其中之一。"));
                     ChatClient.ChatOptions retryOptions = ChatClient.ChatOptions.decision(
                                     settings.oneshotMaxTokens(),
                                     Duration.ofMillis(Math.max(600, options.timeout().toMillis() / 2)))
-                            .withReasoning(LlmTuning.get().decision());
+                            .withReasoning(settings.reasoningDecision());
                     String retried;
                     try (var ignored = LlmTrace.scope("决策器判断重答 T" + point.turn() + " " + point.kind())) {
                         retried = toolList.isEmpty() ? chat.complete(retryMessages, retryOptions)
-                                : chat.completeWithTools(retryMessages, retryOptions, toolList,
-                                        tools.handler(ComboTool.visibleSelfCards(point.state())));
+                                : chat.completeWithTools(retryMessages, retryOptions, toolList);
                     }
                     Optional<PlannerSession.ChoiceDraft> second =
                             PlannerSession.ChoiceDraftParser.parse(retried);

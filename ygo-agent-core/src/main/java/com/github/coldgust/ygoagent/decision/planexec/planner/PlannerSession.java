@@ -10,9 +10,13 @@ import com.github.coldgust.ygoagent.decision.planexec.ContextPackBuilder;
 import com.github.coldgust.ygoagent.decision.planexec.DecisionTools;
 import com.github.coldgust.ygoagent.decision.planexec.DuelMathService;
 import com.github.coldgust.ygoagent.decision.planexec.PlannerSettings;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.UserMessage;
+
 import com.github.coldgust.ygoagent.decision.planexec.llm.ChatClient;
 import com.github.coldgust.ygoagent.decision.planexec.llm.LlmTrace;
-import com.github.coldgust.ygoagent.decision.planexec.llm.LlmTuning;
 import com.github.coldgust.ygoagent.decision.planexec.llm.RulebookTool;
 import com.github.coldgust.ygoagent.decision.port.DecisionTraceWriter;
 import com.github.coldgust.ygodomain.duel.CardInstance;
@@ -86,7 +90,7 @@ public final class PlannerSession implements AutoCloseable {
     private final AtomicLong turnBudgetUsedMs = new AtomicLong();
 
     private String segmentKey = "";
-    private final List<ChatClient.Msg> history = new ArrayList<>();
+    private final List<ChatMessage> history = new ArrayList<>();
     private final List<String> pendingEvents = new ArrayList<>();
     private final Set<Integer> planWaitExhausted = ConcurrentHashMap.newKeySet();
 
@@ -170,11 +174,11 @@ public final class PlannerSession implements AutoCloseable {
                 String pack = packer.decisionPack(point);
                 String prompt = PlannerPrompts.DIVERGENCE_TEMPLATE.formatted(
                         String.join("；", missReasons), pack);
-                List<ChatClient.Msg> messages = new ArrayList<>(historySnapshot());
-                messages.add(ChatClient.Msg.user(prompt));
+                List<ChatMessage> messages = new ArrayList<>(historySnapshot());
+                messages.add(UserMessage.from(prompt));
                 ChatClient.ChatOptions options = ChatClient.ChatOptions.decision(
                                 settings.oneshotMaxTokens(), Duration.ofMillis(Math.max(500, allowed)))
-                        .withReasoning(LlmTuning.get().decision());
+                        .withReasoning(settings.reasoningDecision());
                 String raw;
                 try (var ignored = LlmTrace.scope("规划器紧急决策")) {
                     raw = withTools(messages, options);
@@ -223,7 +227,7 @@ public final class PlannerSession implements AutoCloseable {
             if (!segment.equals(segmentKey)) {
                 return; // 已经换回合：旧计划作废就算了，新回合的锚点会重新规划
             }
-            history.add(ChatClient.Msg.user(PlannerPrompts.REPLAN_TEMPLATE.formatted(
+            history.add(UserMessage.from(PlannerPrompts.REPLAN_TEMPLATE.formatted(
                     stale.planId(), stale.cursor() + 1, String.valueOf(reason))));
             runCheckpoint("replan");
         });
@@ -303,11 +307,11 @@ public final class PlannerSession implements AutoCloseable {
         history.clear();
         // 顾问模式（默认）：只要场面分析/战术/combo 的自然语言，不产出可执行路径。
         // 路径规划模式（PLANNER_PATH_PLANNING=true）：回到 v6 原设计，产出 steps/branches。
-        history.add(ChatClient.Msg.system(settings.pathPlanning()
+        history.add(SystemMessage.from(settings.pathPlanning()
                 ? PlannerPrompts.PLANNER_SYSTEM
                 : PlannerPrompts.ADVISOR_SYSTEM));
         if (!handoff.isEmpty()) {
-            history.add(ChatClient.Msg.user("===上一段摘要接力===\n" + handoff));
+            history.add(UserMessage.from("===上一段摘要接力===\n" + handoff));
         }
         boolean oppTurn = side.contains("对方");
         boolean pathPlanning = settings.pathPlanning();
@@ -321,7 +325,7 @@ public final class PlannerSession implements AutoCloseable {
                     ? PlannerPrompts.ADVISOR_ANCHOR_OPP_TEMPLATE.formatted(turn, anchor)
                     : PlannerPrompts.ADVISOR_ANCHOR_TEMPLATE.formatted(turn, side, anchor);
         }
-        history.add(ChatClient.Msg.user(anchorRequest));
+        history.add(UserMessage.from(anchorRequest));
         checkpointCount.set(0);
         turnBudgetUsedMs.set(0);
         planWaitExhausted.clear();
@@ -365,7 +369,7 @@ public final class PlannerSession implements AutoCloseable {
                 if (checkpointCount.get() >= settings.maxCheckpointsPerTurn()) {
                     return;
                 }
-                history.add(ChatClient.Msg.user(PlannerPrompts.EVENT_BATCH_TEMPLATE.formatted(
+                history.add(UserMessage.from(PlannerPrompts.EVENT_BATCH_TEMPLATE.formatted(
                         String.join("\n", events))));
                 runCheckpoint("events");
             } finally {
@@ -391,16 +395,16 @@ public final class PlannerSession implements AutoCloseable {
         });
     }
 
-    private String withTools(List<ChatClient.Msg> messages, ChatClient.ChatOptions options) {
+    private String withTools(List<ChatMessage> messages, ChatClient.ChatOptions options) {
         if (tools == null || tools.isEmpty()) {
             return client.complete(messages, options);
         }
-        List<ChatClient.Tool> declared = tools.tools();
-        if (declared.isEmpty()) {
+        List<Object> providers = tools.providers();
+        if (providers.isEmpty()) {
             return client.complete(messages, options);
         }
-        // 规划器不涉及"手上哪张卡可见"的过滤，连招工具按空集处理即可
-        return client.completeWithTools(messages, options, declared, tools.handler(Set.of()));
+        // 规划器不涉及"手上哪张卡可见"的过滤（旧路线的痕迹；检索本身也不再依赖）
+        return client.completeWithTools(messages, options, providers);
     }
 
     private void runCheckpoint(String kind) {
@@ -411,8 +415,8 @@ public final class PlannerSession implements AutoCloseable {
         try {
             // checkpoint 档位一键由 LLM_REASONING_PLANNER 决定（未配置=low 推理档；off=快档），
             // 锚点/重规划/增量修订不再分档，选项推导见 PlannerSettings.checkpointOptions。
-            ChatClient.ChatOptions options = settings.checkpointOptions(LlmTuning.get().planner());
-            List<ChatClient.Msg> prompt = List.copyOf(history);
+            ChatClient.ChatOptions options = settings.checkpointOptions();
+            List<ChatMessage> prompt = List.copyOf(history);
             String raw;
             try (var ignored = LlmTrace.scope("规划器 " + kind)) {
                 raw = withTools(prompt, options);
@@ -431,7 +435,7 @@ public final class PlannerSession implements AutoCloseable {
                     log.info("规划器回 keep 但当前没有计划（kind={}），改请求重新规划", kind);
                     planEvent("PLAN_KEEP_WITHOUT_PLAN", Map.of("checkpoint", String.valueOf(kind)));
                     if (keepWithoutPlanRetried.add(segmentKey)) {
-                        history.add(ChatClient.Msg.user(settings.pathPlanning()
+                        history.add(UserMessage.from(settings.pathPlanning()
                                 ? PlannerPrompts.KEEP_RECOVERY_TEMPLATE.formatted(String.valueOf(kind))
                                 : PlannerPrompts.ADVISOR_KEEP_RECOVERY_TEMPLATE.formatted(String.valueOf(kind))));
                         runCheckpoint("replan");
@@ -548,14 +552,14 @@ public final class PlannerSession implements AutoCloseable {
     }
 
     private void rememberAssistant(String raw) {
-        history.add(ChatClient.Msg.assistant(raw));
+        history.add(AiMessage.from(raw));
         // 防膨胀：段内历史超过 24 条时丢弃最早的 assistant 长文（保留 system 与最近 8 条）
         if (history.size() > 24) {
             history.subList(1, Math.max(1, history.size() - 8)).clear();
         }
     }
 
-    private List<ChatClient.Msg> historySnapshot() {
+    private List<ChatMessage> historySnapshot() {
         return List.copyOf(history);
     }
 

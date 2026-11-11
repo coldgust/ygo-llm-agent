@@ -1,20 +1,20 @@
 package com.github.coldgust.ygoagent.decision.planexec;
 
 import com.github.coldgust.ygoagent.decision.planexec.llm.CardTool;
-import com.github.coldgust.ygoagent.decision.planexec.llm.ChatClient;
 import com.github.coldgust.ygoagent.decision.planexec.llm.ComboTool;
 import com.github.coldgust.ygoagent.decision.planexec.llm.DuelRecallTool;
 import com.github.coldgust.ygoagent.decision.planexec.llm.RulebookTool;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
 
 /**
- * 一次决策可用的工具集合（规则 / 连招 / 查卡）。
+ * 一次决策可用的工具集合（规则 / 连招 / 查卡 / 历史对局）。
  *
  * <p>把"注册哪些工具"与"端口构造参数"解耦：以后再加工具只改这里，
  * 不用把 PlanExecutorDecisionPort 的构造参数继续往后堆。
+ * 工具类用 langchain4j 的 @Tool 注解声明（名称/描述/参数 schema 都在注解里），
+ * 本类只负责按路径挑选可用工具；spec 提取与执行由传输层完成。
  */
 public record DecisionTools(RulebookTool rulebook, ComboTool combo, CardTool card,
                             DuelRecallTool duel) {
@@ -26,42 +26,24 @@ public record DecisionTools(RulebookTool rulebook, ComboTool combo, CardTool car
     }
 
     public boolean isEmpty() {
-        return (rulebook == null) && (combo == null || !combo.available())
-                && (card == null || !card.available()) && (duel == null);
+        return providers().isEmpty();
     }
 
-    public List<ChatClient.Tool> tools() {
-        List<ChatClient.Tool> tools = new ArrayList<>();
+    /** 可注册给模型的 @Tool 工具对象（按可用性挑选）。 */
+    public List<Object> providers() {
+        List<Object> out = new ArrayList<>();
         if (rulebook != null) {
-            tools.addAll(rulebook.tools());
+            out.add(rulebook);
         }
         if (combo != null && combo.available()) {
-            tools.addAll(combo.tools());
+            out.add(combo);
         }
         if (card != null && card.available()) {
-            tools.addAll(card.tools());
+            out.add(card);
         }
         if (duel != null) {
-            tools.addAll(duel.tools());
+            out.add(duel);
         }
-        return tools;
-    }
-
-    public ChatClient.ToolHandler handler(Collection<Long> visibleCards) {
-        return call -> {
-            if (rulebook != null && RulebookTool.NAME.equals(call.name())) {
-                return rulebook.handler().execute(call);
-            }
-            if (combo != null && ComboTool.NAME.equals(call.name())) {
-                return combo.handler(visibleCards).execute(call);
-            }
-            if (card != null && CardTool.NAME.equals(call.name())) {
-                return card.handler().execute(call);
-            }
-            if (duel != null && DuelRecallTool.NAME.equals(call.name())) {
-                return duel.handler().execute(call);
-            }
-            return "未知工具：" + call.name();
-        };
+        return out;
     }
 }

@@ -2,8 +2,8 @@ package com.github.coldgust.ygoagent.decision.planexec.llm;
 
 import com.github.coldgust.ygoagent.decision.planexec.CardFact;
 import com.github.coldgust.ygoagent.decision.planexec.CardFacts;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.json.JsonMapper;
+import dev.langchain4j.agent.tool.P;
+import dev.langchain4j.agent.tool.Tool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -34,52 +34,16 @@ public final class CardTool {
         return facts != null && facts.knownCount() > 0;
     }
 
-    public List<ChatClient.Tool> tools() {
-        Map<String, Object> query = new LinkedHashMap<>();
-        query.put("type", "string");
-        query.put("description", "卡名（中文/英文均可，支持部分匹配）或卡号（passcode），"
-                + "如 \"零衣\"、\"Rayé\"、\"61777313\"");
-
-        Map<String, Object> limit = new LinkedHashMap<>();
-        limit.put("type", "integer");
-        limit.put("description", "按卡名匹配时最多返回几条候选，默认 5，最多 10");
-
-        Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put("query", query);
-        properties.put("limit", limit);
-
-        Map<String, Object> params = new LinkedHashMap<>();
-        params.put("type", "object");
-        params.put("properties", properties);
-        params.put("required", List.of("query"));
-
-        return List.of(new ChatClient.Tool(NAME,
-                "查一张游戏王卡的完整信息（卡号、中英文名、种类、种族/属性、攻守、等级、效果全文）。"
-                        + "当你不确定某张卡的效果/数值，或上下文只给了卡名需要确认细节时调用；"
-                        + "不要凭记忆回答卡面事实。",
-                params));
-    }
-
-    public ChatClient.ToolHandler handler() {
-        return call -> search(call.arguments());
-    }
-
-    String search(String argumentsJson) {
-        String query = "";
-        int limit = 5;
-        try {
-            if (argumentsJson != null && !argumentsJson.isBlank()) {
-                JsonNode args = JsonMapper.builder().build().readTree(argumentsJson);
-                query = args.path("query").asText("").trim();
-                if (args.path("limit").isNumber()) {
-                    limit = Math.max(1, Math.min(10, args.path("limit").asInt(5)));
-                }
-            }
-        } catch (RuntimeException e) {
-            // 参数不是合法 JSON：按空查询处理，提示模型怎么传
-        }
-
-        if (query.isBlank()) {
+    @Tool(name = NAME, value = "查一张游戏王卡的完整信息（卡号、中英文名、种类、种族/属性、攻守、等级、效果全文）。"
+            + "当你不确定某张卡的效果/数值，或上下文只给了卡名需要确认细节时调用；"
+            + "不要凭记忆回答卡面事实。")
+    public String search(
+            @P(value = "卡名（中文/英文均可，支持部分匹配）或卡号（passcode），"
+                    + "如 \"零衣\"、\"Rayé\"、\"61777313\"")
+            String query,
+            @P(value = "按卡名匹配时最多返回几条候选，默认 5，最多 10", required = false)
+            Integer limit) {
+        if (query == null || query.isBlank()) {
             return "（请提供卡名或卡号，例如 query=\"零衣\" 或 query=\"61777313\"）";
         }
         if (query.matches("\\d{1,10}")) {
@@ -89,7 +53,9 @@ public final class CardTool {
                     .orElseGet(() -> "（卡库里没有卡号 " + passcode + "）");
         }
 
-        List<CardFact> matches = facts.searchByName(query, limit);
+        int effectiveLimit = limit == null ? 5 : Math.max(1, Math.min(10, limit));
+
+        List<CardFact> matches = facts.searchByName(query, effectiveLimit);
         if (matches.isEmpty()) {
             return "（卡库里没有名字包含 \"" + query + "\" 的卡；换个关键词或直接给卡号）";
         }

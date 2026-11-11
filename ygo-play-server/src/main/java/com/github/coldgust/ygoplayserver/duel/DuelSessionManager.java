@@ -4,6 +4,7 @@ import com.github.coldgust.ygoprosdk.session.DuelSession;
 import com.github.coldgust.ygoplay.DuelRunResult;
 import com.github.coldgust.ygoplay.DuelRunSpec;
 import com.github.coldgust.ygoplay.DuelRunner;
+import com.github.coldgust.ygoplay.DuelTuning;
 import com.github.coldgust.ygoplayserver.config.PlayServerProperties;
 import com.github.coldgust.ygoplayserver.web.DuelEventHub;
 import jakarta.annotation.PreDestroy;
@@ -249,7 +250,9 @@ public class DuelSessionManager implements DuelService {
         }
         return new DuelRunSpec(host, port, name, move, request.deckYdk(), deckPath,
                 archetype, comboRecord, duelLog, trace,
-                blank(request.deckStrategy()) ? null : request.deckStrategy().trim());
+                blank(request.deckStrategy()) ? null : request.deckStrategy().trim(),
+                new DuelTuning(properties.duelLogRawFrames(), properties.choiceTimeoutMs(),
+                        properties.startWaitMs(), properties.comboContextLimit()));
     }
 
     private static String normalizeArchetype(String raw) {

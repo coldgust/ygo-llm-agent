@@ -1,5 +1,9 @@
 package com.github.coldgust.ygoagent.decision.planexec;
 
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.UserMessage;
 import com.github.coldgust.ygoagent.decision.model.Candidates;
 import com.github.coldgust.ygoagent.decision.model.ChoiceIntent;
 import com.github.coldgust.ygoagent.decision.model.DecisionDeadline;
@@ -10,6 +14,7 @@ import com.github.coldgust.ygoagent.decision.model.PathKind;
 import com.github.coldgust.ygoagent.decision.model.RequestKind;
 import com.github.coldgust.ygoagent.decision.model.Timing;
 import com.github.coldgust.ygoagent.decision.planexec.llm.ChatClient;
+import com.github.coldgust.ygoagent.decision.planexec.llm.LlmTrace;
 import com.github.coldgust.ygoagent.decision.planexec.planner.PlannerSession;
 import com.github.coldgust.ygoagent.decision.planexec.planner.TurnPlan;
 import com.github.coldgust.ygoagent.decision.port.DecisionPort;
@@ -38,7 +43,7 @@ class PlanExecutorDecisionPortTest {
     private static final class FakeChat implements ChatClient {
         private final List<String> replies;
         private final AtomicInteger index = new AtomicInteger();
-        final List<List<Msg>> calls = new ArrayList<>();
+        final List<List<ChatMessage>> calls = new ArrayList<>();
         boolean fail = false;
 
         FakeChat(String... replies) {
@@ -46,7 +51,7 @@ class PlanExecutorDecisionPortTest {
         }
 
         @Override
-        public String complete(List<Msg> messages, ChatOptions options) {
+        public String complete(List<ChatMessage> messages, ChatOptions options) {
             calls.add(List.copyOf(messages));
             if (fail) {
                 throw new ChatException("boom");
@@ -208,7 +213,7 @@ class PlanExecutorDecisionPortTest {
         assertEquals(PathKind.LLM_CALL, decision.pathKind(), "升级仍应由单轮直答接住");
         assertTrue(rig.chat().calls.stream()
                         .flatMap(List::stream)
-                        .noneMatch(m -> m.content().contains("===发散")),
+                        .noneMatch(m -> LlmTrace.messageText(m).contains("===发散")),
                 "抢答关闭后规划会话不应收到紧急决策请求");
         assertEquals(0, rig.delegateCalls().get());
     }
@@ -708,6 +713,6 @@ class PlanExecutorDecisionPortTest {
         planner.observePoint(oppPoint);
         planner.drainForTests();
         assertTrue(chat.calls.size() >= 2, "换段应触发新锚点 checkpoint");
-        assertTrue(chat.calls.get(1).getFirst().content().contains("回合规划器"));
+        assertTrue(LlmTrace.messageText(chat.calls.get(1).getFirst()).contains("回合规划器"));
     }
 }
