@@ -1,42 +1,47 @@
 package com.github.coldgust.ygoplay;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import io.github.cdimascio.dotenv.Dotenv;
+import io.github.cdimascio.dotenv.DotenvEntry;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+/**
+ * CLI 组装根的 .env 读取（dotenv-java 解析）：剥引号、跳过 `#` 注释行、剥离行内注释
+ * （`KEY=value # 说明` 的注释部分不再混进值里）、坏行忽略；文件不存在静默返回空表。
+ * 只有这里（和 server 的 spring.config.import）允许读 .env；core 不读环境变量。
+ */
 public final class DotEnv {
 
     public static Map<String, String> load(Path file) {
         if (file == null || !Files.isRegularFile(file)) {
             return Map.of();
         }
-        Map<String, String> values = new LinkedHashMap<>();
         try {
-            for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
-                String trimmed = line.trim();
-                if (trimmed.isEmpty() || trimmed.startsWith("#")) {
-                    continue;
-                }
-                int eq = trimmed.indexOf('=');
-                if (eq <= 0) {
-                    continue;
-                }
-                String key = trimmed.substring(0, eq).trim();
-                String value = trimmed.substring(eq + 1).trim();
-                if (value.length() >= 2
-                        && ((value.startsWith("\"") && value.endsWith("\""))
-                        || (value.startsWith("'") && value.endsWith("'")))) {
-                    value = value.substring(1, value.length() - 1);
-                }
-                values.put(key, value);
+            Dotenv dotenv = Dotenv.configure()
+                    .directory(file.getParent() == null ? "." : file.getParent().toString())
+                    .filename(file.getFileName().toString())
+                    .ignoreIfMissing()
+                    .ignoreIfMalformed()
+                    .load();
+            Map<String, String> values = new LinkedHashMap<>();
+            for (DotenvEntry entry : dotenv.entries(Dotenv.Filter.DECLARED_IN_ENV_FILE)) {
+                values.put(entry.getKey(), stripSingleQuotes(entry.getValue()));
             }
-        } catch (IOException e) {
+            return Map.copyOf(values);
+        } catch (RuntimeException e) {
             return Map.of();
         }
-        return Map.copyOf(values);
+    }
+
+    /** 旧自研解析剥单引号（dotenv-java 只剥双引号）——为兼容既有 .env 保留这一层。 */
+    private static String stripSingleQuotes(String value) {
+        return value != null && value.length() >= 2
+                && value.startsWith("'") && value.endsWith("'")
+                ? value.substring(1, value.length() - 1)
+                : value;
     }
 
     private DotEnv() {

@@ -1,11 +1,14 @@
 package com.github.coldgust.ygoplayserver.card;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.coldgust.ygoagent.decision.planexec.CardFact;
 import com.github.coldgust.ygoagent.decision.planexec.CardFacts;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -18,6 +21,12 @@ public final class PgCardFacts implements CardFacts {
 
     private final JdbcClient jdbc;
     private final long count;
+    /** card 表对局期间不变：热路径（labelOf/候选卡面）一局几百次按 passcode 查名，全走缓存；
+     *  空 Optional 也缓存（防穿透），过期与 cards-pg 再入库节奏对齐。 */
+    private final Cache<Long, Optional<CardFact>> byPasscodeCache = Caffeine.newBuilder()
+            .maximumSize(20_000)
+            .expireAfterWrite(Duration.ofHours(1))
+            .build();
 
     private PgCardFacts(JdbcClient jdbc, long count) {
         this.jdbc = jdbc;
@@ -35,6 +44,10 @@ public final class PgCardFacts implements CardFacts {
 
     @Override
     public Optional<CardFact> byPasscode(long passcode) {
+        return byPasscodeCache.get(passcode, this::loadByPasscode);
+    }
+
+    private Optional<CardFact> loadByPasscode(long passcode) {
         return jdbc.sql("SELECT " + COLUMNS + " FROM card WHERE passcode = :p")
                 .param("p", passcode)
                 .query(this::map)

@@ -1,5 +1,8 @@
 package com.github.coldgust.ygoplayserver.duel.summary;
 
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.UserMessage;
+
 import com.github.coldgust.ygoagent.decision.planexec.llm.ChatClient;
 import com.github.coldgust.ygoagent.decision.planexec.llm.LlmTrace;
 import org.slf4j.Logger;
@@ -36,8 +39,8 @@ public final class DuelSummarizer {
             String raw;
             try (var ignored = LlmTrace.scope("赛后复盘")) {
                 raw = chat.complete(
-                        List.of(ChatClient.Msg.system(DuelSummaryPrompts.SYSTEM),
-                                ChatClient.Msg.user(prompt)),
+                        List.of(SystemMessage.from(DuelSummaryPrompts.SYSTEM),
+                                UserMessage.from(prompt)),
                         ChatClient.ChatOptions.narrative(maxTokens, timeout));
             }
             String body = DuelSummaryPrompts.stripWrapper(raw);

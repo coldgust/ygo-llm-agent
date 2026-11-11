@@ -12,7 +12,8 @@ import com.github.coldgust.ygoagent.decision.planexec.llm.CardTool;
 import com.github.coldgust.ygoagent.decision.planexec.llm.ComboTool;
 import com.github.coldgust.ygoagent.decision.planexec.llm.DuelRecallTool;
 import com.github.coldgust.ygoagent.decision.planexec.llm.LlmTrace;
-import com.github.coldgust.ygoagent.decision.planexec.llm.OpenAiCompatChat;
+import com.github.coldgust.ygoagent.decision.planexec.llm.LangChain4jChat;
+import com.github.coldgust.ygoagent.decision.planexec.llm.ResilientChatClient;
 import com.github.coldgust.ygoagent.decision.planexec.llm.RecordedComboSource;
 import com.github.coldgust.ygoagent.decision.planexec.llm.RulebookTool;
 import com.github.coldgust.ygoagent.decision.planexec.planner.PlannerSession;
@@ -51,6 +52,8 @@ public final class DuelRunner {
     private final DuelWebHooks webHooks;
     private final DuelListener extraListener;
     private final CardFacts cardFactsOverride;
+    /** 规则/历史对局检索的连接配置：由组装根注入（CLI 从 env+dotenv 解析；server 由 Spring 配置绑定）。 */
+    private final LightRagEndpoint lightRag;
 
     public DuelRunner(PlannerSettings planExecSettings) {
         this(planExecSettings, null);
@@ -71,10 +74,19 @@ public final class DuelRunner {
                       DuelWebHooks webHooks,
                       DuelListener extraListener,
                       CardFacts cardFactsOverride) {
+        this(planExecSettings, webHooks, extraListener, cardFactsOverride, new LightRagEndpoint(null, null, 8_000L));
+    }
+
+    public DuelRunner(PlannerSettings planExecSettings,
+                      DuelWebHooks webHooks,
+                      DuelListener extraListener,
+                      CardFacts cardFactsOverride,
+                      LightRagEndpoint lightRag) {
         this.planExecSettings = planExecSettings;
         this.webHooks = webHooks == null ? DuelWebHooks.none() : webHooks;
         this.extraListener = extraListener;
         this.cardFactsOverride = cardFactsOverride;
+        this.lightRag = lightRag == null ? new LightRagEndpoint(null, null, 8_000L) : lightRag;
     }
 
     public DuelRunResult run(DuelRunSpec spec, AtomicReference<DuelSession> sessionRef,
@@ -83,7 +95,6 @@ public final class DuelRunner {
             stopRequested = () -> false;
         }
         Deck deck = parseDeck(spec);
-        String rawFrames = System.getenv("DUEL_RAW_FRAMES");
         SessionConfig sessionConfig = SessionConfig.builder(spec.host(), spec.name())
                 .port(spec.port())
                 .deck(deck)
@@ -92,11 +103,11 @@ public final class DuelRunner {
                 .answerDelayMillis(0)
                 // 看门狗：某个决策点若因为解码/映射异常没有拿到应答，超时后由 SDK 提交保底应答。
                 // 不设这个值就是"永久卡住"（实机已出现过：位置请求 0 候选 → 应答非法 → 对局冻结）。
-                .choiceTimeout(Duration.ofMillis(choiceTimeoutMillis()))
+                .choiceTimeout(Duration.ofMillis(spec.tuning().choiceTimeoutMillis()))
                 .duelLog(spec.duelLogPath())
                 .duelLogDecisionContext(true)
                 // DUEL_RAW_FRAMES=1：把原始协议帧一并写进对局记录（排查解码用，体积大）
-                .duelLogRawFrames(rawFrames != null && !rawFrames.isBlank() && !"0".equals(rawFrames))
+                .duelLogRawFrames(spec.tuning().duelLogRawFrames())
                 .build();
 
         try (DuelSession session = DuelSession.start(sessionConfig)) {
@@ -118,7 +129,7 @@ public final class DuelRunner {
                 session.setReady(true);
                 log.info("卡组已上传并就绪（座位 {}），等待开局…", session.selfSeat());
 
-                if (!waitForDuelStart(session, stopRequested)) {
+                if (!waitForDuelStart(session, stopRequested, spec.tuning().startWaitMillis())) {
                     throw new DuelStoppedException();
                 }
                 log.info("对局开始");
@@ -167,7 +178,8 @@ public final class DuelRunner {
                                 : CardRagFactService
                                         .load(planExecSettings.cardRagPath());
                         cardFacts = facts;
-                        String comboReference = comboReferenceText(webHooks.recordedCombos(), spec.archetype());
+                        String comboReference = comboReferenceText(webHooks.recordedCombos(), spec.archetype(),
+                                spec.tuning().comboContextLimit());
                         var packer = new ContextPackBuilder(
                                 facts, DuelMathService.instance(),
                                 spec.deckStrategy(),
@@ -189,9 +201,9 @@ public final class DuelRunner {
                             log.info("已预置规则速查（浓缩版）；精确条文可由模型自主调用 search_rulebook 检索");
                         }
                         // 规则检索工具：LightRAG 不可达时工具调用会失败并回填错误，模型仍可基于速查继续
-                        var rulebook = RulebookTool.fromEnv();
-                        var chat = new OpenAiCompatChat(
-                                planExecSettings.baseUrl(), planExecSettings.apiKey(), planExecSettings.model());
+                        var rulebook = new RulebookTool(lightRag.url(), lightRag.apiKey(), lightRag.timeout(), "mix", 8);
+                        var chat = new ResilientChatClient(new LangChain4jChat(
+                                planExecSettings.baseUrl(), planExecSettings.apiKey(), planExecSettings.model()));
                         // 连招查询工具：按主题/关键卡查 PG 实战录入（主要用于推断对手卡组后参考）
                         var comboTool = webHooks.recordedCombos() != null
                                 && webHooks.recordedCombos().available()
@@ -206,7 +218,7 @@ public final class DuelRunner {
                                 rulebook, comboTool, cardTool);
                         var planner = new PlannerSession(
                                 chat, packer, facts, planExecSettings, traceWriter, plannerTools);
-                        var duelRecall = DuelRecallTool.fromEnv();
+                        var duelRecall = new DuelRecallTool(lightRag.url(), lightRag.apiKey(), lightRag.timeout(), "mix", 4);
                         var decisionTools = new DecisionTools(
                                 rulebook, comboTool, cardTool, duelRecall);
                         planExecPort = new PlanExecutorDecisionPort(
@@ -278,17 +290,6 @@ public final class DuelRunner {
         return payload;
     }
 
-    private static long choiceTimeoutMillis() {
-        String raw = System.getenv("DUEL_CHOICE_TIMEOUT_MS");
-        if (raw == null || raw.isBlank()) {
-            return 25_000L;
-        }
-        try {
-            return Math.max(0L, Long.parseLong(raw.trim()));
-        } catch (NumberFormatException e) {
-            return 25_000L;
-        }
-    }
 
     private static Deck parseDeck(DuelRunSpec spec) throws Exception {
         if (spec.deckYdkText() != null && !spec.deckYdkText().isBlank()) {
@@ -316,10 +317,11 @@ public final class DuelRunner {
         return true;
     }
 
-    private static boolean waitForDuelStart(DuelSession session, BooleanSupplier stopRequested)
+    private static boolean waitForDuelStart(DuelSession session, BooleanSupplier stopRequested,
+                                            long startWaitMillis)
             throws InterruptedException {
         long start = System.currentTimeMillis();
-        long limitMs = startWaitMillis();
+        long limitMs = startWaitMillis;
         while (!(session.stage() == DuelSession.Stage.DUEL
                 && session.state().turnNumber() >= 1
                 && !session.state().isFinished())) {
@@ -335,26 +337,16 @@ public final class DuelRunner {
         return true;
     }
 
-    private static long startWaitMillis() {
-        String raw = System.getenv("DUEL_START_WAIT_MS");
-        if (raw == null || raw.isBlank()) {
-            return 180_000;
-        }
-        try {
-            return Math.max(10_000, Long.parseLong(raw.trim()));
-        } catch (NumberFormatException e) {
-            return 180_000;
-        }
-    }
 
     private static String comboReferenceText(
             RecordedComboSource recorded,
-            String archetype) {
+            String archetype,
+            int comboContextLimit) {
         if (recorded == null || !recorded.available()
                 || archetype == null || archetype.isBlank()) {
             return null;
         }
-        int limit = comboContextLimit();
+        int limit = comboContextLimit;
         var entries = recorded.recentByArchetype(archetype, limit);
         if (entries.isEmpty()) {
             return null;
@@ -386,17 +378,6 @@ public final class DuelRunner {
         return sb.toString().trim();
     }
 
-    private static int comboContextLimit() {
-        String raw = System.getenv("COMBO_CONTEXT_LIMIT");
-        if (raw == null || raw.isBlank()) {
-            return 10;
-        }
-        try {
-            return Math.max(1, Math.min(30, Integer.parseInt(raw.trim())));
-        } catch (NumberFormatException e) {
-            return 10;
-        }
-    }
 
     private static List<Long> deckPasscodes(
             Deck deck) {

@@ -1,44 +1,46 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { api, type DuelEvent, type DuelRequest, type DuelView, type StepDetail, type BranchDetail } from '../lib/api'
+  import { api, type DuelEvent, type DuelView, type StepDetail, type BranchDetail } from '../lib/api'
   import { statusLabel, TERMINAL_STATUSES } from '../lib/labels'
   import PlanPanel from '../components/PlanPanel.svelte'
+  import DeckSource from '../components/DeckSource.svelte'
+  import { persisted } from '../lib/persisted.svelte'
 
-  let host = $state('127.0.0.1')
-  let port = $state(7911)
-  let name = $state('web-duel')
-  let deckPath = $state('')
-  let archetype = $state('')
+  // 开赛参数存 localStorage（persisted 赋值即写回）：同一浏览器不必每次重填。host/port 与 Combo 录入页共用。
+  let host = persisted('ygo.host', '127.0.0.1')
+  let port = persisted('ygo.port', 7911)
+  let name = persisted('ygo.name', 'web-duel')
+  let deckPath = persisted('ygo.deckPath', '')
+  let archetype = persisted('ygo.archetype', '')
   let archetypes = $state<string[]>([])
-  let move = $state<'first' | 'second'>('second')
+  let move = persisted<'first' | 'second'>('ygo.move', 'second', (raw) =>
+    raw === 'first' || raw === 'second' ? raw : undefined,
+  )
   let deckYdkText = $state('')
 
   /**
    * 卡组思路：用户手写的打法（展开路线 / 关键 combo / 留牌偏好 / 禁忌操作）。
    * 会随开赛请求发给后端，注入规划器与决策器判断的上下文作为重点参考。
-   * 存 localStorage：同一套卡组不必每次重打。
    */
-  let deckStrategy = $state(localStorage.getItem('ygo.deckStrategy') ?? '')
-  // 初始展开状态按"首次读取的值"决定即可，不需要随输入变化（这里显式取值，避免 svelte 的 state_referenced_locally 告警）
+  let deckStrategy = persisted('ygo.deckStrategy', '')
+  // 初始展开状态按"首次读取的值"决定即可，不需要随输入变化
   let strategyOpen = $state(localStorage.getItem('ygo.deckStrategy') == null ? true : false)
-  $effect(() => {
-    localStorage.setItem('ygo.deckStrategy', deckStrategy)
-  })
 
-  /** 对局库入库策略：本局结束时怎么处置复盘。存 localStorage，同一浏览器记住选择。 */
+  /** 对局库入库策略：本局结束时怎么处置复盘。 */
   const ARCHIVE_OPTIONS: { value: string; label: string }[] = [
     { value: 'ask', label: '结束后问我' },
     { value: 'auto', label: '模型判定' },
     { value: 'always', label: '全部入库' },
     { value: 'never', label: '全部不入库' },
   ]
-  const savedPolicy = localStorage.getItem('ygo.archivePolicy')
-  let archivePolicy = $state(
-    ARCHIVE_OPTIONS.some((o) => o.value === savedPolicy) ? savedPolicy! : 'ask',
+  let archivePolicy = persisted<'ask' | 'auto' | 'always' | 'never'>(
+    'ygo.archivePolicy',
+    'ask',
+    (raw) =>
+      ARCHIVE_OPTIONS.some((o) => o.value === raw)
+        ? (raw as 'ask' | 'auto' | 'always' | 'never')
+        : undefined,
   )
-  $effect(() => {
-    localStorage.setItem('ygo.archivePolicy', archivePolicy)
-  })
   let archiveBusy = $state(false)
   let archiveError = $state('')
 
@@ -168,8 +170,12 @@
   }
 
   async function start() {
-    if (!deckPath.trim() && !deckYdkText.trim()) {
-      error = '需要提供卡组：填写卡组路径（或粘贴 .ydk 文本）'
+    const hasPath = !!deckPath.current.trim()
+    const hasYdk = !!deckYdkText.trim()
+    if (hasPath === hasYdk) {
+      error = hasPath
+        ? '卡组路径与 ydk 文本（粘贴 / 文件载入）只能二选一，请清空其一'
+        : '需要提供卡组：填写卡组路径，或粘贴 / 从文件载入 .ydk'
       return
     }
     busy = true
@@ -186,13 +192,13 @@
     submittedBySeq = {}
     try {
       duel = await api.startDuel({
-        host, port, name,
-        move,
-        deckPath: deckPath.trim() || undefined,
+        host: host.current, port: port.current, name: name.current,
+        move: move.current,
+        deckPath: deckPath.current.trim() || undefined,
         deckYdk: deckYdkText.trim() || undefined,
-        archetype: archetype || undefined,
-        deckStrategy: deckStrategy.trim() || undefined,
-        archivePolicy: archivePolicy as DuelRequest['archivePolicy'],
+        archetype: archetype.current || undefined,
+        deckStrategy: deckStrategy.current.trim() || undefined,
+        archivePolicy: archivePolicy.current,
       })
       duel = await api.getDuel(duel.id)
       stopSse = api.subscribe(duel.id, onEvent, (m) => (sseError = m))
@@ -272,13 +278,13 @@
 </script>
 
 <form class="controls" onsubmit={(e) => { e.preventDefault(); start() }}>
-  <label>地址 <input bind:value={host} size="12" /></label>
-  <label>端口 <input bind:value={port} size="5" /></label>
-  <label>名字 <input bind:value={name} size="14" /></label>
-  <label>卡组路径 <input bind:value={deckPath} size="34" placeholder="/path/to/卡组.ydk" /></label>
+  <label>地址 <input bind:value={host.current} size="12" /></label>
+  <label>端口 <input bind:value={port.current} size="5" /></label>
+  <label>名字 <input bind:value={name.current} size="14" /></label>
+  <DeckSource bind:deckPath={deckPath.current} bind:deckYdk={deckYdkText} size={34} />
   <label>
     卡组主题
-    <select bind:value={archetype}>
+    <select bind:value={archetype.current}>
       <option value="">不选择</option>
       {#each archetypes as tag}
         <option value={tag}>{tag}</option>
@@ -287,7 +293,7 @@
   </label>
   <label>
     先后手
-    <select bind:value={move}>
+    <select bind:value={move.current}>
       <option value="second">后手</option>
       <option value="first">先手</option>
     </select>
@@ -295,7 +301,7 @@
   <label
     title="对局结束后的入库方式：结束后问我＝弹出询问；模型判定＝LLM 评估有无沉淀价值，值得才入库；全部入库 / 全部不入库＝不做判断">
     入库策略
-    <select bind:value={archivePolicy}>
+    <select bind:value={archivePolicy.current}>
       {#each ARCHIVE_OPTIONS as o (o.value)}
         <option value={o.value}>{o.label}</option>
       {/each}
@@ -314,7 +320,7 @@
       写给 AI 的打法说明（展开路线、关键 combo、留牌偏好、禁忌操作）。会随开赛请求注入上下文，
       作为规划与每次决策的重点参考；与通用战术冲突时以这里为准。
     </span>
-    <span class="count">{deckStrategy.length} 字</span>
+    <span class="count">{deckStrategy.current.length} 字</span>
     <button type="button" class="link" onclick={() => (strategyOpen = !strategyOpen)}>
       {strategyOpen ? '收起' : '展开'}
     </button>
@@ -322,7 +328,7 @@
   {#if strategyOpen}
     <textarea
       class="strategybox"
-      bind:value={deckStrategy}
+      bind:value={deckStrategy.current}
       rows="7"
       placeholder={'例：闪刀是资源型卡组，不要为了打点把场面铺满。\n优先用交闪赚卡、再用抓锚/虎鲨清场；主怪区要留给零衣的自我解放。\n手坑优先断对手的检索与特召起点，别一次交完。\n禁忌：不要在墓地魔法不足 3 张时发抓锚的抢控制权效果。'}
     ></textarea>
@@ -341,7 +347,7 @@
 {/if}
 
 <details style="margin-bottom: 12px">
-  <summary class="muted">高级：直接粘贴 .ydk 文本（与卡组路径二选一）</summary>
+  <summary class="muted">高级：直接粘贴 .ydk 文本（与卡组路径二选一；「从文件载入」的内容也在这里）</summary>
   <textarea bind:value={deckYdkText} rows="4" style="width:100%; background:#0f1115; color:#d7dae0; border:1px solid #2a3245; border-radius:6px; font-family:inherit"></textarea>
 </details>
 
@@ -426,7 +432,7 @@
   </div>
 {:else}
   <div class="feed">
-    <div class="entry muted">填好上方参数后点「接入并对战」。流程：YGOPro 建房（{host}:{port}）→ 这里接入 → 实时决策流。</div>
+    <div class="entry muted">填好上方参数后点「接入并对战」。流程：YGOPro 建房（{host.current}:{port.current}）→ 这里接入 → 实时决策流。</div>
   </div>
 {/if}
 

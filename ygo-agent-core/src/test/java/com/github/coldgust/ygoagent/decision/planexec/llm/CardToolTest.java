@@ -46,7 +46,7 @@ class CardToolTest {
     void lookupByPasscodeRendersFullFacts() {
         CardTool tool = new CardTool(facts());
 
-        String out = tool.search("{\"query\":\"61777313\"}");
+        String out = tool.search("61777313", null);
 
         assertTrue(out.contains("闪刀姬-零衣"), out);
         assertTrue(out.contains("卡号：61777313"), out);
@@ -58,11 +58,11 @@ class CardToolTest {
     void lookupByNameReturnsSingleCardOrCandidates() {
         CardTool tool = new CardTool(facts());
 
-        String single = tool.search("{\"query\":\"黑寡妇\"}");
+        String single = tool.search("黑寡妇", null);
         assertTrue(single.contains("黑寡妇抓锚"), single);
         assertTrue(single.contains("Widow Anchor"), single);
 
-        String multi = tool.search("{\"query\":\"闪刀\"}");
+        String multi = tool.search("闪刀", null);
         assertTrue(multi.contains("闪刀姬-零衣"), multi);
         assertTrue(multi.contains("61777313"), multi);
     }
@@ -71,7 +71,7 @@ class CardToolTest {
     void unknownPasscodeIsExplained() {
         CardTool tool = new CardTool(facts());
 
-        String out = tool.search("{\"query\":\"11111111\"}");
+        String out = tool.search("11111111", null);
 
         assertTrue(out.contains("没有卡号"), out);
     }
@@ -80,7 +80,7 @@ class CardToolTest {
     void emptyQueryAsksForInput() {
         CardTool tool = new CardTool(facts());
 
-        String out = tool.search("{}");
+        String out = tool.search("", null);
 
         assertTrue(out.contains("请提供卡名或卡号"), out);
     }

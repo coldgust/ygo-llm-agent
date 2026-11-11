@@ -1,14 +1,19 @@
 package com.github.coldgust.ygoplayserver.duel.combo;
 
 import com.github.coldgust.ygoagent.decision.planexec.CardFacts;
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.UserMessage;
+
 import com.github.coldgust.ygoagent.decision.planexec.llm.ChatClient;
-import com.github.coldgust.ygoagent.decision.planexec.llm.OpenAiCompatChat;
+import com.github.coldgust.ygoagent.decision.planexec.llm.LangChain4jChat;
+import com.github.coldgust.ygoagent.decision.planexec.llm.ResilientChatClient;
 import com.github.coldgust.ygoplay.ComboRecording;
+import com.github.coldgust.ygoplayserver.config.ComboProperties;
+import com.github.coldgust.ygoplayserver.config.LlmProperties;
 import com.github.coldgust.ygoplayserver.web.DuelEventHub;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.core.env.Environment;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.json.JsonMapper;
@@ -39,13 +44,12 @@ public class ComboRecordService {
     private final String model;
 
     public ComboRecordService(ObjectProvider<JdbcClient> jdbc, DuelEventHub eventHub,
-                              Environment environment) {
+                              LlmProperties llm, ComboProperties combo) {
         this.jdbc = jdbc;
         this.eventHub = eventHub;
-        this.apiKey = environment.getProperty("LLM_API_KEY", "");
-        this.baseUrl = environment.getProperty("LLM_BASE_URL", "https://api.deepseek.com");
-        this.model = environment.getProperty("COMBO_SUMMARY_MODEL",
-                environment.getProperty("LLM_MODEL", "deepseek-chat"));
+        this.apiKey = llm.apiKey();
+        this.baseUrl = llm.baseUrl();
+        this.model = combo.summaryModel() == null ? llm.model() : combo.summaryModel();
     }
 
 
@@ -100,8 +104,8 @@ public class ComboRecordService {
         if (client != null) {
             try {
                 String raw = client.complete(
-                        List.of(ChatClient.Msg.system(ComboSummaryPrompts.SYSTEM),
-                                ChatClient.Msg.user(ComboSummaryPrompts.user(archetype, descriptions))),
+                        List.of(SystemMessage.from(ComboSummaryPrompts.SYSTEM),
+                                UserMessage.from(ComboSummaryPrompts.user(archetype, descriptions))),
                         ChatClient.ChatOptions.narrative(SUMMARY_MAX_TOKENS, SUMMARY_TIMEOUT));
                 String text = raw == null ? "" : raw.trim();
                 if (ComboSummaryPrompts.looksUsable(text)) {
@@ -211,7 +215,7 @@ public class ComboRecordService {
         }
         synchronized (this) {
             if (chat == null) {
-                chat = new OpenAiCompatChat(baseUrl, apiKey, model);
+                chat = new ResilientChatClient(new LangChain4jChat(baseUrl, apiKey, model));
             }
             return chat;
         }

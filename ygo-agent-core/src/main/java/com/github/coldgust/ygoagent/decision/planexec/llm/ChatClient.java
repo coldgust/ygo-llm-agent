@@ -1,28 +1,17 @@
 package com.github.coldgust.ygoagent.decision.planexec.llm;
 
+import dev.langchain4j.data.message.ChatMessage;
+
 import java.time.Duration;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 最小聊天客户端接口（规划器持续 session 与执行器 one-shot 共用）。
- * <p>抽象成接口以便单测注入假实现；实现为 OpenAI 兼容 /chat/completions。
+ * <p>消息直接用 langchain4j 的 {@link ChatMessage} 类型，工具用 @Tool 注解对象声明；
+ * 抽象成接口以便单测注入假实现。重试/降级策略在 {@link ResilientChatClient}，
+ * 实现为 {@link LangChain4jChat}（OpenAI 兼容 /chat/completions）。
  */
 public interface ChatClient {
-
-    record Msg(String role, String content) {
-        public static Msg system(String content) {
-            return new Msg("system", content);
-        }
-
-        public static Msg user(String content) {
-            return new Msg("user", content);
-        }
-
-        public static Msg assistant(String content) {
-            return new Msg("assistant", content);
-        }
-    }
 
     record ChatOptions(double temperature, int maxTokens, boolean jsonMode, Duration timeout,
                        String reasoning) {
@@ -55,7 +44,7 @@ public interface ChatClient {
             return new ChatOptions(0.3, Math.max(maxTokens, 800), false, timeout, "off");
         }
 
-        /** 去掉思考参数（端点不认识 thinking/reasoning_effort 时的退路）。 */
+        /** 去掉思考参数（端点不认 thinking/reasoning_effort 时的退路）。 */
         public ChatOptions withoutReasoning() {
             return new ChatOptions(temperature, maxTokens, jsonMode, timeout, null);
         }
@@ -70,35 +59,16 @@ public interface ChatClient {
         }
     }
 
-    String complete(List<Msg> messages, ChatOptions options);
-
-
-    /**
-     * 提供给模型的工具（OpenAI tools 规范）。
-     *
-     * @param name        工具名（模型按名字调用）
-     * @param description 何时该用的说明——这段文字直接决定模型会不会用、用得对不对
-     * @param parameters  JSON Schema 形式的参数定义
-     */
-    record Tool(String name, String description, Map<String, Object> parameters) {
-    }
-
-    /** 模型发起的一次工具调用（arguments 是 JSON 字符串）。 */
-    record ToolCall(String id, String name, String arguments) {
-    }
-
-    @FunctionalInterface
-    interface ToolHandler {
-        String execute(ToolCall call);
-    }
+    String complete(List<ChatMessage> messages, ChatOptions options);
 
     /**
      * 带工具的补全：模型可以在给出最终答案前调用工具，拿到结果后继续推理。
+     * 工具用 @Tool 注解对象声明（langchain4j 规范），spec 与执行由传输层提取。
      * <p>默认实现忽略工具、退化为普通补全——老的实现与测试桩因此无需改动；
      * 只有真正支持 function calling 的实现（覆写本方法）才会走工具回路。
      */
-    default String completeWithTools(List<Msg> messages, ChatOptions options,
-                                     List<Tool> tools, ToolHandler handler) {
+    default String completeWithTools(List<ChatMessage> messages, ChatOptions options,
+                                     List<Object> tools) {
         return complete(messages, options);
     }
 

@@ -22,6 +22,83 @@ ygo:
   play:
     default-move: second
     max-concurrent-duels: 1
+    # 原始协议帧写入对局记录（审计解码问题用，体积大；默认关）
+    duel-log-raw-frames: ${DUEL_RAW_FRAMES:false}
+    # 看门狗：决策点未拿到应答时由 SDK 提交保底应答的等待 ms（默认 25000）
+    choice-timeout-ms: ${DUEL_CHOICE_TIMEOUT_MS:25000}
+    # 等待对手进房时长 ms（实机调试需放宽；默认 180000，下限 10000）
+    start-wait-ms: ${DUEL_START_WAIT_MS:180000}
+    # 己方主题注入规划器上下文的录入条数上限（1–30，默认 10）
+    combo-context-limit: ${COMBO_CONTEXT_LIMIT:10}
+  # OpenAI 兼容网关凭据（复盘 / combo 摘要等旁路叙事任务用；决策热路径在 ygo.plan-exec）
+  llm:
+    api-key: ${LLM_API_KEY:}
+    base-url: ${LLM_BASE_URL:https://api.deepseek.com}
+    model: ${LLM_MODEL:deepseek-chat}
+  # 赛后复盘（写进 LightRAG，供 search_duels 检索）
+  summary:
+    # false = 完全不写复盘（默认 true）
+    enabled: ${DUEL_SUMMARY_ENABLED:true}
+    # llm（默认，模型写复盘）| template（不调模型，只记事实）| off
+    mode: ${DUEL_SUMMARY_MODE:llm}
+    # 复盘模型；留空 = 用 ygo.llm.model
+    model: ${DUEL_SUMMARY_MODEL:}
+    # 单次复盘超时 ms（旁路任务，可比决策宽；默认 60000）
+    timeout-ms: ${DUEL_SUMMARY_TIMEOUT_MS:60000}
+    # 复盘生成 max_tokens（默认 2000）
+    max-tokens: ${DUEL_SUMMARY_MAX_TOKENS:2000}
+    # 逐回合记录的字符预算，喂给模型的素材上限（默认 8000）
+    narrative-max-chars: ${DUEL_NARRATIVE_MAX_CHARS:8000}
+  # 连招库录入（PG combo_record，唯一 combo 存储）
+  combo:
+    # 录入摘要模型；留空 = 用 ygo.llm.model
+    summary-model: ${COMBO_SUMMARY_MODEL:}
+  # 决策侧配置：键值来自 .env / 环境变量，此处 ${ENV:默认} 是唯一桥接点；留空 = 未配置，走 core 默认
+  lightrag:
+    # LightRAG 服务地址（规则检索 / 历史对局检索共用）
+    url: ${LIGHTRAG_URL:http://localhost:9621}
+    # API key：LightRAG 开启 AUTH_ACCOUNTS 后必填；留空 = 不带认证
+    api-key: ${LIGHTRAG_API_KEY:}
+    # 单次检索超时 ms（下限 1000，默认 8000）
+    timeout-ms: ${LIGHTRAG_TIMEOUT_MS:8000}
+  agent:
+    # 全链路日志：true = LLM 请求/响应原文、工具调用、决策流水、轨迹事件打进日志（默认关）
+    verbose-log: ${YGO_VERBOSE_LOG:}
+    # 单条日志内容最长字数；0 = 不截断（默认）
+    verbose-max-chars: ${YGO_VERBOSE_MAX_CHARS:0}
+  plan-exec:
+    # 留空 = 有 api-key 即启用；false = 强制关闭 v6 流水
+    enabled: ${PLAN_EXEC_ENABLED:}
+    # OpenAI 兼容网关凭据；为空则整个规划器/执行器不启用
+    api-key: ${LLM_API_KEY:}
+    # 留空 = https://api.deepseek.com
+    base-url: ${LLM_BASE_URL:}
+    # 规划器模型，优先于 llm-model；留空 = 用 llm-model
+    planner-model: ${PLANNER_MODEL:}
+    # 模型（留空 = deepseek-chat）
+    llm-model: ${LLM_MODEL:deepseek-chat}
+    # 卡牌事实本地查表（PG 不可用时的回退）；留空 = data/card_rag/cards.jsonl
+    card-rag-path: ${CARD_RAG_PATH:data/card_rag/cards.jsonl}
+    # 规划器思考强度 off|low|medium|high；留空 = checkpoint 统一 low（推理档）；off = 快档；非法值按未配置
+    reasoning-planner: ${LLM_REASONING_PLANNER:}
+    # 决策器思考强度；留空 = off（开思考会把 max_tokens 花在思维链上，吃满决策超时）
+    reasoning-decision: ${LLM_REASONING_DECISION:}
+    # 决策一次最多等待规划器 ms（紧急重规划回复）；留空 = 4000
+    wait-decision-ms: ${PLANNER_WAIT_DECISION_MS:4000}
+    # 本回合首个 one-shot 前等计划的上限 ms（推理档下经常等不到，首动作退回决策器判断）；留空 = 7000
+    first-wait-ms: ${PLANNER_FIRST_WAIT_MS:7000}
+    # 一回合内「为等规划器」的累计上限 ms（留空 = 30000）
+    wait-turn-ms: ${PLANNER_WAIT_TURN_MS:30000}
+    # 每回合后台 checkpoint 次数上限（成本闸；留空 = 6）
+    max-checkpoints: ${PLANNER_MAX_CHECKPOINTS:6}
+    # 执行器相似分支匹配阈值 0–1（防假相似；留空 = 0.80）
+    similarity-threshold: ${PLANNER_SIMILARITY_THRESHOLD:0.80}
+    # one-shot 决策硬超时 ms（留空 = 10000）
+    oneshot-timeout-ms: ${ONESHOT_TIMEOUT_MS:10000}
+    # true = 规划器产出可执行路径；留空/false = 顾问模式（只给场面分析/战术/combo）
+    path-planning: ${PLANNER_PATH_PLANNING:false}
+    # ④升级竞速里规划器抢答；false/0 = 升级只跑单轮直答（留空 = 开）
+    rush-answer: ${PLANNER_RUSH_ANSWER:true}
 
 management:
   endpoints:

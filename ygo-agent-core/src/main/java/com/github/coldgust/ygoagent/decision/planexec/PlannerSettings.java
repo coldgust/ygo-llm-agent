@@ -4,6 +4,8 @@ import com.github.coldgust.ygoagent.decision.planexec.llm.ChatClient;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * v6 配置族（§4）：全部有默认值；由 ygo-play 从 CLI/env/dotenv 解析后传入。
@@ -12,6 +14,8 @@ import java.time.Duration;
  * @param baseUrl                  OpenAI 兼容端点
  * @param apiKey                   API key
  * @param model                    模型名
+ * @param reasoningPlanner         规划器思考强度 off|low|medium|high；null = 档位默认（checkpoint 统一 low 推理档，off=快档）
+ * @param reasoningDecision        决策器思考强度；null = off（开思考会把 max_tokens 花在思维链上，吃满决策超时）
  * @param waitPerDecisionMs        决策时一次最多等待规划器（紧急重规划回复）
  * @param firstOneshotWaitMs       本回合"第一次要 one-shot 时"等计划的上限（>waitPerDecisionMs：
  *                                 第一份深度计划能让后续所有 one-shot 都有主线可参考）
@@ -33,6 +37,8 @@ public record PlannerSettings(
         String baseUrl,
         String apiKey,
         String model,
+        String reasoningPlanner,
+        String reasoningDecision,
         int waitPerDecisionMs,
         int firstOneshotWaitMs,
         int waitPerTurnMs,
@@ -47,6 +53,8 @@ public record PlannerSettings(
         boolean plannerRushAnswer) {
 
     public PlannerSettings {
+        reasoningPlanner = normalizeReasoning(reasoningPlanner);
+        reasoningDecision = normalizeReasoning(reasoningDecision);
         waitPerDecisionMs = Math.max(0, waitPerDecisionMs);
         // waitPerDecisionMs=0 视为"完全不等待"（连整回合那次也关掉）；
         // 其余情况下两个数值互不约束——等待是额外时间，与决策预算无关。
@@ -64,7 +72,41 @@ public record PlannerSettings(
                 cardRagPath, 3_000, false, true);
     }
 
-    public ChatClient.ChatOptions checkpointOptions(String effectiveLevel) {
+    /** 便捷构造：思考强度未配置（档位默认）。 */
+    public PlannerSettings(
+            boolean enabled,
+            String baseUrl,
+            String apiKey,
+            String model,
+            int waitPerDecisionMs,
+            int firstOneshotWaitMs,
+            int waitPerTurnMs,
+            int maxCheckpointsPerTurn,
+            double similarityThreshold,
+            int oneshotTimeoutMs,
+            int plannerCallTimeoutMs,
+            int plannerCooldownMs,
+            Path cardRagPath,
+            int oneshotMaxTokens,
+            boolean pathPlanning,
+            boolean plannerRushAnswer) {
+        this(enabled, baseUrl, apiKey, model, null, null,
+                waitPerDecisionMs, firstOneshotWaitMs, waitPerTurnMs, maxCheckpointsPerTurn,
+                similarityThreshold, oneshotTimeoutMs, plannerCallTimeoutMs, plannerCooldownMs,
+                cardRagPath, oneshotMaxTokens, pathPlanning, plannerRushAnswer);
+    }
+
+    /** 思考强度归一化：只接受 off/low/medium/high（大小写不敏感），其余（含 null/空白）= 档位默认。 */
+    private static String normalizeReasoning(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String v = value.trim().toLowerCase(Locale.ROOT);
+        return Set.of("off", "low", "medium", "high").contains(v) ? v : null;
+    }
+
+    public ChatClient.ChatOptions checkpointOptions() {
+        String effectiveLevel = reasoningPlanner;
         if ("off".equals(effectiveLevel)) {
             // 顾问模式四段 + 方案比较合计约 900–1100 字，额度给足避免截成半截 JSON；路径模式 JSON 更紧凑
             return ChatClient.ChatOptions.fastPlan(pathPlanning ? 1_200 : 2_600,

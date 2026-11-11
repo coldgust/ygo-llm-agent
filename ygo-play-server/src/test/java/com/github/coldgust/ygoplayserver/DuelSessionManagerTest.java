@@ -4,6 +4,7 @@ import com.github.coldgust.ygoplay.DuelRunResult;
 import com.github.coldgust.ygoplay.DuelRunSpec;
 import com.github.coldgust.ygoplay.RunStats;
 import com.github.coldgust.ygoplay.DuelRunner;
+import com.github.coldgust.ygoplayserver.config.LightRagProperties;
 import com.github.coldgust.ygoplayserver.config.PlayServerProperties;
 import com.github.coldgust.ygoplayserver.duel.DuelExceptions;
 import com.github.coldgust.ygoplayserver.duel.DuelExecutor;
@@ -30,12 +31,11 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import org.springframework.mock.env.MockEnvironment;
 
 class DuelSessionManagerTest {
 
     private static PlayServerProperties props() {
-        return new PlayServerProperties("second", 1);
+        return new PlayServerProperties("second", 1, null, null, null, null);
     }
 
     @Test
@@ -102,7 +102,8 @@ class DuelSessionManagerTest {
         DuelSessionManager manager = new DuelSessionManager(props(), fakeFactory((spec, ref, stop) ->
                 new DuelRunResult(new RunStats(3, 0), null)),
                 new DuelEventHub(),
-                new DuelSummaryService(new MockEnvironment()));
+                new DuelSummaryService(new LightRagProperties(null, null, 8_000L),
+                        com.github.coldgust.ygoplayserver.config.DuelSummaryProperties.defaults(), null));
 
         DuelView view = manager.start(request("ask"));
         DuelView done = awaitStatus(manager, view.id(), DuelStatus.FINISHED);
@@ -121,7 +122,8 @@ class DuelSessionManagerTest {
         DuelSessionManager manager = new DuelSessionManager(props(), fakeFactory((spec, ref, stop) ->
                 new DuelRunResult(new RunStats(1, 0), null)),
                 new DuelEventHub(),
-                new DuelSummaryService(new MockEnvironment()));
+                new DuelSummaryService(new LightRagProperties(null, null, 8_000L),
+                        com.github.coldgust.ygoplayserver.config.DuelSummaryProperties.defaults(), null));
 
         DuelView view = manager.start(request("ask"));
         awaitStatus(manager, view.id(), DuelStatus.FINISHED);
@@ -134,7 +136,8 @@ class DuelSessionManagerTest {
         DuelSessionManager manager = new DuelSessionManager(props(), fakeFactory((spec, ref, stop) ->
                 new DuelRunResult(new RunStats(1, 0), null)),
                 new DuelEventHub(),
-                new DuelSummaryService(new MockEnvironment()));
+                new DuelSummaryService(new LightRagProperties(null, null, 8_000L),
+                        com.github.coldgust.ygoplayserver.config.DuelSummaryProperties.defaults(), null));
 
         DuelView view = manager.start(request("never"));
         DuelView done = awaitStatus(manager, view.id(), DuelStatus.FINISHED);

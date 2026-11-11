@@ -2,12 +2,16 @@
   import { onMount } from 'svelte'
   import { api, type DuelEvent } from '../lib/api'
   import { STATUS_LABELS, TERMINAL_STATUSES } from '../lib/labels'
+  import DeckSource from '../components/DeckSource.svelte'
+  import { persisted } from '../lib/persisted.svelte'
 
-  let host = $state('127.0.0.1')
-  let port = $state(7911)
-  let name = $state('combo-record')
-  let deckPath = $state('')
-  let archetype = $state('')
+  // 录入参数存 localStorage：同一浏览器不必每次重填。host/port 与对战页共用，其余录入页单独存。
+  let host = persisted('ygo.host', '127.0.0.1')
+  let port = persisted('ygo.port', 7911)
+  let name = persisted('ygo.comboName', 'combo-record')
+  let deckPath = persisted('ygo.comboDeckPath', '')
+  let archetype = persisted('ygo.comboArchetype', '')
+  let deckYdkText = $state('')
   let archetypes = $state<string[]>([])
 
   let duelId = $state('')
@@ -128,11 +132,15 @@
 
   async function start() {
     if (submitting) return
-    if (!deckPath.trim()) {
-      error = '需要提供 AI 卡组路径'
+    const hasPath = !!deckPath.current.trim()
+    const hasYdk = !!deckYdkText.trim()
+    if (hasPath === hasYdk) {
+      error = hasPath
+        ? '卡组路径与 ydk 内容（粘贴 / 文件载入）只能二选一，请清空其一'
+        : '需要提供 AI 卡组：填写路径，或粘贴 / 从文件载入 .ydk'
       return
     }
-    if (!archetype.trim()) {
+    if (!archetype.current.trim()) {
       error = '需要填写卡组主题（录入的连招按它归档，也是之后对局上下文注入与 find_combos 检索的键）'
       return
     }
@@ -140,10 +148,11 @@
     submitting = true
     try {
       const duel = await api.startDuel({
-        host, port, name,
+        host: host.current, port: port.current, name: name.current,
         move: 'second', // 先手让给用户
-        deckPath: deckPath || undefined,
-        archetype: archetype.trim() || undefined,
+        deckPath: deckPath.current.trim() || undefined,
+        deckYdk: deckYdkText.trim() || undefined,
+        archetype: archetype.current.trim() || undefined,
         comboRecord: true,
       })
       // 成功才切换到新一局：409（已有对局进行中）等失败不影响已显示的上一局结果
@@ -188,15 +197,21 @@
 </script>
 
 <form class="controls" onsubmit={(e) => { e.preventDefault(); start() }}>
-  <label>地址 <input bind:value={host} size="12" /></label>
-  <label>端口 <input bind:value={port} size="5" /></label>
-  <label>名字 <input bind:value={name} size="14" /></label>
-  <label>AI 卡组路径 <input bind:value={deckPath} size="30" placeholder="AI 用的 .ydk（如蓝眼）" /></label>
+  <label>地址 <input bind:value={host.current} size="12" /></label>
+  <label>端口 <input bind:value={port.current} size="5" /></label>
+  <label>名字 <input bind:value={name.current} size="14" /></label>
+  <DeckSource
+    bind:deckPath={deckPath.current}
+    bind:deckYdk={deckYdkText}
+    label="AI 卡组路径"
+    size={30}
+    placeholder="AI 用的 .ydk（如蓝眼）"
+  />
   <label>
     卡组主题
     <input
       list="archetype-options"
-      bind:value={archetype}
+      bind:value={archetype.current}
       size="14"
       placeholder="必填：选已有或输入新主题"
     />

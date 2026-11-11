@@ -48,7 +48,7 @@ class ComboToolTest {
                         List.of(entry(1, "SKY_STRIKER", "闪刀起动-交闪,闪刀姬-耀歌"))),
                 null);
 
-        String out = tool.search("{\"archetype\":\"SKY_STRIKER\"}");
+        String out = tool.search("SKY_STRIKER", null);
 
         assertTrue(out.contains("录入#1"), out);
         assertTrue(out.contains("关键卡牌：闪刀起动-交闪、闪刀姬-耀歌"), out);
@@ -61,7 +61,7 @@ class ComboToolTest {
                 source(List.of(), List.of(entry(7, "闪刀", "灰流丽,无限泡影"))),
                 null);
 
-        String out = tool.search("{\"card\":\"灰流丽\"}");
+        String out = tool.search(null, "灰流丽");
 
         assertTrue(out.contains("录入#7"), out);
         assertTrue(out.contains("关键卡 7") || out.contains("关键卡 灰流丽"), out);
@@ -74,7 +74,7 @@ class ComboToolTest {
                         List.of(entry(2, "SKY_STRIKER", "闪刀起动-交闪"))),
                 "SKY_STRIKER");
 
-        String out = tool.search("{}");
+        String out = tool.search(null, null);
 
         assertTrue(out.contains("录入#2"), out);
     }
@@ -85,7 +85,7 @@ class ComboToolTest {
                 source(List.of(entry(1, "SKY_STRIKER", null), entry(2, "BLUE_EYES", null)), List.of()),
                 null);
 
-        String out = tool.search("{}");
+        String out = tool.search(null, null);
 
         assertTrue(out.contains("可用的卡组主题"), out);
         assertTrue(out.contains("SKY_STRIKER"), out);
@@ -97,7 +97,7 @@ class ComboToolTest {
                 source(List.of(entry(1, "SKY_STRIKER", null)), List.of()),
                 null);
 
-        String out = tool.search("{\"archetype\":\"BLUE_EYES\"}");
+        String out = tool.search("BLUE_EYES", null);
 
         assertTrue(out.contains("没有匹配"), out);
         assertTrue(out.contains("SKY_STRIKER"), out);
@@ -110,7 +110,7 @@ class ComboToolTest {
                 entry(4, "闪刀", null), entry(5, "闪刀", null));
         ComboTool tool = new ComboTool(source(five, five), null);
 
-        String out = tool.search("{\"archetype\":\"闪刀\"}");
+        String out = tool.search("闪刀", null);
 
         assertFalse(out.contains("录入#4"), out);
         assertTrue(out.contains("共 3 条"), out);

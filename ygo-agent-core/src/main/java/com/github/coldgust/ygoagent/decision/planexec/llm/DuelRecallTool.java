@@ -1,6 +1,8 @@
 package com.github.coldgust.ygoagent.decision.planexec.llm;
 
 import com.github.coldgust.ygoagent.decision.planexec.Texts;
+import dev.langchain4j.agent.tool.P;
+import dev.langchain4j.agent.tool.Tool;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import org.slf4j.Logger;
@@ -11,8 +13,6 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -59,71 +59,28 @@ public final class DuelRecallTool {
                 .build();
     }
 
-    public static DuelRecallTool fromEnv() {
-        return new DuelRecallTool(
-                setting("LIGHTRAG_URL", "http://localhost:9621"),
-                setting("LIGHTRAG_API_KEY", ""),
-                Duration.ofMillis(settingMillis("LIGHTRAG_TIMEOUT_MS", 8_000)),
-                "mix",
-                4);
-    }
-
-    public List<ChatClient.Tool> tools() {
-        Map<String, Object> query = new LinkedHashMap<>();
-        query.put("type", "string");
-        query.put("description", "当前局面或你想参考的问题，例如："
-                + "我方闪刀后手，对方清后场后OTK；或 我之前怎么处理增殖的G");
-
-        Map<String, Object> limit = new LinkedHashMap<>();
-        limit.put("type", "integer");
-        limit.put("description", "返回对局摘要条数，默认 4，最多 10");
-
-        Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put("query", query);
-        properties.put("limit", limit);
-
-        Map<String, Object> params = new LinkedHashMap<>();
-        params.put("type", "object");
-        params.put("properties", properties);
-        params.put("required", List.of("query"));
-
-        return List.of(new ChatClient.Tool(NAME,
-                "检索历史对局复盘（我方主题、先后手、胜负，以及关键决策/转折点/失误与教训）。"
-                        + "当当前局面让你觉得'以前遇到过'、或想参考历史经验/教训时调用；"
-                        + "返回最相似的对局复盘，作为参考而非命令。",
-                params));
-    }
-
-    public ChatClient.ToolHandler handler() {
-        return call -> search(call.arguments());
-    }
-
-    String search(String argumentsJson) {
-        String query = "";
-        int limit = defaultLimit;
-        try {
-            if (argumentsJson != null && !argumentsJson.isBlank()) {
-                JsonNode args = JsonMapper.builder().build().readTree(argumentsJson);
-                query = args.path("query").asText("").trim();
-                if (args.path("limit").isNumber()) {
-                    limit = Math.max(1, Math.min(10, args.path("limit").asInt(defaultLimit)));
-                }
-            }
-        } catch (RuntimeException e) {
-            // 参数不合法：按空查询处理并提示
-        }
-        if (query.isBlank()) {
+    @Tool(name = NAME, value = "检索历史对局复盘（我方主题、先后手、胜负，以及关键决策/转折点/失误与教训）。"
+            + "当当前局面让你觉得'以前遇到过'、或想参考历史经验/教训时调用；"
+            + "返回最相似的对局复盘，作为参考而非命令。")
+    public String search(
+            @P(value = "当前局面或你想参考的问题，例如："
+                    + "我方闪刀后手，对方清后场后OTK；或 我之前怎么处理增殖的G")
+            String query,
+            @P(value = "返回对局摘要条数，默认 4，最多 10", required = false)
+            Integer limit) {
+        if (query == null || query.isBlank()) {
             return "（请描述当前局面或想参考的问题，例如 query=\"后手闪刀被清后场\"）";
         }
+        int effectiveLimit = limit == null ? defaultLimit : Math.max(1, Math.min(10, limit));
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("query", query);
         payload.put("mode", mode);
-        payload.put("top_k", Math.max(limit * 2, 8));
-        payload.put("chunk_top_k", Math.max(limit * 2, 8));
+        payload.put("top_k", Math.max(effectiveLimit * 2, 8));
+        payload.put("chunk_top_k", Math.max(effectiveLimit * 2, 8));
         payload.put("include_chunk_content", true);
 
-        String text = render(post(payload), limit);
+        String text = render(post(payload), effectiveLimit);
         log.info("对局摘要检索 query='{}' → {} 字", Texts.flattenClip(query, 40), text.length());
         return text;
     }
@@ -306,50 +263,5 @@ public final class DuelRecallTool {
     /** 对局域来源（`duel:` 或 `duel-`，与服务端写入保持一致）。 */
     static boolean isDuelDomain(String source) {
         return SourceDomain.isDuel(source);
-    }
-
-    private static String setting(String key, String fallback) {
-        String fromEnv = System.getenv(key);
-        if (fromEnv != null && !fromEnv.isBlank()) {
-            return fromEnv;
-        }
-        for (String path : new String[]{".env", "../.env", "../../.env"}) {
-            String value = readDotEnv(path, key);
-            if (value != null && !value.isBlank()) {
-                return value;
-            }
-        }
-        return fallback;
-    }
-
-    private static long settingMillis(String key, long fallback) {
-        try {
-            return Math.max(1_000L, Long.parseLong(setting(key, String.valueOf(fallback)).trim()));
-        } catch (NumberFormatException e) {
-            return fallback;
-        }
-    }
-
-    private static String readDotEnv(String path, String key) {
-        Path file = Path.of(path);
-        if (!Files.isRegularFile(file)) {
-            return null;
-        }
-        try {
-            for (String raw : Files.readAllLines(file)) {
-                String line = raw.strip();
-                if (line.startsWith("#") || !line.startsWith(key + "=")) {
-                    continue;
-                }
-                String value = line.substring(key.length() + 1).strip();
-                if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
-                    value = value.substring(1, value.length() - 1);
-                }
-                return value;
-            }
-        } catch (IOException e) {
-            log.debug("读取 {} 失败: {}", path, e.toString());
-        }
-        return null;
     }
 }

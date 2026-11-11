@@ -6,15 +6,13 @@ import com.github.coldgust.ygodomain.duel.PlayerSide;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import dev.langchain4j.agent.tool.P;
+import dev.langchain4j.agent.tool.Tool;
+
 import java.util.List;
 import java.util.Locale;
-import java.util.Collection;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
-import java.util.Map;
 import java.util.Set;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
 
 /**
  * 连招查询工具（find_combos）：从 PG combo 库捞<b>对手</b>卡组的实战参考。
@@ -44,49 +42,18 @@ public final class ComboTool {
         return recorded != null && recorded.available();
     }
 
-    public List<ChatClient.Tool> tools() {
-        Map<String, Object> archetype = new LinkedHashMap<>();
-        archetype.put("type", "string");
-        archetype.put("description", "对手卡组主题（如 SKY_STRIKER / 闪刀）。不确定时留空，"
-                + "改用 card 参数给一张对手出现的关键卡；两者都空则返回可用主题列表");
-
-        Map<String, Object> card = new LinkedHashMap<>();
-        card.put("type", "string");
-        card.put("description", "对手使用的关键卡名（如 灰流丽）。按库里记录的关键卡牌模糊匹配，"
-                + "适合还没看清对手主题、只见到了个别卡的场合");
-
-        Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put("archetype", archetype);
-        properties.put("card", card);
-
-        Map<String, Object> params = new LinkedHashMap<>();
-        params.put("type", "object");
-        params.put("required", List.of());
-
-        return List.of(new ChatClient.Tool(NAME,
-                "按卡组主题或关键卡牌检索 combo 库里的实战录入，看对手这套卡组通常会怎么展开。"
-                        + "调用时机：你根据对手出现的卡推断出对手主题（或看到典型关键卡）时，"
-                        + "先查再应对，不要凭记忆猜对手的展开路线。查己方主题也可用（archetype 留空默认查己方）。",
-                params));
-    }
-
-    /** 绑定一次决策的可见卡（保留签名兼容工具注册；检索本身不再需要）。 */
-    public ChatClient.ToolHandler handler(Collection<Long> visibleCards) {
-        return call -> search(call.arguments());
-    }
-
-    String search(String argumentsJson) {
-        String archetype = "";
-        String card = "";
-        try {
-            if (argumentsJson != null && !argumentsJson.isBlank()) {
-                var args = JsonMapperHolder.MAPPER.readTree(argumentsJson);
-                archetype = args.path("archetype").asText("").trim();
-                card = args.path("card").asText("").trim();
-            }
-        } catch (RuntimeException e) {
-            // 参数不是合法 JSON：按全空处理，返回主题列表
-        }
+    @Tool(name = NAME, value = "按卡组主题或关键卡牌检索 combo 库里的实战录入，看对手这套卡组通常会怎么展开。"
+            + "调用时机：你根据对手出现的卡推断出对手主题（或看到典型关键卡）时，"
+            + "先查再应对，不要凭记忆猜对手的展开路线。查己方主题也可用（archetype 留空默认查己方）。")
+    public String search(
+            @P(value = "对手卡组主题（如 SKY_STRIKER / 闪刀）。不确定时留空，"
+                    + "改用 card 参数给一张对手出现的关键卡；两者都空则返回可用主题列表", required = false)
+            String archetype,
+            @P(value = "对手使用的关键卡名（如 灰流丽）。按库里记录的关键卡牌模糊匹配，"
+                    + "适合还没看清对手主题、只见到了个别卡的场合", required = false)
+            String card) {
+        archetype = archetype == null ? "" : archetype.trim();
+        card = card == null ? "" : card.trim();
         if (archetype.isBlank() && card.isBlank() && selfArchetype != null) {
             archetype = selfArchetype;
         }
@@ -154,12 +121,6 @@ public final class ComboTool {
 
     private List<String> archetypes() {
         return recorded == null ? List.of() : recorded.archetypes();
-    }
-
-    /** 延迟初始化的 JSON 解析器（工具调用频次低，不值得预建）。 */
-    private static final class JsonMapperHolder {
-        private static final ObjectMapper MAPPER =
-                JsonMapper.builder().build();
     }
 
     /**
