@@ -254,19 +254,39 @@ public final class ContextPackBuilder {
     }
 
     public String anchorPack(DuelState state) {
-        return staticMaterial() + dynamicBoardPack(state);
+        StringBuilder sb = new StringBuilder();
+        anchor.coreSections(sb);
+        sb.append(anchor.comboSection());
+        sb.append(dynamicBoardPack(state));
+        return sb.toString();
     }
 
     /**
-     * 静态资料段（整局不变）：卡组主题 / 卡组思路 / 实战连招 / 规则速查。
-     *
-     * <p>决策器把它作为独立消息放在动态局面之前——与 SYSTEM 一起构成跨调用完全一致的
-     * 前缀，deepseek 的自动前缀缓存能吃掉这部分大头（实测占决策提示词约六成）。
+     * 决策器静态资料段（整局不变）：卡组主题 / 卡组思路 / 规则速查。
+     * 连招参考与 [卡组] 清单是规划器专属（回合级路线规划才用得上），决策器不注入。
      */
-    public String staticMaterial() {
+    public String judgeStaticMaterial() {
         StringBuilder sb = new StringBuilder();
-        anchor.strategySections(sb);
+        anchor.coreSections(sb);
         return sb.toString();
+    }
+
+    /**
+     * 规划器静态资料段（整局不变）：核心资料 + [实战连招参考] + [卡组] 全清单。
+     * 规划器负责回合级路线规划，需要连招库与整副卡组判断"能检索什么、额外能出什么"。
+     * 由 PlannerSession 作为独立消息放在 history 最前——跨回合逐字节一致，
+     * deepseek 服务端前缀缓存能在整局所有规划器调用上命中这部分。
+     */
+    public String plannerStaticMaterial() {
+        StringBuilder body = new StringBuilder();
+        anchor.coreSections(body);
+        body.append(anchor.comboSection());
+        body.append(anchor.deckSection());
+        if (body.isEmpty()) {
+            return ""; // 无任何静态资料（如离线单测）时不输出空壳
+        }
+        return "[整局资料] 以下内容在本局全程不变（主题 / 思路 / 连招参考 / 规则速查 / 卡组清单）；"
+                + "局面与过程记录见后续消息。\n\n" + body;
     }
 
     /**
@@ -295,11 +315,23 @@ public final class ContextPackBuilder {
     }
 
     /**
-     * 规划器专用锚点：静态资料 + [卡组] 清单 + 动态局面 + {@code [卡面]} + {@code [决斗记录]}。
+     * 规划器锚点（易变部分）：局面与决斗记录置顶（最重要的参考），其后卡面。
+     * 静态资料不在其中——由 PlannerSession 作为独立消息放在 history 最前
+     * （{@link #plannerStaticMaterial()}，跨回合一致，吃跨回合前缀缓存）。
+     * 记录只含已结算回合（锚点时本回合刚开始，时间线由事件批增量补）。
      */
     public String plannerAnchorPack(DuelState state) {
-        return staticMaterial() + anchor.deckSection() + dynamicBoardPack(state)
-                + anchor.cardFactsSection(state) + recordSections.fullRecord(timeline);
+        return dynamicBoardPack(state)
+                + recordSections.recordOfClosedTurns(state.turnNumber(), timeline)
+                + anchor.cardFactsSection(state);
+    }
+
+    /**
+     * 回合记录前缀（已结算回合），决策器每次调用作为独立消息注入。
+     * 回合内逐字节一致——上下文缓存的第二层。
+     */
+    public String recordOfClosedTurns(int currentTurn) {
+        return recordSections.recordOfClosedTurns(currentTurn, timeline);
     }
 
     public String decisionPack(DecisionPoint point) {
@@ -341,7 +373,7 @@ public final class ContextPackBuilder {
         if (point.kind() == RequestKind.POSITION) {
             sb.append(positionSection());
         }
-        String history = historySection(point, remembered);
+        String history = historySection(point, remembered, timeline != null);
         if (!history.isEmpty()) {
             sb.append(history).append("\n");
         }
@@ -375,14 +407,15 @@ public final class ContextPackBuilder {
     private static final int HISTORY_MAX_ACTIONS = 8;
 
     /**
-     * {@code [本回合已做]}：把"你已经做过什么、上一手怎么想的"补进上下文。
+     * 决策包的记忆段：有时间线时动作事实由 [本回合时间线] 承载（不重复列），
+     * 这里只补时间线没有的"上一手的判断"；无时间线（离线/无记录注入）回退为完整动作列表。
      */
-    private String historySection(DecisionPoint point, DecisionMemory memory) {
+    private String historySection(DecisionPoint point, DecisionMemory memory, boolean hasTimeline) {
         if (memory == null || memory.turnActions().isEmpty() && memory.lastIntent().isEmpty()) {
             return "";
         }
         StringBuilder sb = new StringBuilder();
-        if (!memory.turnActions().isEmpty()) {
+        if (!hasTimeline && !memory.turnActions().isEmpty()) {
             sb.append("[本回合已做] T").append(point.turn())
                     .append(" 你已经做过（动作是既成事实；这些动作的效果是否成立，看 [局面]）：\n");
             List<String> actions = memory.turnActions();
@@ -394,11 +427,11 @@ public final class ContextPackBuilder {
         if (!memory.lastIntent().isEmpty()) {
             sb.append("  上一手的判断：").append(memory.lastIntent()).append('\n');
         }
-        sb.append("  要推翻上面的决定可以，但 rationale 里必须说清「为什么改」；")
-                .append("不要不声不响地做出相反的选择。\n");
-        sb.append("  「上一手的判断」只是你当时的判断，不是事实：若 [局面] 显示的结果与它相反")
-                .append("（对方场上多出了怪兽、我方卡被除外/破坏、某张卡进了墓地），一律以 [局面] 为准，")
-                .append("并在 rationale 里写明「上一手的判断被结果推翻」。\n");
+        if (sb.isEmpty()) {
+            return "";
+        }
+        sb.append("  要推翻上一手的判断可以，rationale 里说清「为什么改」；")
+                .append("它与 [局面]/[本回合时间线] 相反时以后者为准。");
         return sb.toString();
     }
 

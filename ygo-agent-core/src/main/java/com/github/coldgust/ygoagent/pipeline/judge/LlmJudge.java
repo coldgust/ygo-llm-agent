@@ -114,15 +114,20 @@ public final class LlmJudge implements AutoCloseable {
                 CompletableFuture<Optional<Drafted>> judgeFuture =
                 CompletableFuture.supplyAsync(() -> {
                     String pack = packer.decisionPack(point, planForJudge, memoryPack);
-                    // 静态资料（规则速查/卡组思路等，整局不变）独立成消息：与 SYSTEM 一起构成
-                    // 跨调用完全一致的前缀，deepseek 自动前缀缓存按缓存价吃掉这部分大头。
-                    // 决策包本身只带动态内容，保证前缀逐字节一致。
-                    String material = packer.staticMaterial();
-                    List<ChatMessage> messages = material.isBlank()
-                            ? List.of(SystemMessage.from(JudgePrompts.SYSTEM), UserMessage.from(pack))
-                            : List.of(SystemMessage.from(JudgePrompts.SYSTEM),
-                                    UserMessage.from(material),
-                                    UserMessage.from(pack));
+                    // 缓存分层前缀：SYSTEM（局级）→ 静态资料（局级）→ 决斗记录·已结算回合（回合级）
+                    // 三段在本回合内逐字节一致，deepseek 自动前缀缓存按缓存价吃掉大头；
+                    // 决策包只带每次变化的动态内容。空段跳过，保持前缀最短。
+                    List<ChatMessage> messages = new ArrayList<>();
+                    messages.add(SystemMessage.from(JudgePrompts.SYSTEM));
+                    String material = packer.judgeStaticMaterial();
+                    if (!material.isBlank()) {
+                        messages.add(UserMessage.from(material));
+                    }
+                    String record = packer.recordOfClosedTurns(point.turn());
+                    if (!record.isBlank()) {
+                        messages.add(UserMessage.from(record));
+                    }
+                    messages.add(UserMessage.from(pack));
                     ChatClient.ChatOptions options = ChatClient.ChatOptions.decision(
                                     settings.judgeMaxTokens(),
                                     Duration.ofMillis(Math.min(settings.judgeTimeoutMs(), deadlineMs)))

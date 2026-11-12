@@ -278,9 +278,17 @@ class ContextPackBuilderTest {
         String pack = withStrategy.decisionPack(point);
         assertFalse(pack.contains("[卡组思路]"), "决策包不再携带静态资料:\n" + pack);
         assertTrue(pack.startsWith("[局面]"), "动态包以局面开头:\n" + pack);
-        String combined = withStrategy.staticMaterial() + pack;
+        String combined = withStrategy.judgeStaticMaterial() + pack;
         assertTrue(combined.indexOf("[卡组思路]") < combined.indexOf("[局面]"),
                 "模型阅读顺序仍是思路在前、局面在后:\n" + combined);
+        // 连招参考与卡组清单是规划器专属；核心资料（含思路）两边都有
+        assertTrue(withStrategy.plannerStaticMaterial().contains("[卡组思路]"));
+        // 规划器静态消息独立成整局资料（跨回合前缀缓存），锚点只剩易变部分
+        assertTrue(withStrategy.plannerStaticMaterial().startsWith("[整局资料]"));
+        assertTrue(withStrategy.plannerAnchorPack(state).startsWith("[局面]"),
+                "锚点以局面开头（最重要的参考）:\n" + withStrategy.plannerAnchorPack(state));
+        assertFalse(withStrategy.plannerAnchorPack(state).contains("[规则速查]"),
+                "静态资料不进锚点（独立消息，跨回合一致）:\n" + withStrategy.plannerAnchorPack(state));
 
         assertFalse(builder.anchorPack(state).contains("[卡组思路]"));
         assertFalse(new ContextPackBuilder(facts, new DuelMathService(), "   ")
@@ -295,11 +303,13 @@ class ContextPackBuilderTest {
         DuelState early = TestDuels.state(1, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
         DuelState late = TestDuels.state(4, false, List.of(), List.of(), List.of(), List.of(), 3000, 6000);
 
-        assertEquals(withDigest.staticMaterial(), withDigest.staticMaterial());
+        assertEquals(withDigest.judgeStaticMaterial(), withDigest.judgeStaticMaterial());
+        assertEquals(withDigest.plannerStaticMaterial(), withDigest.plannerStaticMaterial());
         assertFalse(withDigest.dynamicBoardPack(early).equals(withDigest.dynamicBoardPack(late)),
                 "动态段要随局面变（否则局面就废了）");
-        assertEquals(withDigest.staticMaterial() + withDigest.dynamicBoardPack(early),
-                withDigest.anchorPack(early), "anchorPack 兼容入口 = 静态 + 动态");
+        assertTrue(withDigest.anchorPack(early)
+                        .startsWith(withDigest.judgeStaticMaterial()),
+                "anchorPack 兼容入口以静态资料开头");
     }
 
     @Test
@@ -511,18 +521,21 @@ class ContextPackBuilderTest {
     @Test
     void plannerAnchorListsTheWholeOwnDeck() {
         // 己方卡组是已知信息：给全了规划器才能判断"这张检索能拿到什么"，不必每次现查。
+        // 卡组清单整局不变 → 归入规划器静态消息（跨回合前缀缓存），锚点不重复携带。
         ContextPackBuilder withDeck = new ContextPackBuilder(TestDuels.facts(),
                 new DuelMathService(), null, null, null, true,
                 List.of(TestDuels.KAGARI, TestDuels.ENGAGE));
         DuelState state = TestDuels.state(2, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
 
-        String anchor = withDeck.plannerAnchorPack(state);
+        String staticMaterial = withDeck.plannerStaticMaterial();
 
-        assertTrue(anchor.contains("[卡组]"), "要有卡组段:\n" + anchor);
-        assertTrue(anchor.contains("闪刀姬-燎里"), "卡组里的卡要列出:\n" + anchor);
-        assertTrue(anchor.contains("闪刀起动-交闪"), anchor);
-        assertTrue(anchor.contains("〔连接怪兽"),
-                "要带种类，模型才能判断能不能特召:\n" + anchor);
+        assertTrue(staticMaterial.contains("[卡组]"), "要有卡组段:\n" + staticMaterial);
+        assertTrue(staticMaterial.contains("闪刀姬-燎里"), "卡组里的卡要列出:\n" + staticMaterial);
+        assertTrue(staticMaterial.contains("闪刀起动-交闪"), staticMaterial);
+        assertTrue(staticMaterial.contains("〔连接怪兽"),
+                "要带种类，模型才能判断能不能特召:\n" + staticMaterial);
+        assertFalse(withDeck.plannerAnchorPack(state).contains("[卡组]"),
+                "卡组清单在静态消息里，锚点不重复");
     }
 
     @Test
@@ -866,23 +879,26 @@ class ContextPackBuilderTest {
         DecisionPoint point = new DecisionPoint(1, 3, state.phase(), PlayerSide.SELF,
                 request, state, Candidates.from(request), "h", "r", RequestKind.MAIN_PHASE);
 
+        // T2（已结算）+ T3（本回合）各一条事件：前缀带 T2，决策包时间线带 T3
         ContextPackBuilder withTimeline = new ContextPackBuilder(
                 facts, new DuelMathService(), null, null, null, true, List.of(), null,
                 new DuelTimeline() {
                     @Override
                     public List<DuelTimeline.Entry> since(long seq) {
-                        return List.of(new DuelTimeline.Entry.LpChanged(1, 3,
-                                DuelTimeline.Side.SELF, -100, 7900));
+                        List<DuelTimeline.Entry> all = List.of(
+                                new DuelTimeline.Entry.LpChanged(1, 2, DuelTimeline.Side.OPPONENT, -500, 7500),
+                                new DuelTimeline.Entry.LpChanged(2, 3, DuelTimeline.Side.SELF, -100, 7900));
+                        return all.stream().filter(e -> e.seq() > seq).toList();
                     }
 
                     @Override
                     public List<DuelTimeline.Entry> turn(int turnNumber) {
-                        return since(0);
+                        return since(0).stream().filter(e -> e.turn() == turnNumber).toList();
                     }
 
                     @Override
                     public long latestSeq() {
-                        return 1;
+                        return 2;
                     }
                 });
 
@@ -890,6 +906,12 @@ class ContextPackBuilderTest {
                 "有记录端口时决策包要带本回合时间线");
         assertFalse(builder.decisionPack(point).contains("[本回合时间线]"),
                 "没有记录端口就不该多出这一段");
+        assertTrue(withTimeline.recordOfClosedTurns(3).contains("[决斗记录]"),
+                "已结算回合进记录前缀");
+        assertTrue(withTimeline.recordOfClosedTurns(3).contains("T2："),
+                "已结算回合逐条展开（回合头后缀取决于该组是否有回合开始事件）");
+        assertFalse(withTimeline.recordOfClosedTurns(3).contains("T3"),
+                "结算中的回合不进前缀（由决策包时间线承载）");
         assertTrue(withTimeline.plannerAnchorPack(state).contains("[决斗记录]"));
         assertFalse(builder.plannerAnchorPack(state).contains("[决斗记录]"));
     }

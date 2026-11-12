@@ -25,8 +25,9 @@ import java.util.TreeMap;
  *   <li>身份不可见的卡渲染"内容不可见"，绝不猜。</li>
  * </ul>
  *
- * <p>两个出口，token 预算不同：决策包每手都发，只带本回合（+上回合一行摘要）；
- * 规划器锚点每回合只发一两次，带开局至今的压缩记录（旧回合压成摘要行）。
+ * <p>两个出口，token 预算不同：决策包每手都发，只带本回合（已结算回合由
+ * {@link #recordOfClosedTurns} 作为独立前缀承载，回合内不变、可吃上下文缓存）；
+ * 规划器锚点每回合只发一两次，同样用 {@link #recordOfClosedTurns}。
  * 我方提交过的决策（{@link DuelTimeline.Entry.DecisionMade}）在两种出口里都过滤：
  * 我方动作已由决策记忆与规划器对话承担，重复反而会淹没"对方做了什么"。
  */
@@ -34,7 +35,7 @@ public final class DuelRecordSections {
 
     /** 决策包时间线的行数上限：超限丢最旧的（最近动作优先）。 */
     private static final int TIMELINE_MAX_LINES = 30;
-    /** 规划器锚点里逐条展开的最近回合数；更早的回合各压成一行摘要。 */
+    /** 回合记录里逐条展开的最近回合数；更早的回合各压成一行摘要。 */
     private static final int FULL_RECORD_RECENT_TURNS = 3;
     /** 摘要行里每类最多点名的卡数。 */
     private static final int SUMMARY_NAME_LIMIT = 3;
@@ -48,23 +49,20 @@ public final class DuelRecordSections {
     }
 
     /**
-     * 决策包用：本回合时间线（+ 上回合一行摘要）。timeline 为 null 或无内容时返回空串。
+     * 决策包用：本回合时间线。上回合的摘要与"发动≠生效"声明由回合记录前缀
+     * （{@link #recordOfClosedTurns}）承载，这里只带本回合。timeline 为 null 或无内容时返回空串。
      */
     public String turnTimeline(int turn, boolean myTurn, DuelTimeline timeline) {
         if (timeline == null) {
             return "";
         }
         List<DuelTimeline.Entry> current = dropped(timeline.turn(turn));
-        String summary = previousTurnSummary(turn, timeline);
-        if (current.isEmpty() && summary.isEmpty()) {
+        if (current.isEmpty()) {
             return "";
         }
         StringBuilder sb = new StringBuilder();
         sb.append("[本回合时间线] T").append(turn)
                 .append(myTurn ? "（我方回合）" : "（对方回合）").append("，从回合开始到现在：\n");
-        if (!summary.isEmpty()) {
-            sb.append("  ").append(summary).append('\n');
-        }
         List<String> lines = lines(current, false);
         int from = Math.max(0, lines.size() - TIMELINE_MAX_LINES);
         if (from > 0) {
@@ -73,34 +71,36 @@ public final class DuelRecordSections {
         for (int i = from; i < lines.size(); i++) {
             sb.append("  - ").append(lines.get(i)).append('\n');
         }
-        sb.append("  以上是已发生的事实：「发动」不代表已生效，结果以 [局面] 为准。\n");
         return sb.toString();
     }
 
     /**
-     * 规划器锚点用：开局至今的压缩记录——最近 {@value FULL_RECORD_RECENT_TURNS} 回合逐条展开，
-     * 更早的回合各一行摘要。timeline 为 null 或无内容时返回空串。
+     * 回合记录前缀：**已结算回合**（turn &lt; currentTurn）的完整过程——最近
+     * {@value FULL_RECORD_RECENT_TURNS} 回合逐条展开，更早的回合各一行摘要。
+     *
+     * <p>在第 N 回合内，这份内容永不变化：规划器锚点与决策器的每手调用共用同一渲染，
+     * 以此作为跨调用一致的前缀（上下文缓存的第二个层级）。结算中的回合不在此列，
+     * 由决策包的 [本回合时间线] 承载。timeline 为 null 或无已结算内容时返回空串。
      */
-    public String fullRecord(DuelTimeline timeline) {
-        if (timeline == null) {
+    public String recordOfClosedTurns(int currentTurn, DuelTimeline timeline) {
+        if (timeline == null || currentTurn <= 1) {
             return "";
         }
-        List<DuelTimeline.Entry> all = dropped(timeline.since(0));
-        if (all.isEmpty()) {
+        List<DuelTimeline.Entry> closed = dropped(timeline.since(0)).stream()
+                .filter(e -> e.turn() > 0 && e.turn() < currentTurn)
+                .toList();
+        if (closed.isEmpty()) {
             return "";
         }
         TreeMap<Integer, List<DuelTimeline.Entry>> byTurn = new TreeMap<>();
-        for (DuelTimeline.Entry entry : all) {
+        for (DuelTimeline.Entry entry : closed) {
             byTurn.computeIfAbsent(entry.turn(), k -> new ArrayList<>()).add(entry);
         }
         StringBuilder sb = new StringBuilder(
-                "[决斗记录] 开局至今（旧回合只留摘要；「发动」不代表已生效，结果以 [局面] 为准）：\n");
+                "[决斗记录] 开局至今双方做过的事（旧回合只留摘要；「发动」不代表已生效，结果以 [局面] 为准）：\n");
         int recentFrom = Math.max(1, byTurn.lastKey() - FULL_RECORD_RECENT_TURNS + 1);
         for (Map.Entry<Integer, List<DuelTimeline.Entry>> group : byTurn.entrySet()) {
             int turn = group.getKey();
-            if (turn <= 0) {
-                continue; // 开局前的系统事件（DUEL_STARTED 等）不构成回合
-            }
             if (turn < recentFrom) {
                 String summary = summarizeTurn(turn, group.getValue());
                 if (!summary.isEmpty()) {
@@ -129,15 +129,6 @@ public final class DuelRecordSections {
         return lines(entries, true);
     }
 
-
-    /** 上一回合的一行摘要；无记录时返回空串。 */
-    private String previousTurnSummary(int currentTurn, DuelTimeline timeline) {
-        if (currentTurn <= 1) {
-            return "";
-        }
-        List<DuelTimeline.Entry> entries = dropped(timeline.turn(currentTurn - 1));
-        return entries.isEmpty() ? "" : summarizeTurn(currentTurn - 1, entries);
-    }
 
     /** 一回合压成一行：双方发动了什么、上场/盖了几张、LP 怎么变的。 */
     private String summarizeTurn(int turn, List<DuelTimeline.Entry> entries) {

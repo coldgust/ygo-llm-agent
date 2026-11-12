@@ -340,6 +340,12 @@ public final class PlannerSession implements AutoCloseable {
         history.add(SystemMessage.from(settings.pathPlanning()
                 ? PlannerPrompts.PLANNER_SYSTEM
                 : PlannerPrompts.ADVISOR_SYSTEM));
+        // 整局静态资料独立成消息、紧跟 system：跨回合逐字节一致，
+        // deepseek 服务端前缀缓存能在整局所有规划器调用（锚点/事件批/重规划/抢答）上命中
+        String staticMaterial = packer.plannerStaticMaterial();
+        if (!staticMaterial.isBlank()) {
+            history.add(UserMessage.from(staticMaterial));
+        }
         if (!handoff.isEmpty()) {
             history.add(UserMessage.from("===上一段摘要接力===\n" + handoff));
         }
@@ -614,9 +620,10 @@ public final class PlannerSession implements AutoCloseable {
 
     private void rememberAssistant(String raw) {
         history.add(AiMessage.from(raw));
-        // 防膨胀：段内历史超过 24 条时丢弃最早的 assistant 长文（保留 system 与最近 8 条）
+        // 防膨胀：段内历史超过 24 条时丢弃最早的长文——保留 system、整局静态资料（[0..1]，
+        // 跨回合前缀缓存的前提）与最近 8 条
         if (history.size() > 24) {
-            history.subList(1, Math.max(1, history.size() - 8)).clear();
+            history.subList(2, Math.max(2, history.size() - 8)).clear();
         }
     }
 

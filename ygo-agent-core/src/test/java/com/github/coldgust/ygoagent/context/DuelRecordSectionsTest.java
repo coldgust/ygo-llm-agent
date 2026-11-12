@@ -76,11 +76,11 @@ class DuelRecordSectionsTest {
         assertTrue(section.contains("魔法·陷阱卡全部破坏"), "发动行要能定位到条款:\n" + section);
         assertTrue(section.contains("我方 LP -2300（→5700）"), section);
         assertFalse(section.contains("[Summon"), "我方已提交的决策不重复进记录:\n" + section);
-        assertTrue(section.contains("不代表已生效"), "必须声明发动≠生效:\n" + section);
+        assertFalse(section.contains("上回合"), "上回合摘要由回合记录前缀承载，时间线只带本回合:\n" + section);
     }
 
     @Test
-    void fullRecordSummarizesOldTurnsAndExpandsRecentOnes() {
+    void closedTurnRecordSummarizesOldTurnsAndExpandsRecentOnes() {
         List<DuelTimeline.Entry> entries = new java.util.ArrayList<>();
         entries.addAll(turnEvents(1, DuelTimeline.Side.SELF, 10));
         entries.addAll(turnEvents(2, DuelTimeline.Side.OPPONENT, 20));
@@ -88,13 +88,29 @@ class DuelRecordSectionsTest {
         entries.addAll(turnEvents(4, DuelTimeline.Side.OPPONENT, 40));
         entries.addAll(turnEvents(5, DuelTimeline.Side.SELF, 50));
 
-        String record = sections.fullRecord(timelineOf(entries));
+        // currentTurn=5：已结算回合是 1–4，最近 3 个（T2–T4）展开、T1 摘要；T5 不在前缀里
+        String record = sections.recordOfClosedTurns(5, timelineOf(entries));
         assertTrue(record.contains("[决斗记录]"), record);
         assertTrue(record.contains("T1（我方回合）摘要："), "旧回合压成摘要:\n" + record);
-        assertTrue(record.contains("T2（对方回合）摘要："), record);
-        assertFalse(record.contains("T3（我方回合）摘要"), "最近回合要逐条展开:\n" + record);
-        assertTrue(record.contains("T3（我方回合）："), record);
-        assertTrue(record.contains("T5（我方回合）："), record);
+        assertFalse(record.contains("T2（对方回合）摘要"), "最近 3 个回合要逐条展开:\n" + record);
+        assertTrue(record.contains("T2（对方回合）："), record);
+        assertTrue(record.contains("T4（对方回合）："), record);
+        assertFalse(record.contains("T5"), "结算中的回合不进记录前缀:\n" + record);
+    }
+
+    @Test
+    void closedTurnRecordIsByteStableWithinTurn() {
+        List<DuelTimeline.Entry> entries = new java.util.ArrayList<>(turnEvents(1, DuelTimeline.Side.SELF, 10));
+        entries.addAll(turnEvents(2, DuelTimeline.Side.OPPONENT, 20));
+        entries.addAll(turnEvents(3, DuelTimeline.Side.SELF, 30));
+        DuelTimeline timeline = timelineOf(entries);
+
+        // 前缀缓存的前提：同回合内（已结算集合不变）重复渲染逐字节一致；
+        // 新回合闭合（T3 进入已结算集合）后前缀才变化
+        assertEquals(sections.recordOfClosedTurns(3, timeline), sections.recordOfClosedTurns(3, timeline));
+        assertTrue(sections.recordOfClosedTurns(1, timeline).isEmpty(), "回合 1 没有任何已结算回合");
+        assertFalse(sections.recordOfClosedTurns(3, timeline)
+                .equals(sections.recordOfClosedTurns(4, timeline)), "新回合闭合后前缀要更新");
     }
 
     @Test
@@ -130,10 +146,13 @@ class DuelRecordSectionsTest {
     @Test
     void blankTimelineRendersNothing() {
         assertEquals("", sections.turnTimeline(1, true, null));
-        assertEquals("", sections.fullRecord(null));
+        assertEquals("", sections.recordOfClosedTurns(5, null));
         assertEquals("", sections.turnTimeline(1, true, timeline()));
-        assertEquals("", sections.fullRecord(timeline()));
-        // 有事件但不属于本回合（也不够成上回合摘要）→ 不渲染空段
+        assertEquals("", sections.recordOfClosedTurns(5, timeline()));
+        // 无已结算回合（还在回合 1）→ 不渲染
+        assertEquals("", sections.recordOfClosedTurns(1, timeline(
+                new DuelTimeline.Entry.TurnStarted(1, 1, DuelTimeline.Side.SELF))));
+        // 有事件但不属于本回合 → 不渲染空段
         assertEquals("", sections.turnTimeline(3, true, timeline(
                 new DuelTimeline.Entry.TurnStarted(1, 1, DuelTimeline.Side.SELF))));
     }
