@@ -128,7 +128,7 @@ final class BoardSections {
             sj.add("怪兽区（空）");
         } else {
             StringJoiner mj = new StringJoiner("、");
-            monsters.forEach(c -> mj.add(monsterLabel(c)));
+            monsters.forEach(c -> mj.add(monsterLabel(state, c)));
             sj.add("怪兽：" + mj);
         }
         List<CardInstance> backrow = state.spellTraps(side);
@@ -155,35 +155,80 @@ final class BoardSections {
         return sj.toString();
     }
 
-    private String monsterLabel(CardInstance c) {
+    private String monsterLabel(DuelState state, CardInstance c) {
+        String base;
         if (c.position() == null) {
             // 表示形式未同步：身份已知也别猜"里侧"，如实标注
-            return c.isUnknown() ? "盖卡怪"
+            base = c.isUnknown() ? "盖卡怪"
                     : DuelMathService.labelOf(c, facts) + "[状态未知]";
-        }
-        if (!c.position().isFaceUp()) {
-            return c.isUnknown() ? "盖卡怪"
+        } else if (!c.position().isFaceUp()) {
+            base = c.isUnknown() ? "盖卡怪"
                     : DuelMathService.labelOf(c, facts) + "[里侧]";
+        } else {
+            CardFact fact = facts.byPasscode(c.passcode()).orElse(null);
+            String pos = c.position() == Position.FACE_UP_ATTACK ? "攻" : "守";
+            if (fact == null) {
+                base = "卡(" + c.passcode() + ")[" + pos + "]";
+            } else {
+                String stats = fact.atk() == null ? "?" : String.valueOf(fact.atk());
+                String def = fact.defense() == null ? "?" : String.valueOf(fact.defense());
+                base = fact.name() + "[" + pos + " ATK" + stats + "/DEF" + def + "]";
+            }
         }
-        CardFact fact = facts.byPasscode(c.passcode()).orElse(null);
-        String pos = c.position() == Position.FACE_UP_ATTACK ? "攻" : "守";
-        if (fact == null) {
-            return "卡(" + c.passcode() + ")[" + pos + "]";
+        return base + extras(state, c);
+    }
+
+    /** 超量素材与指示物：不给的话模型会把"叠了几只、有几个计数"当空气，推不出可用的资源。 */
+    private String extras(DuelState state, CardInstance c) {
+        List<String> parts = new ArrayList<>();
+        if (!c.xyzMaterials().isEmpty()) {
+            List<String> names = new ArrayList<>();
+            int unknown = 0;
+            for (long id : c.xyzMaterials()) {
+                String name = state.card(id)
+                        .filter(material -> !material.isUnknown())
+                        .map(material -> facts.byPasscode(material.passcode())
+                                .map(CardFact::name)
+                                .orElseGet(() -> "卡(" + material.passcode() + ")"))
+                        .orElse(null);
+                if (name == null) {
+                    unknown++;
+                } else {
+                    names.add(name);
+                }
+            }
+            if (names.isEmpty()) {
+                parts.add("素材×" + c.xyzMaterials().size());
+            } else {
+                String text = "素材：" + String.join("、", names);
+                if (unknown > 0) {
+                    text += " 等×" + c.xyzMaterials().size();
+                }
+                parts.add(text);
+            }
         }
-        String stats = fact.atk() == null ? "?" : String.valueOf(fact.atk());
-        String def = fact.defense() == null ? "?" : String.valueOf(fact.defense());
-        return fact.name() + "[" + pos + " ATK" + stats + "/DEF" + def + "]";
+        if (!c.counters().isEmpty()) {
+            // 指示物种类是协议计数器编号，卡库里没有可读名字——只给总量，不编类型
+            int total = c.counters().values().stream().mapToInt(Integer::intValue).sum();
+            parts.add("指示物×" + total);
+        }
+        return parts.isEmpty() ? "" : "(" + String.join("，", parts) + ")";
     }
 
     String graveLine(DuelState state, PlayerSide side) {
         List<CardIdentity> gy = state.player(side).graveyard();
-        if (gy.isEmpty()) {
-            return "墓地（空）";
-        }
+        String grave = gy.isEmpty() ? "墓地（空）"
+                : "墓地：" + identities(gy);
+        List<CardIdentity> banished = state.player(side).banished();
+        String removed = banished.isEmpty() ? "除外（空）"
+                : "除外：" + identities(banished);
+        return grave + "；" + removed;
+    }
+
+    private String identities(List<CardIdentity> identities) {
         StringJoiner sj = new StringJoiner("、");
-        gy.forEach(id -> sj.add(DuelMathService.labelOf(
+        identities.forEach(id -> sj.add(DuelMathService.labelOf(
                 new CardInstance(0, id, null, null, null, null), facts)));
-        int banished = state.player(side).banished().size();
-        return sj + "；除外 " + banished + " 张";
+        return sj.toString();
     }
 }

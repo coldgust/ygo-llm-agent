@@ -111,12 +111,18 @@ public final class LlmJudge implements AutoCloseable {
         // 这个决策点之前"已经做过什么 + 上一手怎么想的"（单轮调用没有对话历史，必须显式给）
         DecisionMemory memoryPack =
                 DecisionMemory.of(effectScope, memory.turnActions(), memory.lastIntent());
-        CompletableFuture<Optional<Drafted>> judgeFuture =
+                CompletableFuture<Optional<Drafted>> judgeFuture =
                 CompletableFuture.supplyAsync(() -> {
                     String pack = packer.decisionPack(point, planForJudge, memoryPack);
-                    List<ChatMessage> messages = List.of(
-                            SystemMessage.from(JudgePrompts.SYSTEM),
-                            UserMessage.from(pack));
+                    // 静态资料（规则速查/卡组思路等，整局不变）独立成消息：与 SYSTEM 一起构成
+                    // 跨调用完全一致的前缀，deepseek 自动前缀缓存按缓存价吃掉这部分大头。
+                    // 决策包本身只带动态内容，保证前缀逐字节一致。
+                    String material = packer.staticMaterial();
+                    List<ChatMessage> messages = material.isBlank()
+                            ? List.of(SystemMessage.from(JudgePrompts.SYSTEM), UserMessage.from(pack))
+                            : List.of(SystemMessage.from(JudgePrompts.SYSTEM),
+                                    UserMessage.from(material),
+                                    UserMessage.from(pack));
                     ChatClient.ChatOptions options = ChatClient.ChatOptions.decision(
                                     settings.judgeMaxTokens(),
                                     Duration.ofMillis(Math.min(settings.judgeTimeoutMs(), deadlineMs)))

@@ -26,6 +26,11 @@
             <groupId>com.github.coldgust</groupId>
             <artifactId>ygopro-sdk</artifactId>
         </dependency>
+        <!-- 决斗记录适配器直接用 DuelLog 查询接口（此前只是 ygopro-sdk 的传递依赖） -->
+        <dependency>
+            <groupId>com.github.coldgust</groupId>
+            <artifactId>ygo-duel-log</artifactId>
+        </dependency>
         <!-- CLI 组装根读 .env 的解析后端（core 不读环境变量，.env 解析只发生在这里） -->
         <dependency>
             <groupId>io.github.cdimascio</groupId>

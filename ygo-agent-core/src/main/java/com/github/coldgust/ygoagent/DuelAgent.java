@@ -2,6 +2,7 @@ package com.github.coldgust.ygoagent;
 
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
 import com.github.coldgust.ygoagent.context.DuelMathService;
+import com.github.coldgust.ygoagent.context.DuelTimeline;
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
 import com.github.coldgust.ygoagent.knowledge.JsonlCardFacts;
 import com.github.coldgust.ygoagent.knowledge.RecordedComboSource;
@@ -88,7 +89,8 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
                 !settings.pathPlanning(),
                 // 己方卡组全清单：规划器据此判断能检索/特召什么，不必现查
                 config.deckPasscodes(),
-                comboReference);
+                comboReference,
+                config.timeline());
         if (packer.hasDeckStrategy()) {
             log.info("已注入卡组思路（{} 字），将作为规划器与决策器判断（④）的重点参考",
                     config.deckStrategy().length());
@@ -113,7 +115,8 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
         // 规划器的工具集：规则 + 查卡 + 连招（不含历史对局检索，那是执行器的事）
         DecisionTools plannerTools = new DecisionTools(rulebook, comboTool, cardTool);
         PlannerSession planner = new PlannerSession(
-                chat, packer, facts, settings, traceWriter, plannerTools, log0);
+                chat, packer, facts, settings, traceWriter, plannerTools,
+                config.timeline(), log0);
         DuelRecallTool duelRecall = new DuelRecallTool(config.lightRag(), "mix", 4);
         DecisionTools decisionTools = new DecisionTools(rulebook, comboTool, cardTool, duelRecall);
         DecisionPipeline pipeline = new DecisionPipeline(
@@ -159,6 +162,8 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
      * @param combos            PG 实战连招数据源（可空 = 无连招注入与检索）
      * @param comboContextLimit 连招注入的录入条数上限
      * @param lightRag          LightRAG 连接（规则速查/历史对局检索）
+     * @param timeline          决斗过程记录端口（可空 = 不注入记录段）；宿主用
+     *                          {@code session.duelLog()} 的适配器提供
      */
     public record Config(CardFacts facts,
                          DecisionTraceWriter traceWriter,
@@ -167,7 +172,8 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
                          List<Long> deckPasscodes,
                          RecordedComboSource combos,
                          int comboContextLimit,
-                         LightRagSettings lightRag) {
+                         LightRagSettings lightRag,
+                         DuelTimeline timeline) {
     }
 
     /** 实战连招参考文本：按主题取最近录入拼成上下文段；没有可用录入时为 null（注入段缺席）。 */

@@ -72,8 +72,11 @@ final class DuelLogBridge implements DuelListener {
             log.append("SYSTEM", DuelEventKind.TURN_STARTED,
                     new DuelEventPayload.TurnStarted(player, lastTurn));
             snapshot(state); // EACH_TURN 快照
-        }
-        if (!state.phase().name().equals(lastPhase)) {
+            // 回合首帧的 phase 不是引擎的 NEW_PHASE：要么是缺省值（开局前 phaseBits=0），
+            // 要么是上回合残留（NEW_TURN 不重置 phaseBits）——只记不发，真实阶段变化
+            // 由随后的 MSG_NEW_PHASE 快照宣告
+            lastPhase = state.phase().name();
+        } else if (!state.phase().name().equals(lastPhase)) {
             lastPhase = state.phase().name();
             log.updateContext(lastTurn, lastPhase, turnStartMillis);
             log.append("SYSTEM", DuelEventKind.PHASE_ENTERED,

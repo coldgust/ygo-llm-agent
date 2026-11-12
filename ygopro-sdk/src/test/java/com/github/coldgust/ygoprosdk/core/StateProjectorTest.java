@@ -125,6 +125,94 @@ class StateProjectorTest {
         assertTrue(backrow.getFirst().isUnknown(), "对方盖卡内容不可见");
     }
 
+    /** 单字段查询块（flags 只带 CODE）：[块长 12][flags=0x1][code]。 */
+    private static ByteWriter codeBlock(long code) {
+        return new ByteWriter().i32(12).i32(0x000001).u32(code);
+    }
+
+    @Test
+    void updateCardOnHandBackfillsIdentityInsteadOfCreatingPhantom() {
+        StateProjector projector = startDuel(0);
+        dealToHand(projector, 0, SKY_STRIKER_MOB, 0);
+
+        // 引擎在检索/展示后对 手牌/墓地 等列表区域发 MSG_UPDATE_CARD：
+        // 这些区域不在 zoneIndex，旧实现会新建实例 → 同一张卡两份（记录翻倍）
+        projector.apply(ProtocolIds.MSG_UPDATE_CARD, reader(new ByteWriter()
+                .u8(0)                       // seat
+                .u8(ZoneMapper.LOC_HAND)
+                .u8(0)                       // 手牌序号
+                .bytes(codeBlock(EFFECT_VEILER).toByteArray())));
+
+        DuelState state = projector.snapshot();
+        assertEquals(1, state.self().handCount(), "手牌只能有这张卡");
+        assertEquals(1, state.cards().values().stream()
+                        .filter(c -> c.zone() != null && c.zone().kind() == ZoneKind.HAND)
+                        .count(),
+                "不得产生幽灵手牌实例");
+        assertEquals(EFFECT_VEILER, state.self().hand().getFirst().passcode(),
+                "UPDATE_CARD 带来的真实卡号要回填到手牌实例上");
+    }
+
+    @Test
+    void updateCardOnOpponentHandRevealsKnownCard() {
+        StateProjector projector = startDuel(0);
+        // 对手一张未知手卡（code 抹零）
+        projector.apply(ProtocolIds.MSG_MOVE, reader(new ByteWriter()
+                .u32(0)
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_DECK, 0, 0))
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_HAND, 0, 0))
+                .u32(0)));
+
+        // 效果展示对手手卡：UPDATE_CARD 带真实卡号 → 已知手牌
+        projector.apply(ProtocolIds.MSG_UPDATE_CARD, reader(new ByteWriter()
+                .u8(1)
+                .u8(ZoneMapper.LOC_HAND)
+                .u8(0)
+                .bytes(codeBlock(ASH_BLOSSOM).toByteArray())));
+
+        DuelState state = projector.snapshot();
+        assertEquals(1, state.opponent().hand().size());
+        assertEquals(ASH_BLOSSOM, state.opponent().hand().getFirst().passcode(),
+                "被展示的对手手卡要变成已知");
+    }
+
+    @Test
+    void updateCardAndDataOnGraveyardDoNotCreatePhantoms() {
+        StateProjector projector = startDuel(0);
+        dealToHand(projector, 0, SKY_STRIKER_MOB, 0);
+        // 手牌 → 墓地
+        projector.apply(ProtocolIds.MSG_MOVE, reader(new ByteWriter()
+                .u32(SKY_STRIKER_MOB)
+                .u32(ZoneMapper.pack(0, ZoneMapper.LOC_HAND, 0, 0))
+                .u32(ZoneMapper.pack(0, ZoneMapper.LOC_GRAVE, 0, 0))
+                .u32(0)));
+
+        projector.apply(ProtocolIds.MSG_UPDATE_CARD, reader(new ByteWriter()
+                .u8(0).u8(ZoneMapper.LOC_GRAVE).u8(0)
+                .bytes(codeBlock(SKY_STRIKER_MOB).toByteArray())));
+        projector.apply(ProtocolIds.MSG_UPDATE_DATA, reader(new ByteWriter()
+                .u8(0).u8(ZoneMapper.LOC_GRAVE)
+                .bytes(codeBlock(SKY_STRIKER_MOB).toByteArray())));
+
+        DuelState state = projector.snapshot();
+        assertEquals(1, state.self().graveyard().size(), "墓地身份列表只记一次");
+        assertEquals(1, state.cards().values().stream()
+                        .filter(c -> c.zone() != null && c.zone().kind() == ZoneKind.GRAVEYARD)
+                        .count(),
+                "不得产生幽灵墓地实例");
+        assertEquals(SKY_STRIKER_MOB, state.self().graveyard().getFirst().passcode());
+    }
+
+    @Test
+    void drawReducesMainDeckCount() {
+        StateProjector projector = startDuel(0);
+        projector.apply(ProtocolIds.MSG_DRAW, reader(new ByteWriter()
+                .u8(0).u8(2).u32(0).u32(0))); // 我方抽 2（对手视角未知卡）
+
+        assertEquals(38, projector.snapshot().self().mainDeckCount(),
+                "MSG_DRAW 就是从主卡组抽走，卡组剩余数必须减少");
+    }
+
     @Test
     void placingIntoOccupiedSlotEvictsStaleInstance() {
         StateProjector projector = startDuel(0);

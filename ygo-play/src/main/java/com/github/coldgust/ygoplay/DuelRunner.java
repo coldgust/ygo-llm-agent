@@ -166,6 +166,8 @@ public final class DuelRunner {
                 // 我方回合开始前就已认输，planner/直答 没有任何出场机会。
                 PipelineSettings llmSettings = planExecSettings != null && planExecSettings.enabled()
                         && !spec.comboRecord() ? planExecSettings : null;
+                // 决斗过程记录：session 内的对局事件流（含对手动作）经适配器供给上下文渲染
+                DuelLogTimeline timeline = new DuelLogTimeline(session.duelLog());
                 DuelAgent agent = DuelAgent.open(llmSettings, new DuelAgent.Config(
                         cardFactsOverride,
                         traceWriter,
@@ -175,7 +177,8 @@ public final class DuelRunner {
                         deckPasscodes(deck),
                         webHooks.recordedCombos(),
                         spec.tuning().comboContextLimit(),
-                        new LightRagSettings(lightRag.url(), lightRag.apiKey(), lightRag.timeoutMillis())),
+                        new LightRagSettings(lightRag.url(), lightRag.apiKey(), lightRag.timeoutMillis()),
+                        timeline),
                         verbose);
                 try {
                     DecisionEngine decisionEngine = agent;

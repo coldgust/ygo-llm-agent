@@ -43,10 +43,13 @@ public final class ContextPackBuilder {
     private final boolean advisoryPlan;
     /** 己方卡组清单（主+额外，去重）。null/空 = 不注入 [卡组] 段。 */
     private final List<Long> deckPasscodes;
+    /** 决斗过程记录端口。null = 不注入记录段（单测与无记录的调用方）。 */
+    private final DuelTimeline timeline;
 
     private final AnchorSections anchor;
     private final BoardSections board;
     private final CandidateSections candidateSections;
+    private final DuelRecordSections recordSections;
 
     public ContextPackBuilder(CardFacts facts, DuelMathService math) {
         this(facts, math, null, null);
@@ -105,6 +108,18 @@ public final class ContextPackBuilder {
     public ContextPackBuilder(CardFacts facts, DuelMathService math, String deckStrategy,
                               String ruleDigest, String selfArchetype, boolean advisoryPlan,
                               List<Long> deckPasscodes, String comboReference) {
+        this(facts, math, deckStrategy, ruleDigest, selfArchetype, advisoryPlan,
+                deckPasscodes, comboReference, null);
+    }
+
+    /**
+     * @param timeline 决斗过程记录端口（可为空 = 不注入记录段）。决策包带本回合时间线、
+     *                 规划器锚点带开局至今的压缩记录；由组装根用 {@code session.duelLog()}
+     *                 的适配器注入（见 docs/duel-context-and-record.md）。
+     */
+    public ContextPackBuilder(CardFacts facts, DuelMathService math, String deckStrategy,
+                              String ruleDigest, String selfArchetype, boolean advisoryPlan,
+                              List<Long> deckPasscodes, String comboReference, DuelTimeline timeline) {
         this.facts = facts;
         this.cardText = new CardText(facts);
         this.math = math;
@@ -117,10 +132,12 @@ public final class ContextPackBuilder {
                 ? null : comboReference.trim();
         this.deckPasscodes = deckPasscodes == null ? List.of()
                 : List.copyOf(deckPasscodes);
+        this.timeline = timeline;
         this.anchor = new AnchorSections(facts, this.deckStrategy, this.ruleDigest,
                 this.selfArchetype, this.comboReference, this.deckPasscodes);
         this.board = new BoardSections(facts);
         this.candidateSections = new CandidateSections(facts, this.cardText);
+        this.recordSections = new DuelRecordSections(facts, this.cardText);
     }
 
     /**
@@ -237,8 +254,27 @@ public final class ContextPackBuilder {
     }
 
     public String anchorPack(DuelState state) {
+        return staticMaterial() + dynamicBoardPack(state);
+    }
+
+    /**
+     * 静态资料段（整局不变）：卡组主题 / 卡组思路 / 实战连招 / 规则速查。
+     *
+     * <p>决策器把它作为独立消息放在动态局面之前——与 SYSTEM 一起构成跨调用完全一致的
+     * 前缀，deepseek 的自动前缀缓存能吃掉这部分大头（实测占决策提示词约六成）。
+     */
+    public String staticMaterial() {
         StringBuilder sb = new StringBuilder();
         anchor.strategySections(sb);
+        return sb.toString();
+    }
+
+    /**
+     * 动态局面段：局面行 / 双方手牌与场面 / 墓地·除外 / 场地槽位 / 约束计数。
+     * 每次决策都可能变，不能进缓存前缀。
+     */
+    public String dynamicBoardPack(DuelState state) {
+        StringBuilder sb = new StringBuilder();
         sb.append("[局面] 第 ").append(state.turnNumber()).append(" 回合，")
                 .append(state.isMyTurn() ? "我方回合" : "对方回合")
                 .append("，阶段 ").append(state.phase())
@@ -259,14 +295,23 @@ public final class ContextPackBuilder {
     }
 
     /**
-     * 规划器专用锚点：{@link #anchorPack} + {@code [卡面]} 段。
+     * 规划器专用锚点：静态资料 + [卡组] 清单 + 动态局面 + {@code [卡面]} + {@code [决斗记录]}。
      */
     public String plannerAnchorPack(DuelState state) {
-        return anchorPack(state) + anchor.cardFactsSection(state) + anchor.deckSection();
+        return staticMaterial() + anchor.deckSection() + dynamicBoardPack(state)
+                + anchor.cardFactsSection(state) + recordSections.fullRecord(timeline);
     }
 
     public String decisionPack(DecisionPoint point) {
         return decisionPack(point, null);
+    }
+
+    /**
+     * 规划器事件批的记录行：条目由 PlannerSession 经端口增量拉取，本类只负责渲染。
+     * 没有记录端口时返回空列表。
+     */
+    public List<String> timelineLines(List<DuelTimeline.Entry> entries) {
+        return recordSections.lines(entries);
     }
 
     /**
@@ -282,7 +327,9 @@ public final class ContextPackBuilder {
     public String decisionPack(DecisionPoint point, TurnPlan plan, DecisionMemory memory) {
         DecisionMemory remembered = memory == null ? DecisionMemory.NONE : memory;
         StringBuilder sb = new StringBuilder();
-        sb.append(anchorPack(point.state())).append("\n");
+        // 静态资料（规则速查/卡组思路等）不再拼进决策包：调用方把它作为独立消息放在前面
+        // （与 SYSTEM 一起构成稳定前缀吃上下文缓存），决策包只带动态内容
+        sb.append(dynamicBoardPack(point.state())).append("\n");
         if (plan != null && (!plan.steps().isEmpty() || !plan.branches().isEmpty()
                 || !Texts.isBlank(plan.goal()) || !Texts.isBlank(plan.thinking()))) {
             sb.append(planSection(point, plan)).append("\n");
@@ -297,6 +344,10 @@ public final class ContextPackBuilder {
         String history = historySection(point, remembered);
         if (!history.isEmpty()) {
             sb.append(history).append("\n");
+        }
+        String record = recordSections.turnTimeline(point.turn(), point.state().isMyTurn(), timeline);
+        if (!record.isEmpty()) {
+            sb.append(record).append("\n");
         }
         String scope = effectScopeSection(point, remembered.effectScope());
         if (!scope.isEmpty()) {

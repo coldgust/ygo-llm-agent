@@ -7,6 +7,7 @@ import com.github.coldgust.ygoagent.model.DecisionPoint;
 import com.github.coldgust.ygoagent.pipeline.plan.ZoneCodes;
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
+import com.github.coldgust.ygoagent.context.DuelTimeline;
 import com.github.coldgust.ygoagent.llm.DecisionTools;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
@@ -99,18 +100,27 @@ public final class PlannerSession implements AutoCloseable {
     private final List<String> pendingEvents = new ArrayList<>();
     private final Set<Integer> planWaitExhausted = ConcurrentHashMap.newKeySet();
     private final VerboseLog trace;
+    /** 本回合已发的 events checkpoint 数（含在途）。 */
+    private final AtomicLong eventCheckpointsThisTurn = new AtomicLong();
+    /** 决斗过程记录端口（可空）。事件批由此增量补"对方做了什么"——pendingEvents 只有我方应答。 */
+    private final DuelTimeline timeline;
+    /**
+     * 事件批已拉取到的 seq（段内）。只在 planner 单线程（worker）上读写。
+     * 段轮换时对齐到锚点构建时刻，避免"锚点记录里已有 + 首个事件批再发一遍"的重复。
+     */
+    private long timelineSeq;
 
     public PlannerSession(ChatClient client, ContextPackBuilder packer, CardFacts facts,
                           PipelineSettings settings, VerboseLog trace) {
         this(client, packer, facts, settings, null,
-                (DecisionTools) null, trace);
+                (DecisionTools) null, null, trace);
     }
 
     public PlannerSession(ChatClient client, ContextPackBuilder packer, CardFacts facts,
                           PipelineSettings settings,
                           DecisionTraceWriter traceWriter, VerboseLog trace) {
         this(client, packer, facts, settings, traceWriter,
-                (DecisionTools) null, trace);
+                (DecisionTools) null, null, trace);
     }
 
     public PlannerSession(ChatClient client, ContextPackBuilder packer, CardFacts facts,
@@ -119,18 +129,26 @@ public final class PlannerSession implements AutoCloseable {
                           RulebookTool rulebook, VerboseLog trace) {
         this(client, packer, facts, settings, traceWriter,
                 rulebook == null ? null
-                        : new DecisionTools(rulebook, null, null), trace);
+                        : new DecisionTools(rulebook, null, null), null, trace);
     }
 
     public PlannerSession(ChatClient client, ContextPackBuilder packer, CardFacts facts,
                           PipelineSettings settings,
                           DecisionTraceWriter traceWriter,
                           DecisionTools tools, VerboseLog trace) {
+        this(client, packer, facts, settings, traceWriter, tools, null, trace);
+    }
+
+    public PlannerSession(ChatClient client, ContextPackBuilder packer, CardFacts facts,
+                          PipelineSettings settings,
+                          DecisionTraceWriter traceWriter,
+                          DecisionTools tools, DuelTimeline timeline, VerboseLog trace) {
         this.client = client;
         this.packer = packer;
         this.facts = facts;
         this.settings = settings;
         this.tools = tools;
+        this.timeline = timeline;
         this.trace = trace == null ? new VerboseLog(VerboseLogSettings.off()) : trace;
         this.traceWriter = traceWriter == null
                 ? DecisionTraceWriter.NOOP : traceWriter;
@@ -150,10 +168,13 @@ public final class PlannerSession implements AutoCloseable {
         String key = point.turn() + ":" + point.state().turnPlayer();
         if (!key.equals(segmentKey)) {
             String anchor = packer.plannerAnchorPack(point.state());
+            // 记录水位对齐到锚点内容构建时刻：锚点里的 [决斗记录] 已包含到此为止的事件，
+            // 之后的事件批从这条水位继续，不会把同一段事件发两遍
+            long recordSeq = timeline == null ? 0L : timeline.latestSeq();
             String side = point.state().isMyTurn() ? "我方回合" : "对方回合";
             List<Long> handCodes = point.state().self().hand().stream()
                     .map(c -> c.passcode()).filter(c -> c > 0).toList();
-            worker.execute(() -> rotateAndAnchor(key, point.turn(), side, anchor, handCodes));
+            worker.execute(() -> rotateAndAnchor(key, point.turn(), side, anchor, handCodes, recordSeq));
         }
     }
 
@@ -308,9 +329,11 @@ public final class PlannerSession implements AutoCloseable {
     }
 
 
-    private void rotateAndAnchor(String key, int turn, String side, String anchor, List<Long> handCodes) {
+    private void rotateAndAnchor(String key, int turn, String side, String anchor,
+                                 List<Long> handCodes, long recordSeq) {
         String handoff = segmentKey.isEmpty() ? "" : handoffSummary();
         segmentKey = key;
+        timelineSeq = recordSeq;
         history.clear();
         // 顾问模式（默认）：只要场面分析/战术/combo 的自然语言，不产出可执行路径。
         // 路径规划模式（PLANNER_PATH_PLANNING=true）：回到 v6 原设计，产出 steps/branches。
@@ -332,8 +355,14 @@ public final class PlannerSession implements AutoCloseable {
                     ? PlannerPrompts.ADVISOR_ANCHOR_OPP_TEMPLATE.formatted(turn, anchor)
                     : PlannerPrompts.ADVISOR_ANCHOR_TEMPLATE.formatted(turn, side, anchor);
         }
+        if (currentPlan.get() == null) {
+            anchorRequest = anchorRequest
+                    + "\n注意：这是本段首次请求，当前没有任何可沿用的建议/计划"
+                    + "——禁止回复 {\"keep\": true}，请直接输出完整的建议/计划 JSON。";
+        }
         history.add(UserMessage.from(anchorRequest));
         checkpointCount.set(0);
+        eventCheckpointsThisTurn.set(0);
         turnBudgetUsedMs.set(0);
         planWaitExhausted.clear();
         synchronized (pendingEvents) {
@@ -343,14 +372,29 @@ public final class PlannerSession implements AutoCloseable {
     }
 
     /**
+     * 顾问模式下 events checkpoint 的每回合上限：顾问建议只有 goal/战术思想、没有 steps 可修订，
+     * 实机一把连发 5 个 checkpoint 全部回 keep（每次 ~22k 字白烧），只保留一次确认。
+     * 路径规划模式的计划有 steps，事件可能让后续步失效，维持原配额。
+     */
+    private static final int ADVISOR_EVENTS_CHECKPOINTS_PER_TURN = 1;
+
+    /** events checkpoint 的每回合配额。 */
+    private int eventsCheckpointQuota() {
+        return settings.pathPlanning()
+                ? settings.maxCheckpointsPerTurn()
+                : ADVISOR_EVENTS_CHECKPOINTS_PER_TURN;
+    }
+
+    /**
      * checkpoint：发送事件批并请求 keep/新计划（异步）。
      */
     public void flushEvents() {
         if (segmentKey.isEmpty()) {
             return;
         }
-        if (checkpointCount.get() >= settings.maxCheckpointsPerTurn()) {
-            return; // 成本闸：本回合后续事件继续累积，不调用
+        if (eventCheckpointsThisTurn.get() >= eventsCheckpointQuota()
+                || checkpointCount.get() >= settings.maxCheckpointsPerTurn()) {
+            return; // 成本闸：本回合后续事件继续累积，不再调用
         }
         scheduleEventCheckpoint();
     }
@@ -367,17 +411,26 @@ public final class PlannerSession implements AutoCloseable {
                 }
                 List<String> events;
                 synchronized (pendingEvents) {
-                    if (pendingEvents.isEmpty()) {
-                        return;
-                    }
                     events = new ArrayList<>(pendingEvents);
                     pendingEvents.clear();
                 }
-                if (checkpointCount.get() >= settings.maxCheckpointsPerTurn()) {
+                // 记录行补"对方做了什么"：pendingEvents 只有我方应答，对手的动作
+                // （上场/盖放/发动/LP 变动）只能从对局记录的增量里来
+                List<String> recordLines = timeline == null ? List.of()
+                        : packer.timelineLines(timeline.since(timelineSeq));
+                timelineSeq = timeline == null ? 0 : timeline.latestSeq();
+                if (events.isEmpty() && recordLines.isEmpty()) {
                     return;
                 }
+                if (eventCheckpointsThisTurn.get() >= eventsCheckpointQuota()
+                        || checkpointCount.get() >= settings.maxCheckpointsPerTurn()) {
+                    return;
+                }
+                eventCheckpointsThisTurn.incrementAndGet();
+                List<String> batch = new ArrayList<>(events);
+                batch.addAll(recordLines);
                 history.add(UserMessage.from(PlannerPrompts.EVENT_BATCH_TEMPLATE.formatted(
-                        String.join("\n", events))));
+                        String.join("\n", batch))));
                 runCheckpoint("events");
             } finally {
                 checkpointQueued.set(false);
@@ -389,7 +442,8 @@ public final class PlannerSession implements AutoCloseable {
                 synchronized (pendingEvents) {
                     more = !pendingEvents.isEmpty();
                 }
-                if (more && checkpointCount.get() < settings.maxCheckpointsPerTurn()) {
+                if (more && eventCheckpointsThisTurn.get() < eventsCheckpointQuota()
+                        && checkpointCount.get() < settings.maxCheckpointsPerTurn()) {
                     try {
                         Thread.sleep(EVENT_CHECKPOINT_GAP_MS);
                     } catch (InterruptedException e) {

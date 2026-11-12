@@ -76,9 +76,13 @@ public final class DuelMathService {
         out.put("selfMonsters", state.monsters(PlayerSide.SELF).size());
         out.put("selfBackrow", state.spellTraps(PlayerSide.SELF).size());
         out.put("selfGySpellCount", selfGySpells);
+        out.put("selfMainDeckLeft", state.self().mainDeckCount());
+        out.put("selfExtraDeckLeft", state.self().extraDeckCount());
         out.put("opponentMonsters", state.monsters(PlayerSide.OPPONENT).size());
         out.put("opponentBackrow", state.spellTraps(PlayerSide.OPPONENT).size());
         out.put("opponentHandCount", state.opponent().handCount());
+        out.put("opponentMainDeckLeft", state.opponent().mainDeckCount());
+        out.put("opponentExtraDeckLeft", state.opponent().extraDeckCount());
         return out;
     }
 

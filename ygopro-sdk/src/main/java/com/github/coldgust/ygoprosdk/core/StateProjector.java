@@ -212,6 +212,8 @@ public final class StateProjector {
             long id = register(card);
             p.hand.add(id);
         }
+        // MSG_DRAW 的语义就是从主卡组抽走：不扣卡组数，[约束] 里的剩余数会一直虚高
+        p.mainDeckCount = Math.max(0, p.mainDeckCount - count);
     }
 
     private void onMove(ByteReader r) {
@@ -560,6 +562,13 @@ public final class StateProjector {
         if (block == null) {
             return;
         }
+        if (isListZone(loc)) {
+            // 列表区域（手牌/墓地/除外等）不在 zoneIndex，findAt 必然落空——
+            // 以前这里会新建实例，同一张卡就出现两份（记录翻倍、实例计数虚高）。
+            // 只做身份回填，不建实例。
+            backfillListIdentity(seat, loc, seq, block.code());
+            return;
+        }
         Card card = findAt(seat, loc, seq);
         if (card == null) {
             card = new Card();
@@ -573,6 +582,52 @@ public final class StateProjector {
         }
         if (block.position() != null && loc == ZoneMapper.LOC_MZONE || loc == ZoneMapper.LOC_SZONE) {
             card.position = block.position();
+        }
+    }
+
+    /** 是否为"列表区域"（卡以身份列表记账，不占槽位索引）。 */
+    private static boolean isListZone(int loc) {
+        return loc == ZoneMapper.LOC_DECK || loc == ZoneMapper.LOC_HAND
+                || loc == ZoneMapper.LOC_GRAVE || loc == ZoneMapper.LOC_REMOVED
+                || loc == ZoneMapper.LOC_EXTRA;
+    }
+
+    /**
+     * 把引擎同步的卡号回填进列表区域：
+     * 手牌更新对应实例的身份；墓地/除外/额外更新身份列表（公开信息， revealed 即已知）。
+     */
+    private void backfillListIdentity(int seat, int loc, int seq, long code) {
+        if (code == 0) {
+            return;
+        }
+        Player p = players.get(seat);
+        if (p == null) {
+            return;
+        }
+        CardIdentity identity = identityOf(code);
+        switch (loc) {
+            case ZoneMapper.LOC_HAND -> {
+                if (seq < p.hand.size()) {
+                    Card card = cards.get(p.hand.get(seq));
+                    if (card != null) {
+                        card.identity = identity;
+                    }
+                }
+            }
+            case ZoneMapper.LOC_GRAVE -> setOrAdd(p.graveyard, seq, identity);
+            case ZoneMapper.LOC_REMOVED -> setOrAdd(p.banished, seq, identity);
+            case ZoneMapper.LOC_EXTRA -> setOrAdd(p.extraDeck, seq, identity);
+            default -> {
+                // 主卡组不跟踪逐卡身份，无可回填
+            }
+        }
+    }
+
+    private static void setOrAdd(List<CardIdentity> list, int index, CardIdentity identity) {
+        if (index < list.size()) {
+            list.set(index, identity);
+        } else {
+            list.add(identity);
         }
     }
 
@@ -592,8 +647,10 @@ public final class StateProjector {
             QueryBlockDecoder.CardBlock block = length <= 8
                     ? null : QueryBlockDecoder.decodeBody(r, length);
             if (block != null) {
-                Card card = findAt(seat, loc, index);
-                if (card == null && loc != ZoneMapper.LOC_HAND) {
+                // 列表区域一律不建实例（手牌/墓地等不在 zoneIndex，findAt 落空后新建
+                // 会与真实实例并存——记录翻倍、实例计数虚高），只回填身份
+                Card card = isListZone(loc) ? null : findAt(seat, loc, index);
+                if (card == null && !isListZone(loc)) {
                     card = new Card();
                     card.controller = seat;
                     card.location = loc;
@@ -619,11 +676,13 @@ public final class StateProjector {
                         handCard.identity = identityOf(block.code());
                     }
                 }
-                if (loc == ZoneMapper.LOC_GRAVE && p != null && block.code() != 0) {
-                    if (p.graveyard.size() > index) {
-                        p.graveyard.set(index, identityOf(block.code()));
-                    } else {
-                        p.graveyard.add(identityOf(block.code()));
+                if (p != null && block.code() != 0) {
+                    if (loc == ZoneMapper.LOC_GRAVE) {
+                        setOrAdd(p.graveyard, index, identityOf(block.code()));
+                    } else if (loc == ZoneMapper.LOC_REMOVED) {
+                        setOrAdd(p.banished, index, identityOf(block.code()));
+                    } else if (loc == ZoneMapper.LOC_EXTRA) {
+                        setOrAdd(p.extraDeck, index, identityOf(block.code()));
                     }
                 }
             }
@@ -679,7 +738,8 @@ public final class StateProjector {
             card.id = nextInstanceId++;
             cards.put(card.id, card);
         }
-        if (card.location == ZoneMapper.LOC_MZONE || card.location == ZoneMapper.LOC_SZONE) {
+        if (card.location == ZoneMapper.LOC_MZONE || card.location == ZoneMapper.LOC_SZONE
+                || card.location == ZoneMapper.LOC_FZONE) {
             long key = zoneKey(card.controller, card.location, card.sequence);
             Long prev = zoneIndex.get(key);
             if (prev != null && prev != card.id) {
