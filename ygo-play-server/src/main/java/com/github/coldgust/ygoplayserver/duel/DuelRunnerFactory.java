@@ -1,9 +1,11 @@
 package com.github.coldgust.ygoplayserver.duel;
 
-import com.github.coldgust.ygoagent.decision.planexec.CardFacts;
-import com.github.coldgust.ygoagent.decision.planexec.CardRagFactService;
+import com.github.coldgust.ygoagent.knowledge.CardFacts;
+import com.github.coldgust.ygoagent.knowledge.JsonlCardFacts;
 import com.github.coldgust.ygoplay.LightRagEndpoint;
-import com.github.coldgust.ygoagent.decision.trace.CallbackTraceWriter;
+import com.github.coldgust.ygoagent.llm.VerboseLog;
+import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
+import com.github.coldgust.ygoagent.trace.CallbackTraceWriter;
 import com.github.coldgust.ygoplay.DuelRunSpec;
 import com.github.coldgust.ygoplay.DuelRunner;
 import com.github.coldgust.ygoplay.DuelWebHooks;
@@ -33,26 +35,29 @@ public class DuelRunnerFactory {
     private final ObjectProvider<ComboRecordService> comboRecords;
     private final PlanExecProperties planExecProps;
     private final LightRagProperties lightRagProps;
+    private final VerboseLog trace;
     private volatile PgRecordedComboSource recordedSource;
 
     public DuelRunnerFactory(DuelEventHub eventHub) {
-        this(eventHub, null, null, null, null);
+        this(eventHub, null, null, null, null, null);
     }
 
     @Autowired
     public DuelRunnerFactory(DuelEventHub eventHub, ObjectProvider<JdbcClient> jdbc,
                              ObjectProvider<ComboRecordService> comboRecords,
-                             PlanExecProperties planExecProps, LightRagProperties lightRagProps) {
+                             PlanExecProperties planExecProps, LightRagProperties lightRagProps,
+                             VerboseLog trace) {
         this.eventHub = eventHub;
         this.jdbc = jdbc;
         this.comboRecords = comboRecords;
         this.planExecProps = planExecProps;
         this.lightRagProps = lightRagProps;
+        this.trace = trace == null ? new VerboseLog(VerboseLogSettings.off()) : trace;
     }
 
     public DuelExecutor create(DuelRunSpec spec) {
         // 设置来自类型化的 ygo.plan-exec.*（application.yaml 桥接 .env/环境变量），
-        // 默认级联在 PlanExecProperties.toSettings；思考强度由 PlannerSettings 归一化
+        // 默认级联在 PlanExecProperties.toSettings；思考强度由 PipelineSettings 归一化
         var planExec = planExecProps == null || !planExecProps.v6Enabled()
                 ? null : planExecProps.toSettings();
         String duelId = traceId(spec);
@@ -69,7 +74,7 @@ public class DuelRunnerFactory {
                 (id, eventName, payload) -> eventHub.publish(id, eventName, payload));
         LightRagEndpoint lightRag = new LightRagEndpoint(lightRagProps.url(),
                 lightRagProps.apiKey(), lightRagProps.timeoutMs());
-        DuelRunner runner = new DuelRunner(planExec, hooks, null, cardFacts, lightRag);
+        DuelRunner runner = new DuelRunner(planExec, hooks, null, cardFacts, lightRag, trace);
         return runner::run;
     }
 
@@ -84,7 +89,7 @@ public class DuelRunnerFactory {
         }
         log.info("卡牌事实：PG 不可用，回退 data/card_rag/cards.jsonl");
         try {
-            return CardRagFactService
+            return JsonlCardFacts
                     .load(Path.of("data/card_rag/cards.jsonl"));
         } catch (Exception e) {
             return null; // 本地卡库也没有：录入描述退化为"未知卡(编号)"，对局照常

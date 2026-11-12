@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** server 侧 ygo.plan-exec 绑定 → PlannerSettings 的启用判断与默认级联。 */
+/** server 侧 ygo.plan-exec 绑定 → PipelineSettings 的启用判断与默认级联。 */
 class PlanExecPropertiesTest {
 
     @Test
@@ -26,11 +26,11 @@ class PlanExecPropertiesTest {
         assertEquals("https://api.deepseek.com", settings.baseUrl());
         assertEquals("deepseek-chat", settings.model());
         assertEquals(4_000, settings.waitPerDecisionMs());
-        assertEquals(10_000, settings.oneshotTimeoutMs());
+        assertEquals(10_000, settings.judgeTimeoutMs());
     }
 
     @Test
-    void toSettingsCarriesReasoningIntoPlannerSettings() {
+    void toSettingsCarriesReasoningIntoPipelineSettings() {
         var settings = new PlanExecProperties(null, "k", null, null, null, "HIGH", "off",
                 null, null, null, null, null, null, null, null, null).toSettings();
         assertEquals("high", settings.reasoningPlanner(), "归一化大小写");

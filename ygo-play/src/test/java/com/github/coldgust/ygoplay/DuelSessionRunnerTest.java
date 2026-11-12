@@ -1,13 +1,13 @@
 package com.github.coldgust.ygoplay;
 
-import com.github.coldgust.ygoagent.decision.model.CandidateId;
-import com.github.coldgust.ygoagent.decision.model.ChoiceIntent;
-import com.github.coldgust.ygoagent.decision.model.DecisionExplanation;
-import com.github.coldgust.ygoagent.decision.model.DuelDecision;
-import com.github.coldgust.ygoagent.decision.model.PathKind;
-import com.github.coldgust.ygoagent.decision.model.RequestKind;
-import com.github.coldgust.ygoagent.decision.model.Timing;
-import com.github.coldgust.ygoagent.decision.port.DecisionPort;
+import com.github.coldgust.ygoagent.model.CandidateId;
+import com.github.coldgust.ygoagent.model.ChoiceIntent;
+import com.github.coldgust.ygoagent.model.DecisionExplanation;
+import com.github.coldgust.ygoagent.model.DuelDecision;
+import com.github.coldgust.ygoagent.model.PathKind;
+import com.github.coldgust.ygoagent.model.RequestKind;
+import com.github.coldgust.ygoagent.model.Timing;
+import com.github.coldgust.ygoagent.pipeline.DecisionEngine;
 import com.github.coldgust.ygodomain.card.CardIdentity;
 import com.github.coldgust.ygodomain.decision.ChoiceRequest;
 import com.github.coldgust.ygodomain.decision.ChoiceSelection;
@@ -19,11 +19,11 @@ import com.github.coldgust.ygodomain.duel.PlayerState;
 import com.github.coldgust.ygodomain.duel.Position;
 import com.github.coldgust.ygodomain.zone.ZoneKind;
 import com.github.coldgust.ygodomain.zone.ZoneRef;
-import com.github.coldgust.ygoagent.decision.arbiter.SimpleArbiter;
-import com.github.coldgust.ygoagent.decision.engine.DefaultDecisionPort;
-import com.github.coldgust.ygoagent.decision.port.DecisionTraceWriter;
-import com.github.coldgust.ygoagent.decision.reflex.ReflexPolicyImpl;
-import com.github.coldgust.ygoagent.decision.tactical.TacticalPlannerImpl;
+import com.github.coldgust.ygoagent.pipeline.fallback.SimpleArbiter;
+import com.github.coldgust.ygoagent.pipeline.fallback.RuleBasedEngine;
+import com.github.coldgust.ygoagent.trace.DecisionTraceWriter;
+import com.github.coldgust.ygoagent.pipeline.reflex.ReflexPolicyImpl;
+import com.github.coldgust.ygoagent.pipeline.fallback.TacticalPlannerImpl;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -51,7 +51,7 @@ class DuelSessionRunnerTest {
             sequence.add(unselect);
         }
         FakeSessionLink link = new FakeSessionLink(state, sequence);
-        DecisionPort alwaysCancel =
+        DecisionEngine alwaysCancel =
                 (point, deadline) -> new DuelDecision(
                         new ChoiceIntent.Cancel(),
                         PathKind.FALLBACK, 0.5,
@@ -84,7 +84,7 @@ class DuelSessionRunnerTest {
             sequence.add(select);
         }
         FakeSessionLink link = new FakeSessionLink(state, sequence);
-        DecisionPort port = (point, deadline) -> {
+        DecisionEngine port = (point, deadline) -> {
             var intent = point.kind() == RequestKind.MAIN_PHASE
                     ? (ChoiceIntent)
                     new ChoiceIntent.SetSpellTrap(
@@ -116,7 +116,7 @@ class DuelSessionRunnerTest {
                 List.of(ZoneRef.mainMonster(PlayerSide.SELF, 2)));
 
         FakeSessionLink link = new FakeSessionLink(state, List.of(main, place));
-        DefaultDecisionPort port = new DefaultDecisionPort(
+        RuleBasedEngine port = new RuleBasedEngine(
                 new ReflexPolicyImpl(), new TacticalPlannerImpl(), new SimpleArbiter(),
                 DecisionTraceWriter.NOOP);
 
@@ -152,7 +152,7 @@ class DuelSessionRunnerTest {
                 List.of(selectChoice));
 
         FakeSessionLink link = new FakeSessionLink(state, List.of(main, place, mainEnd, battle, select));
-        DefaultDecisionPort port = new DefaultDecisionPort(
+        RuleBasedEngine port = new RuleBasedEngine(
                 new ReflexPolicyImpl(), new TacticalPlannerImpl(), new SimpleArbiter(),
                 DecisionTraceWriter.NOOP);
 
@@ -186,7 +186,7 @@ class DuelSessionRunnerTest {
         DuelState state = state(List.of());
         FakeSessionLink link = new FakeSessionLink(state, List.of());
         link.respond(null); // 置为关闭
-        DefaultDecisionPort port = new DefaultDecisionPort(
+        RuleBasedEngine port = new RuleBasedEngine(
                 new ReflexPolicyImpl(), new TacticalPlannerImpl(), new SimpleArbiter(),
                 DecisionTraceWriter.NOOP);
         RunStats stats = new DuelSessionRunner(link, port, RunnerConfig.defaults()).run();

@@ -1,7 +1,8 @@
 package com.github.coldgust.ygoplayserver.duel;
 
-import com.github.coldgust.ygoagent.decision.planexec.llm.ChatClient;
-import com.github.coldgust.ygoagent.decision.planexec.llm.LlmTrace;
+import com.github.coldgust.ygoagent.llm.ChatClient;
+import com.github.coldgust.ygoagent.llm.VerboseLog;
+import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
 import com.github.coldgust.ygoplay.DuelRunSpec;
 import com.github.coldgust.ygoplayserver.duel.summary.DuelNarrative;
 import com.github.coldgust.ygoplayserver.duel.summary.DuelTraceReader;
@@ -32,7 +33,7 @@ class DuelSummaryServiceTest {
     }
 
     private static DuelSummaryService service(DuelSummaryProperties props, ChatClient chat) {
-        return new DuelSummaryService(new LightRagProperties(null, null, 8_000L), props, chat);
+        return new DuelSummaryService(new LightRagProperties(null, null, 8_000L), props, chat, new VerboseLog(VerboseLogSettings.off()));
     }
 
     @Test
@@ -61,7 +62,7 @@ class DuelSummaryServiceTest {
             Files.writeString(log, "");
             String[] seen = new String[1];
             ChatClient fake = (messages, options) -> {
-                seen[0] = LlmTrace.messageText(messages.get(1));
+                seen[0] = VerboseLog.messageText(messages.get(1));
                 return """
                         ## 一句话结论
                         先手无展开点空过，第二回合被对手铺场 OTK。

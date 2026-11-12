@@ -1,6 +1,6 @@
 package com.github.coldgust.ygoplay;
 
-import com.github.coldgust.ygoagent.decision.model.RequestKind;
+import com.github.coldgust.ygoagent.model.RequestKind;
 
 import java.util.EnumMap;
 import java.util.Map;
@@ -23,7 +23,7 @@ public record RunnerConfig(long pollMillis, long defaultBudgetMillis, Map<Reques
         budgets.put(RequestKind.SORT, 5_000L);
         // 结构类请求仍由 REFLEX 直接答，毫秒级足够
         budgets.put(RequestKind.YES_NO, 100L);
-        // 位置不为它单独发 LLM 请求：模型在计划步/one-shot 里一并给出 zone，
+        // 位置不为它单独发 LLM 请求：模型在计划步/直答 里一并给出 zone，
         // 兑现不了就直接取第一个可放置区域（毫秒级），所以这里保持很小的预算。
         budgets.put(RequestKind.PLACE, 100L);
         budgets.put(RequestKind.DISFIELD, 100L);

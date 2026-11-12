@@ -1,5 +1,7 @@
 package com.github.coldgust.ygoplayserver;
 
+import com.github.coldgust.ygoagent.llm.VerboseLog;
+import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
 import com.github.coldgust.ygoplay.DuelRunResult;
 import com.github.coldgust.ygoplay.DuelRunSpec;
 import com.github.coldgust.ygoplay.RunStats;
@@ -103,7 +105,7 @@ class DuelSessionManagerTest {
                 new DuelRunResult(new RunStats(3, 0), null)),
                 new DuelEventHub(),
                 new DuelSummaryService(new LightRagProperties(null, null, 8_000L),
-                        com.github.coldgust.ygoplayserver.config.DuelSummaryProperties.defaults(), null));
+                        com.github.coldgust.ygoplayserver.config.DuelSummaryProperties.defaults(), null, new VerboseLog(VerboseLogSettings.off())));
 
         DuelView view = manager.start(request("ask"));
         DuelView done = awaitStatus(manager, view.id(), DuelStatus.FINISHED);
@@ -123,7 +125,7 @@ class DuelSessionManagerTest {
                 new DuelRunResult(new RunStats(1, 0), null)),
                 new DuelEventHub(),
                 new DuelSummaryService(new LightRagProperties(null, null, 8_000L),
-                        com.github.coldgust.ygoplayserver.config.DuelSummaryProperties.defaults(), null));
+                        com.github.coldgust.ygoplayserver.config.DuelSummaryProperties.defaults(), null, new VerboseLog(VerboseLogSettings.off())));
 
         DuelView view = manager.start(request("ask"));
         awaitStatus(manager, view.id(), DuelStatus.FINISHED);
@@ -137,7 +139,7 @@ class DuelSessionManagerTest {
                 new DuelRunResult(new RunStats(1, 0), null)),
                 new DuelEventHub(),
                 new DuelSummaryService(new LightRagProperties(null, null, 8_000L),
-                        com.github.coldgust.ygoplayserver.config.DuelSummaryProperties.defaults(), null));
+                        com.github.coldgust.ygoplayserver.config.DuelSummaryProperties.defaults(), null, new VerboseLog(VerboseLogSettings.off())));
 
         DuelView view = manager.start(request("never"));
         DuelView done = awaitStatus(manager, view.id(), DuelStatus.FINISHED);

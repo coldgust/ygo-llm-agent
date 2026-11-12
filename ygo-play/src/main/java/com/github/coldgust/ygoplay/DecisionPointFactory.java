@@ -3,10 +3,10 @@ package com.github.coldgust.ygoplay;
 import com.github.coldgust.ygodomain.decision.ChoiceRequest;
 import com.github.coldgust.ygodomain.duel.DuelState;
 import com.github.coldgust.ygodomain.duel.PlayerSide;
-import com.github.coldgust.ygoagent.decision.model.Candidate;
-import com.github.coldgust.ygoagent.decision.model.Candidates;
-import com.github.coldgust.ygoagent.decision.model.DecisionPoint;
-import com.github.coldgust.ygoagent.decision.model.RequestKind;
+import com.github.coldgust.ygoagent.model.Candidate;
+import com.github.coldgust.ygoagent.model.Candidates;
+import com.github.coldgust.ygoagent.model.DecisionPoint;
+import com.github.coldgust.ygoagent.model.RequestKind;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;

@@ -1,19 +1,19 @@
 package com.github.coldgust.ygoplay;
 
-import com.github.coldgust.ygoagent.decision.map.SelectionDescriber;
+import com.github.coldgust.ygoagent.selection.SelectionDescriber;
 import com.github.coldgust.ygodomain.decision.ChoiceRequest;
 import com.github.coldgust.ygodomain.decision.ChoiceSelection;
-import com.github.coldgust.ygoagent.decision.map.FallbackSelections;
-import com.github.coldgust.ygoagent.decision.map.SelectionMapperImpl;
-import com.github.coldgust.ygoagent.decision.model.DecisionDeadline;
-import com.github.coldgust.ygoagent.decision.model.DecisionExplanation;
-import com.github.coldgust.ygoagent.decision.model.DecisionPoint;
-import com.github.coldgust.ygoagent.decision.model.DuelDecision;
-import com.github.coldgust.ygoagent.decision.model.PathKind;
-import com.github.coldgust.ygoagent.decision.model.Timing;
-import com.github.coldgust.ygoagent.decision.port.DecisionPort;
-import com.github.coldgust.ygoagent.decision.port.SelectionMapper;
-import com.github.coldgust.ygoagent.decision.reflex.FallbackIntents;
+import com.github.coldgust.ygoagent.selection.FallbackSelections;
+import com.github.coldgust.ygoagent.selection.SelectionMapperImpl;
+import com.github.coldgust.ygoagent.model.DecisionDeadline;
+import com.github.coldgust.ygoagent.model.DecisionExplanation;
+import com.github.coldgust.ygoagent.model.DecisionPoint;
+import com.github.coldgust.ygoagent.model.DuelDecision;
+import com.github.coldgust.ygoagent.model.PathKind;
+import com.github.coldgust.ygoagent.model.Timing;
+import com.github.coldgust.ygoagent.pipeline.DecisionEngine;
+import com.github.coldgust.ygoagent.selection.SelectionMapper;
+import com.github.coldgust.ygoagent.pipeline.reflex.FallbackIntents;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.ArrayDeque;
@@ -23,7 +23,7 @@ public final class DuelSessionRunner {
     private static final Logger log = LoggerFactory.getLogger(DuelSessionRunner.class);
 
     private final SessionLink link;
-    private final DecisionPort port;
+    private final DecisionEngine port;
     private final SelectionMapper mapper;
     private final DecisionPointFactory factory;
     private final RunnerConfig config;
@@ -42,16 +42,16 @@ public final class DuelSessionRunner {
         void onSubmit(Submission submission);
     }
 
-    public DuelSessionRunner(SessionLink link, DecisionPort port, RunnerConfig config) {
+    public DuelSessionRunner(SessionLink link, DecisionEngine port, RunnerConfig config) {
         this(link, port, config, null);
     }
 
-    public DuelSessionRunner(SessionLink link, DecisionPort port, RunnerConfig config,
+    public DuelSessionRunner(SessionLink link, DecisionEngine port, RunnerConfig config,
                              SubmittedListener submitted) {
         this(link, port, config, submitted, null);
     }
 
-    public DuelSessionRunner(SessionLink link, DecisionPort port, RunnerConfig config,
+    public DuelSessionRunner(SessionLink link, DecisionEngine port, RunnerConfig config,
                              SubmittedListener submitted,
                              SelectionDescriber describer) {
         this.link = link;

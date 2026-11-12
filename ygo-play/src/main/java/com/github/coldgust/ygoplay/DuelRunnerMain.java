@@ -1,10 +1,11 @@
 package com.github.coldgust.ygoplay;
 
-import com.github.coldgust.ygoagent.decision.planexec.CardFacts;
-import com.github.coldgust.ygoagent.decision.planexec.CardRagFactService;
-import com.github.coldgust.ygoagent.decision.planexec.PlannerSettings;
-import com.github.coldgust.ygoagent.decision.planexec.Texts;
-import com.github.coldgust.ygoagent.decision.planexec.llm.LlmTrace;
+import com.github.coldgust.ygoagent.knowledge.CardFacts;
+import com.github.coldgust.ygoagent.knowledge.JsonlCardFacts;
+import com.github.coldgust.ygoagent.pipeline.PipelineSettings;
+import com.github.coldgust.ygoagent.support.Texts;
+import com.github.coldgust.ygoagent.llm.VerboseLog;
+import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
 import com.github.coldgust.ygoprosdk.session.DuelListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,7 +26,8 @@ public final class DuelRunnerMain {
         // 组装根：全进程唯一读环境变量的地方——OS env 优先，.env 并入，之后一律走配置对象
         Map<String, String> dotenv = DotEnv.load(Path.of(cli.envPath() == null ? ".env" : cli.envPath()));
         Function<String, String> lookup = key -> Texts.firstNonBlank(System.getenv(key), dotenv.get(key));
-        LlmTrace.configure(lookup.apply("YGO_VERBOSE_LOG"), lookup.apply("YGO_VERBOSE_MAX_CHARS"));
+        VerboseLog verbose = new VerboseLog(VerboseLogSettings.parse(
+                lookup.apply("YGO_VERBOSE_LOG"), lookup.apply("YGO_VERBOSE_MAX_CHARS")));
 
         var planExec = cfg.planner();
 
@@ -49,7 +51,7 @@ public final class DuelRunnerMain {
         }
 
         DuelRunner runner = new DuelRunner(planExec, null, reporter(cfg.battleReport(), planExec),
-                null, cfg.lightRag());
+                null, cfg.lightRag(), verbose);
         DuelRunResult result = runner.run(spec, new AtomicReference<>(), () -> false);
 
         log.info("对局结束：应答 {} 次，保底 {} 次，结果 {}",
@@ -58,7 +60,7 @@ public final class DuelRunnerMain {
                         : result.duelResult().winner() + "/" + result.duelResult().reason());
     }
 
-    private static DuelListener reporter(String battleReport, PlannerSettings planExec) {
+    private static DuelListener reporter(String battleReport, PipelineSettings planExec) {
         if (battleReport == null || battleReport.isBlank() || "0".equals(battleReport)) {
             return null;
         }
@@ -67,7 +69,7 @@ public final class DuelRunnerMain {
                 ? Path.of("data/card_rag/cards.jsonl") : planExec.cardRagPath();
         CardFacts facts = null;
         try {
-            facts = CardRagFactService.load(rag);
+            facts = JsonlCardFacts.load(rag);
         } catch (Exception e) {
             log.warn("实况播报未加载卡库（{}），只报卡号: {}", rag, e.toString());
         }

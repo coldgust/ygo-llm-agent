@@ -85,7 +85,7 @@ ygo:
     reasoning-decision: ${LLM_REASONING_DECISION:}
     # 决策一次最多等待规划器 ms（紧急重规划回复）；留空 = 4000
     wait-decision-ms: ${PLANNER_WAIT_DECISION_MS:4000}
-    # 本回合首个 one-shot 前等计划的上限 ms（推理档下经常等不到，首动作退回决策器判断）；留空 = 7000
+    # 本回合首次决策器判断（④）前等计划的上限 ms（推理档下经常等不到，首动作退回决策器判断）；留空 = 7000
     first-wait-ms: ${PLANNER_FIRST_WAIT_MS:7000}
     # 一回合内「为等规划器」的累计上限 ms（留空 = 30000）
     wait-turn-ms: ${PLANNER_WAIT_TURN_MS:30000}
@@ -93,11 +93,11 @@ ygo:
     max-checkpoints: ${PLANNER_MAX_CHECKPOINTS:6}
     # 执行器相似分支匹配阈值 0–1（防假相似；留空 = 0.80）
     similarity-threshold: ${PLANNER_SIMILARITY_THRESHOLD:0.80}
-    # one-shot 决策硬超时 ms（留空 = 10000）
-    oneshot-timeout-ms: ${ONESHOT_TIMEOUT_MS:10000}
+    # 决策器判断（④）硬超时 ms（留空 = 10000）
+    judge-timeout-ms: ${JUDGE_TIMEOUT_MS:10000}
     # true = 规划器产出可执行路径；留空/false = 顾问模式（只给场面分析/战术/combo）
     path-planning: ${PLANNER_PATH_PLANNING:false}
-    # ④升级竞速里规划器抢答；false/0 = 升级只跑单轮直答（留空 = 开）
+    # ④升级竞速里规划器抢答；false/0 = 升级只跑直答（留空 = 开）
     rush-answer: ${PLANNER_RUSH_ANSWER:true}
 
 management:

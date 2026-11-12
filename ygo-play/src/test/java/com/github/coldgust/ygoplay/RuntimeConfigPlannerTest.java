@@ -1,6 +1,6 @@
 package com.github.coldgust.ygoplay;
 
-import com.github.coldgust.ygoagent.decision.planexec.PlannerSettings;
+import com.github.coldgust.ygoagent.pipeline.PipelineSettings;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RuntimeConfigPlannerTest {
 
     /** 生产查表来自 OS env 优先、.env 并入；测试用纯 map 等价替代。 */
-    private static PlannerSettings planner(Map<String, String> values) {
+    private static PipelineSettings planner(Map<String, String> values) {
         return RuntimeConfig.planner(values::get).orElseThrow();
     }
 
