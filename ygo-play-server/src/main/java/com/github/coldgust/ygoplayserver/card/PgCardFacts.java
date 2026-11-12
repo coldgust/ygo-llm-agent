@@ -2,8 +2,8 @@ package com.github.coldgust.ygoplayserver.card;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import com.github.coldgust.ygoagent.decision.planexec.CardFact;
-import com.github.coldgust.ygoagent.decision.planexec.CardFacts;
+import com.github.coldgust.ygoagent.knowledge.CardFact;
+import com.github.coldgust.ygoagent.knowledge.CardFacts;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 import java.sql.ResultSet;

@@ -1,12 +1,15 @@
 package com.github.coldgust.ygoplayserver.duel.combo;
 
-import com.github.coldgust.ygoagent.decision.planexec.CardFacts;
+import com.github.coldgust.ygoagent.knowledge.CardFacts;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 
-import com.github.coldgust.ygoagent.decision.planexec.llm.ChatClient;
-import com.github.coldgust.ygoagent.decision.planexec.llm.LangChain4jChat;
-import com.github.coldgust.ygoagent.decision.planexec.llm.ResilientChatClient;
+import com.github.coldgust.ygoagent.llm.ChatClient;
+import com.github.coldgust.ygoagent.llm.LlmEndpoint;
+import com.github.coldgust.ygoagent.llm.VerboseLog;
+import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
+import com.github.coldgust.ygoagent.llm.LangChain4jChat;
+import com.github.coldgust.ygoagent.llm.ResilientChatClient;
 import com.github.coldgust.ygoplay.ComboRecording;
 import com.github.coldgust.ygoplayserver.config.ComboProperties;
 import com.github.coldgust.ygoplayserver.config.LlmProperties;
@@ -42,14 +45,16 @@ public class ComboRecordService {
     private final String baseUrl;
     private final String apiKey;
     private final String model;
+    private final VerboseLog trace;
 
     public ComboRecordService(ObjectProvider<JdbcClient> jdbc, DuelEventHub eventHub,
-                              LlmProperties llm, ComboProperties combo) {
+                              LlmProperties llm, ComboProperties combo, VerboseLog trace) {
         this.jdbc = jdbc;
         this.eventHub = eventHub;
         this.apiKey = llm.apiKey();
         this.baseUrl = llm.baseUrl();
         this.model = combo.summaryModel() == null ? llm.model() : combo.summaryModel();
+        this.trace = trace == null ? new VerboseLog(VerboseLogSettings.off()) : trace;
     }
 
 
@@ -215,7 +220,7 @@ public class ComboRecordService {
         }
         synchronized (this) {
             if (chat == null) {
-                chat = new ResilientChatClient(new LangChain4jChat(baseUrl, apiKey, model));
+                chat = ChatClient.openAiCompatible(new LlmEndpoint(baseUrl, apiKey, model), trace);
             }
             return chat;
         }

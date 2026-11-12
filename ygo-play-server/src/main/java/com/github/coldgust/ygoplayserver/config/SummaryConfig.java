@@ -1,9 +1,9 @@
 package com.github.coldgust.ygoplayserver.config;
 
-import com.github.coldgust.ygoagent.decision.planexec.Texts;
-import com.github.coldgust.ygoagent.decision.planexec.llm.ChatClient;
-import com.github.coldgust.ygoagent.decision.planexec.llm.LangChain4jChat;
-import com.github.coldgust.ygoagent.decision.planexec.llm.ResilientChatClient;
+import com.github.coldgust.ygoagent.support.Texts;
+import com.github.coldgust.ygoagent.llm.ChatClient;
+import com.github.coldgust.ygoagent.llm.LlmEndpoint;
+import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoplayserver.duel.DuelSummaryService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -18,11 +18,12 @@ public class SummaryConfig {
     @Bean
     public DuelSummaryService duelSummaryService(LightRagProperties lightRag,
                                                  DuelSummaryProperties properties,
-                                                 LlmProperties llm) {
+                                                 LlmProperties llm,
+                                                 VerboseLog verbose) {
         // 复盘模型：summary.model 优先，回落 llm.model
         String model = Texts.firstNonBlank(properties.model(), llm.model());
         ChatClient chat = llm.apiKey().isBlank() ? null
-                : new ResilientChatClient(new LangChain4jChat(llm.baseUrl(), llm.apiKey(), model));
-        return new DuelSummaryService(lightRag, properties, chat);
+                : ChatClient.openAiCompatible(new LlmEndpoint(llm.baseUrl(), llm.apiKey(), model), verbose);
+        return new DuelSummaryService(lightRag, properties, chat, verbose);
     }
 }

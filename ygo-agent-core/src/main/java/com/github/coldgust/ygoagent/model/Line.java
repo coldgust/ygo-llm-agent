@@ -1,0 +1,25 @@
+package com.github.coldgust.ygoagent.model;
+
+import java.util.List;
+import java.util.Map;
+
+public record Line(
+        String id,
+        List<ChoiceIntent> steps,
+        double expectedValue,
+        Map<String, Double> terms,
+        String evidence
+) {
+
+    public Line {
+        steps = steps == null ? List.of() : List.copyOf(steps);
+        terms = terms == null ? Map.of() : Map.copyOf(terms);
+    }
+
+    public ChoiceIntent firstStep() {
+        if (steps.isEmpty()) {
+            throw new IllegalStateException("空行没有动作: " + id);
+        }
+        return steps.getFirst();
+    }
+}

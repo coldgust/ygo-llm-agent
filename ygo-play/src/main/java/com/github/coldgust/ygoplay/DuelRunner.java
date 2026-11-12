@@ -1,37 +1,27 @@
 package com.github.coldgust.ygoplay;
 
-import com.github.coldgust.ygoagent.decision.map.SelectionDescriber;
-import com.github.coldgust.ygoagent.decision.planexec.CardFacts;
-import com.github.coldgust.ygoagent.decision.planexec.CardRagFactService;
-import com.github.coldgust.ygoagent.decision.planexec.ContextPackBuilder;
-import com.github.coldgust.ygoagent.decision.planexec.DecisionTools;
-import com.github.coldgust.ygoagent.decision.planexec.DuelMathService;
-import com.github.coldgust.ygoagent.decision.planexec.PlanExecutorDecisionPort;
-import com.github.coldgust.ygoagent.decision.planexec.PlannerSettings;
-import com.github.coldgust.ygoagent.decision.planexec.llm.CardTool;
-import com.github.coldgust.ygoagent.decision.planexec.llm.ComboTool;
-import com.github.coldgust.ygoagent.decision.planexec.llm.DuelRecallTool;
-import com.github.coldgust.ygoagent.decision.planexec.llm.LlmTrace;
-import com.github.coldgust.ygoagent.decision.planexec.llm.LangChain4jChat;
-import com.github.coldgust.ygoagent.decision.planexec.llm.ResilientChatClient;
-import com.github.coldgust.ygoagent.decision.planexec.llm.RecordedComboSource;
-import com.github.coldgust.ygoagent.decision.planexec.llm.RulebookTool;
-import com.github.coldgust.ygoagent.decision.planexec.planner.PlannerSession;
-import com.github.coldgust.ygoagent.decision.port.DecisionTraceWriter;
-import com.github.coldgust.ygoagent.decision.trace.CompositeTraceWriter;
-import com.github.coldgust.ygoagent.decision.trace.TraceLogWriter;
+import com.github.coldgust.ygoagent.selection.SelectionDescriber;
+import com.github.coldgust.ygoagent.knowledge.CardFacts;
+import com.github.coldgust.ygoagent.context.DuelMathService;
+import com.github.coldgust.ygoagent.DuelAgent;
+import com.github.coldgust.ygoagent.llm.LightRagSettings;
+import com.github.coldgust.ygoagent.pipeline.PipelineSettings;
+import com.github.coldgust.ygoagent.llm.VerboseLog;
+import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
+import com.github.coldgust.ygoagent.llm.LangChain4jChat;
+import com.github.coldgust.ygoagent.llm.ResilientChatClient;
+import com.github.coldgust.ygoagent.trace.DecisionTraceWriter;
+import com.github.coldgust.ygoagent.trace.CompositeTraceWriter;
+import com.github.coldgust.ygoagent.trace.TraceLogWriter;
 import com.github.coldgust.ygodomain.deck.Deck;
 import com.github.coldgust.ygodomain.duel.DuelResult;
+import com.github.coldgust.ygodomain.deck.Deck;
 import com.github.coldgust.ygoprosdk.deck.YdkParser;
 import com.github.coldgust.ygoprosdk.session.DuelListener;
 import com.github.coldgust.ygoprosdk.session.DuelSession;
 import com.github.coldgust.ygoprosdk.session.SessionConfig;
-import com.github.coldgust.ygoagent.decision.arbiter.SimpleArbiter;
-import com.github.coldgust.ygoagent.decision.engine.DefaultDecisionPort;
-import com.github.coldgust.ygoagent.decision.port.DecisionPort;
-import com.github.coldgust.ygoagent.decision.reflex.ReflexPolicyImpl;
-import com.github.coldgust.ygoagent.decision.tactical.TacticalPlannerImpl;
-import com.github.coldgust.ygoagent.decision.trace.JsonlDecisionTraceWriter;
+import com.github.coldgust.ygoagent.pipeline.DecisionEngine;
+import com.github.coldgust.ygoagent.trace.JsonlDecisionTraceWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -48,45 +38,57 @@ public final class DuelRunner {
 
     private static final Logger log = LoggerFactory.getLogger(DuelRunner.class);
 
-    private final PlannerSettings planExecSettings;
+    private final PipelineSettings planExecSettings;
     private final DuelWebHooks webHooks;
     private final DuelListener extraListener;
     private final CardFacts cardFactsOverride;
     /** 规则/历史对局检索的连接配置：由组装根注入（CLI 从 env+dotenv 解析；server 由 Spring 配置绑定）。 */
     private final LightRagEndpoint lightRag;
+    private final VerboseLog verbose;
 
-    public DuelRunner(PlannerSettings planExecSettings) {
+    public DuelRunner(PipelineSettings planExecSettings) {
         this(planExecSettings, null);
     }
 
-    public DuelRunner(PlannerSettings planExecSettings,
+    public DuelRunner(PipelineSettings planExecSettings,
                       DuelWebHooks webHooks) {
         this(planExecSettings, webHooks, null);
     }
 
-    public DuelRunner(PlannerSettings planExecSettings,
+    public DuelRunner(PipelineSettings planExecSettings,
                       DuelWebHooks webHooks,
                       DuelListener extraListener) {
         this(planExecSettings, webHooks, extraListener, null);
     }
 
-    public DuelRunner(PlannerSettings planExecSettings,
+    public DuelRunner(PipelineSettings planExecSettings,
                       DuelWebHooks webHooks,
                       DuelListener extraListener,
                       CardFacts cardFactsOverride) {
         this(planExecSettings, webHooks, extraListener, cardFactsOverride, new LightRagEndpoint(null, null, 8_000L));
     }
 
-    public DuelRunner(PlannerSettings planExecSettings,
+    public DuelRunner(PipelineSettings planExecSettings,
                       DuelWebHooks webHooks,
                       DuelListener extraListener,
                       CardFacts cardFactsOverride,
                       LightRagEndpoint lightRag) {
+        this(planExecSettings, webHooks, extraListener, cardFactsOverride, lightRag,
+                new VerboseLog(VerboseLogSettings.off()));
+    }
+
+    public DuelRunner(PipelineSettings planExecSettings,
+                      DuelWebHooks webHooks,
+                      DuelListener extraListener,
+                      CardFacts cardFactsOverride,
+                      LightRagEndpoint lightRag,
+                      VerboseLog verbose) {
         this.planExecSettings = planExecSettings;
         this.webHooks = webHooks == null ? DuelWebHooks.none() : webHooks;
         this.extraListener = extraListener;
         this.cardFactsOverride = cardFactsOverride;
         this.lightRag = lightRag == null ? new LightRagEndpoint(null, null, 8_000L) : lightRag;
+        this.verbose = verbose == null ? new VerboseLog(VerboseLogSettings.off()) : verbose;
     }
 
     public DuelRunResult run(DuelRunSpec spec, AtomicReference<DuelSession> sessionRef,
@@ -153,90 +155,36 @@ public final class DuelRunner {
                 if (webHooks.extraTraceWriter() != null) {
                     sinks.add(webHooks.extraTraceWriter());
                 }
-                if (LlmTrace.enabled()) {
-                    sinks.add(TraceLogWriter.INSTANCE);
+                if (verbose.enabled()) {
+                    sinks.add(new TraceLogWriter(verbose));
                     log.info("全链路日志已开启（YGO_VERBOSE_LOG）：LLM 请求/响应、工具调用、决策流水都会打到日志");
                 }
                 DecisionTraceWriter traceWriter =
                         sinks.size() == 1 ? sinks.getFirst()
                                 : new CompositeTraceWriter(sinks);
-                PlanExecutorDecisionPort planExecPort = null;
-                CardFacts cardFacts = null;
+                // combo 录入模式不接 LLM：决策只留给用户回合期间的连锁询问兜底（Reflex，零思考），
+                // 我方回合开始前就已认输，planner/直答 没有任何出场机会。
+                PipelineSettings llmSettings = planExecSettings != null && planExecSettings.enabled()
+                        && !spec.comboRecord() ? planExecSettings : null;
+                DuelAgent agent = DuelAgent.open(llmSettings, new DuelAgent.Config(
+                        cardFactsOverride,
+                        traceWriter,
+                        spec.archetype(),
+                        spec.deckStrategy(),
+                        // 己方卡组全清单：规划器据此判断能检索/特召什么，不必现查
+                        deckPasscodes(deck),
+                        webHooks.recordedCombos(),
+                        spec.tuning().comboContextLimit(),
+                        new LightRagSettings(lightRag.url(), lightRag.apiKey(), lightRag.timeoutMillis())),
+                        verbose);
                 try {
-                    DefaultDecisionPort basePort = new DefaultDecisionPort(
-                            new ReflexPolicyImpl(),
-                            new TacticalPlannerImpl(),
-                            new SimpleArbiter(),
-                            traceWriter);
-                    DecisionPort decisionPort;
-                    // combo 录入模式不接 LLM：决策只留给用户回合期间的连锁询问兜底（Reflex，零思考），
-                    // 我方回合开始前就已认输，planner/one-shot 没有任何出场机会。
-                    if (planExecSettings != null && planExecSettings.enabled() && !spec.comboRecord()) {
-                        // v6 Planner–Executor：① Reflex → ② 计划精确匹配 → ③ 相似匹配 → ④ 投机双路 → ⑤ basePort
-                        var facts = cardFactsOverride != null
-                                ? cardFactsOverride
-                                : CardRagFactService
-                                        .load(planExecSettings.cardRagPath());
-                        cardFacts = facts;
-                        String comboReference = comboReferenceText(webHooks.recordedCombos(), spec.archetype(),
-                                spec.tuning().comboContextLimit());
-                        var packer = new ContextPackBuilder(
-                                facts, DuelMathService.instance(),
-                                spec.deckStrategy(),
-                                ContextPackBuilder.RULE_DIGEST,
-                                spec.archetype(),
-                                !planExecSettings.pathPlanning(),
-                                // 己方卡组全清单：规划器据此判断能检索/特召什么，不必现查
-                                deckPasscodes(deck),
-                                comboReference);
-                        if (packer.hasDeckStrategy()) {
-                            log.info("已注入卡组思路（{} 字），将作为规划器与决策器判断（④）的重点参考",
-                                    spec.deckStrategy().length());
-                        }
-                        if (packer.hasComboReference()) {
-                            log.info("已注入实战连招参考（主题 {}，{} 字）：PG combo 库最近的真实录入",
-                                    spec.archetype(), comboReference.length());
-                        }
-                        if (packer.hasRuleDigest()) {
-                            log.info("已预置规则速查（浓缩版）；精确条文可由模型自主调用 search_rulebook 检索");
-                        }
-                        // 规则检索工具：LightRAG 不可达时工具调用会失败并回填错误，模型仍可基于速查继续
-                        var rulebook = new RulebookTool(lightRag.url(), lightRag.apiKey(), lightRag.timeout(), "mix", 8);
-                        var chat = new ResilientChatClient(new LangChain4jChat(
-                                planExecSettings.baseUrl(), planExecSettings.apiKey(), planExecSettings.model()));
-                        // 连招查询工具：按主题/关键卡查 PG 实战录入（主要用于推断对手卡组后参考）
-                        var comboTool = webHooks.recordedCombos() != null
-                                && webHooks.recordedCombos().available()
-                                ? new ComboTool(
-                                        webHooks.recordedCombos(), spec.archetype())
-                                : null;
-                        // 查卡工具：规划器也要有——判断"这张卡和那张能不能配合"必须有卡面原文，
-                        // 只给卡名等于让它凭训练记忆猜效果（实测就会退化成逐张单卡评价）。
-                        var cardTool = new CardTool(facts);
-                        // 规划器的工具集：规则 + 查卡 + 连招（不含历史对局检索，那是执行器的事）
-                        var plannerTools = new DecisionTools(
-                                rulebook, comboTool, cardTool);
-                        var planner = new PlannerSession(
-                                chat, packer, facts, planExecSettings, traceWriter, plannerTools);
-                        var duelRecall = new DuelRecallTool(lightRag.url(), lightRag.apiKey(), lightRag.timeout(), "mix", 4);
-                        var decisionTools = new DecisionTools(
-                                rulebook, comboTool, cardTool, duelRecall);
-                        planExecPort = new PlanExecutorDecisionPort(
-                                new ReflexPolicyImpl(), planner, packer, chat, planExecSettings, facts,
-                                basePort, traceWriter, decisionTools);
-                        decisionPort = planExecPort;
-                        log.info("v6 Planner–Executor 已启用（model={} wait-decision={}ms wait-turn={}ms 卡库 {}）",
-                                planExecSettings.model(), planExecSettings.waitPerDecisionMs(),
-                                planExecSettings.waitPerTurnMs(), facts.knownCount());
-                    } else {
-                        decisionPort = basePort;
-                    }
+                    DecisionEngine decisionEngine = agent;
                     RunnerConfig runnerConfig = RunnerConfig.defaults();
                     // 提交内容也要进轨迹/前端：只看"决策路径"看不出到底放了哪个区、发动了哪张卡
-                    var factsForNames = cardFacts;
+                    var factsForNames = agent.cardFacts();
                     var describer = new SelectionDescriber(
                             factsForNames == null ? null : code -> factsForNames.orUnknown(code).name());
-                    DuelSessionRunner runner = new DuelSessionRunner(new SdkSessionLink(session), decisionPort,
+                    DuelSessionRunner runner = new DuelSessionRunner(new SdkSessionLink(session), decisionEngine,
                             runnerConfig,
                             submission -> traceWriter.event("SUBMITTED", submissionPayload(submission)),
                             describer);
@@ -258,9 +206,7 @@ public final class DuelRunner {
                             "answered", stats.answered(), "fallbacks", stats.fallbacks()));
                     return new DuelRunResult(stats, result);
                 } finally {
-                    if (planExecPort != null) {
-                        planExecPort.close();
-                    }
+                    agent.close();
                 }
             } finally {
                 sessionRef.compareAndSet(session, null);
@@ -338,45 +284,6 @@ public final class DuelRunner {
     }
 
 
-    private static String comboReferenceText(
-            RecordedComboSource recorded,
-            String archetype,
-            int comboContextLimit) {
-        if (recorded == null || !recorded.available()
-                || archetype == null || archetype.isBlank()) {
-            return null;
-        }
-        int limit = comboContextLimit;
-        var entries = recorded.recentByArchetype(archetype, limit);
-        if (entries.isEmpty()) {
-            return null;
-        }
-        StringBuilder sb = new StringBuilder();
-        int n = 1;
-        for (var entry : entries) {
-            sb.append("#").append(n++).append("（").append(entry.stepCount()).append(" 步）");
-            if (!entry.keyCards().isEmpty()) {
-                sb.append(" 关键卡牌：").append(String.join("、", entry.keyCards()));
-            }
-            sb.append("\n");
-            if (entry.summary() != null && !entry.summary().isBlank()) {
-                sb.append(entry.summary()).append("\n");
-            }
-            var steps = entry.stepDescriptions();
-            if (steps.isEmpty()) {
-                continue;
-            }
-            sb.append("实际操作：");
-            for (int i = 0; i < Math.min(6, steps.size()); i++) {
-                sb.append(i == 0 ? "" : " → ").append(steps.get(i));
-            }
-            if (steps.size() > 6) {
-                sb.append(" → …（共 ").append(steps.size()).append(" 步）");
-            }
-            sb.append("\n\n");
-        }
-        return sb.toString().trim();
-    }
 
 
     private static List<Long> deckPasscodes(

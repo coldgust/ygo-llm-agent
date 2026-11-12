@@ -55,7 +55,7 @@ ygo-play-server（HTTP :8081，同时托管 Web 页面）
 | `ygo-domain`       | 纯领域模型（卡牌、区域、状态、请求/应答）                                      | 不依赖任何框架        |
 | `ygopro-sdk`       | YGOPro 协议编解码、状态镜像、会话门面                                     | 不做决策           |
 | `ygo-duel-log`     | 对局事件记录（JSONL）、查询回放、对局日志解析                                  | 不做语义           |
-| `ygo-agent-core`   | 决策核心：五级流水、规划器、工具、上下文构建                                     | 无 web、无 DB     |
+| `ygo-agent-core`   | 决策核心：五级流水、规划器、工具、上下文构建（[使用文档](ygo-agent-core/README.md)）     | 无 web、无 DB     |
 | `ygo-play`         | 运行时：连房间、上传卡组、应答循环、录入认输守卫；CLI 入口                            | 不实现策略          |
 | `ygo-play-server`  | HTTP/SSE 服务、多局管理、combo 落库、复盘写库、托管前端                        | 不碰决策逻辑         |
 | `ygo-rag`          | LightRAG 入库脚本与提示词资产（本仓库唯一非 Java 模块）                        | 不含服务           |
@@ -86,7 +86,7 @@ ygo-play-server（HTTP :8081，同时托管 Web 页面）
 
 ![决策流：请求 → 动作 — 理由，五级流水命中与未命中原因](docs/images/decision-feed.png)
 
-- **标题行**：`请求 → 动作 — 理由`（命中哪一级流水看行首徽标与五级流水条）。截图里「连锁响应 → 不连锁 — 单轮直答：…」
+- **标题行**：`请求 → 动作 — 理由`（命中哪一级流水看行首徽标与五级流水条）。截图里「连锁响应 → 不连锁 — 直答：…」
   表示 ④决策器判断采纳了一次独立单轮调用的回答；若理由前缀是「规划器抢答：…」则表示采纳了规划会话在双路竞速里先交上的紧急回答；
 - **五级流水**：①没得选 → ②照计划 → ④决策器判断 → ⑤兜底， **高亮的是实际命中的一级**，前面的都算"没接住"
   （顾问模式下 ②③ 天然不命中，截图正是如此）；行尾是本次决策的置信度；
@@ -204,7 +204,7 @@ ygo-play-server（HTTP :8081，同时托管 Web 页面）
 | `PLANNER_WAIT_DECISION_MS` | 4000  | 一次决策最多等规划器多久                                            |
 | `PLANNER_FIRST_WAIT_MS` | 7000  | 本回合**首次**决策器判断前等计划的上限                              |
 | `PLANNER_WAIT_TURN_MS` | 30000 | 一回合内等待累计上限                                                |
-| `ONESHOT_TIMEOUT_MS` | 10000 | 单次决策器判断硬超时（`.env.example` 里写的 5000 是更保守的推荐值） |
+| `JUDGE_TIMEOUT_MS` | 10000 | 单次决策器判断硬超时（`.env.example` 里写的 5000 是更保守的推荐值） |
 | `DUEL_CHOICE_TIMEOUT_MS` | 25000 | 运行时看门狗：决策线程卡死时由 SDK 提交保底应答（0=关闭）           |
 
 ### 4.5 决策可归因
@@ -449,7 +449,7 @@ CLI 与服务共用同一套决策核心与配置（读仓库根 `.env`）。
 | `PLANNER_MODEL`    | 同 `LLM_MODEL`             | 规划器**与决策器判断**共用的模型                                                         |
 | `PLAN_EXEC_ENABLED` | 随 key                     | `false` 强制关闭 LLM（双 Agent 整体关闭，只走 ①⑤）                                       |
 | `PLANNER_PATH_PLANNING` | `false`                    | 规划器是否产出可执行路径；默认顾问模式（只给场面分析/战术）                              |
-| `PLANNER_RUSH_ANSWER` | `true`                     | ④升级竞速里规划器抢答的开关（关闭后升级只跑单轮直答）                                                     |
+| `PLANNER_RUSH_ANSWER` | `true`                     | ④升级竞速里规划器抢答的开关（关闭后升级只跑直答）                                                     |
 | `LLM_REASONING_PLANNER` / `LLM_REASONING_DECISION` | 空                         | 思考强度 `off/low/medium/high`；未配置=规划 checkpoint 统一 `low`（推理档）、`off`=快档；决策默认 `off`  |
 
 ### 连招库
@@ -470,7 +470,7 @@ CLI 与服务共用同一套决策核心与配置（读仓库根 `.env`）。
 | `PLANNER_WAIT_TURN_MS` | 30000  | 一回合内等待累计上限                                          |
 | `PLANNER_MAX_CHECKPOINTS` | 6      | 每回合后台 checkpoint 次数上限（成本闸）                      |
 | `PLANNER_SIMILARITY_THRESHOLD` | 0.80   | 分支相似匹配阈值                                              |
-| `ONESHOT_TIMEOUT_MS` | 10000  | 决策器判断硬超时（`.env.example` 给的 5000 是更保守的实用值） |
+| `JUDGE_TIMEOUT_MS` | 10000  | 决策器判断硬超时（`.env.example` 给的 5000 是更保守的实用值） |
 | `DUEL_CHOICE_TIMEOUT_MS` | 25000  | 看门狗：决策卡死时 SDK 强制保底应答（0=关闭）                 |
 | `DUEL_START_WAIT_MS` | 180000 | 等对手进房上限                                                |
 

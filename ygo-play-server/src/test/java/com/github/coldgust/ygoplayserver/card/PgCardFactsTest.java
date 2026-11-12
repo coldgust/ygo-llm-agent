@@ -1,6 +1,6 @@
 package com.github.coldgust.ygoplayserver.card;
 
-import com.github.coldgust.ygoagent.decision.planexec.CardFact;
+import com.github.coldgust.ygoagent.knowledge.CardFact;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;

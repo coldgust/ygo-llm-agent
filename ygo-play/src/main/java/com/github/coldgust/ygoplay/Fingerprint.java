@@ -4,7 +4,7 @@ import com.github.coldgust.ygodomain.decision.ChoiceRequest;
 import com.github.coldgust.ygodomain.duel.CardInstance;
 import com.github.coldgust.ygodomain.duel.DuelState;
 import com.github.coldgust.ygodomain.duel.PlayerSide;
-import com.github.coldgust.ygoagent.decision.model.Candidate;
+import com.github.coldgust.ygoagent.model.Candidate;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;

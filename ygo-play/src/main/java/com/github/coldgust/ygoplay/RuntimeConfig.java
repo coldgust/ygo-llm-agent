@@ -1,7 +1,7 @@
 package com.github.coldgust.ygoplay;
 
-import com.github.coldgust.ygoagent.decision.planexec.PlannerSettings;
-import com.github.coldgust.ygoagent.decision.planexec.Texts;
+import com.github.coldgust.ygoagent.pipeline.PipelineSettings;
+import com.github.coldgust.ygoagent.support.Texts;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -41,7 +41,7 @@ public record RuntimeConfig(
         String battleReport,
         String deckStrategy,
         DuelTuning tuning,
-        PlannerSettings planner) {
+        PipelineSettings planner) {
 
     private static final Logger log = LoggerFactory.getLogger(RuntimeConfig.class);
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
@@ -121,7 +121,7 @@ public record RuntimeConfig(
      * v6 规划器/执行器设置：覆盖值与 core 默认级联；api-key 为空或显式 false → 未启用。
      * 数值/布尔解析容错（实机调参场景，写错一个值不该让对局起不来）。
      */
-    static Optional<PlannerSettings> planner(Function<String, String> lookup) {
+    static Optional<PipelineSettings> planner(Function<String, String> lookup) {
         Boolean enabled = triBool(lookup.apply("PLAN_EXEC_ENABLED"));
         String apiKey = lookup.apply("LLM_API_KEY");
         if (Boolean.FALSE.equals(enabled) || apiKey == null || apiKey.isBlank()) {
@@ -130,10 +130,10 @@ public record RuntimeConfig(
         String baseUrl = Texts.firstNonBlank(lookup.apply("LLM_BASE_URL"), "https://api.deepseek.com");
         String model = Texts.firstNonBlank(lookup.apply("PLANNER_MODEL"),
                 lookup.apply("LLM_MODEL"), "deepseek-chat");
-        PlannerSettings defaults = PlannerSettings.defaults(
+        PipelineSettings defaults = PipelineSettings.defaults(
                 Path.of(Texts.firstNonBlank(lookup.apply("CARD_RAG_PATH"), "data/card_rag/cards.jsonl")),
                 baseUrl, apiKey, model);
-        return Optional.of(new PlannerSettings(
+        return Optional.of(new PipelineSettings(
                 true,
                 defaults.baseUrl(),
                 defaults.apiKey(),
@@ -141,15 +141,15 @@ public record RuntimeConfig(
                 lookup.apply("LLM_REASONING_PLANNER"),
                 lookup.apply("LLM_REASONING_DECISION"),
                 intOf(lookup.apply("PLANNER_WAIT_DECISION_MS"), defaults.waitPerDecisionMs()),
-                intOf(lookup.apply("PLANNER_FIRST_WAIT_MS"), defaults.firstOneshotWaitMs()),
+                intOf(lookup.apply("PLANNER_FIRST_WAIT_MS"), defaults.firstJudgeWaitMs()),
                 intOf(lookup.apply("PLANNER_WAIT_TURN_MS"), defaults.waitPerTurnMs()),
                 intOf(lookup.apply("PLANNER_MAX_CHECKPOINTS"), defaults.maxCheckpointsPerTurn()),
                 doubleOf(lookup.apply("PLANNER_SIMILARITY_THRESHOLD"), defaults.similarityThreshold()),
-                intOf(lookup.apply("ONESHOT_TIMEOUT_MS"), defaults.oneshotTimeoutMs()),
+                intOf(lookup.apply("JUDGE_TIMEOUT_MS"), defaults.judgeTimeoutMs()),
                 defaults.plannerCallTimeoutMs(),
                 defaults.plannerCooldownMs(),
                 defaults.cardRagPath(),
-                defaults.oneshotMaxTokens(),
+                defaults.judgeMaxTokens(),
                 truthy(lookup.apply("PLANNER_PATH_PLANNING")),
                 rushAnswer(lookup.apply("PLANNER_RUSH_ANSWER"), defaults.plannerRushAnswer())));
     }

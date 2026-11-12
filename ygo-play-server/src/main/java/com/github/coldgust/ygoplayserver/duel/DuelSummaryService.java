@@ -1,7 +1,8 @@
 package com.github.coldgust.ygoplayserver.duel;
 
-import com.github.coldgust.ygoagent.decision.planexec.Texts;
-import com.github.coldgust.ygoagent.decision.planexec.llm.ChatClient;
+import com.github.coldgust.ygoagent.support.Texts;
+import com.github.coldgust.ygoagent.llm.ChatClient;
+import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoduellog.ingest.JsonlDuelParser;
 import com.github.coldgust.ygoduellog.model.DecisionEpisode;
 import com.github.coldgust.ygoduellog.model.DuelRecord;
@@ -45,7 +46,8 @@ public class DuelSummaryService {
     private final JsonMapper mapper = JsonMapper.builder().build();
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
-    public DuelSummaryService(LightRagProperties lightRag, DuelSummaryProperties properties, ChatClient chat) {
+    public DuelSummaryService(LightRagProperties lightRag, DuelSummaryProperties properties,
+                              ChatClient chat, VerboseLog trace) {
         String base = lightRag.url().trim();
         if (base.endsWith("/")) {
             base = base.substring(0, base.length() - 1);
@@ -58,7 +60,7 @@ public class DuelSummaryService {
         this.narrativeChars = properties.narrativeMaxChars();
         this.summarizer = chat == null ? null : new DuelSummarizer(chat,
                 properties.maxTokens(),
-                Duration.ofMillis(properties.timeoutMs()));
+                Duration.ofMillis(properties.timeoutMs()), trace);
         this.http = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofSeconds(3))

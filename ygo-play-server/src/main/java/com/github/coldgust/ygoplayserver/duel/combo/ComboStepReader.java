@@ -1,7 +1,7 @@
 package com.github.coldgust.ygoplayserver.duel.combo;
 
-import com.github.coldgust.ygoagent.decision.planexec.CardFact;
-import com.github.coldgust.ygoagent.decision.planexec.CardFacts;
+import com.github.coldgust.ygoagent.knowledge.CardFact;
+import com.github.coldgust.ygoagent.knowledge.CardFacts;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 

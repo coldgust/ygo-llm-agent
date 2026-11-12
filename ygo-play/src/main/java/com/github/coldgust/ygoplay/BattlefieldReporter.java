@@ -6,9 +6,9 @@ import com.github.coldgust.ygodomain.duel.CardInstance;
 import com.github.coldgust.ygodomain.duel.DuelResult;
 import com.github.coldgust.ygodomain.duel.DuelState;
 import com.github.coldgust.ygodomain.duel.PlayerSide;
-import com.github.coldgust.ygoagent.decision.planexec.CardFacts;
-import com.github.coldgust.ygoagent.decision.planexec.ContextPackBuilder;
-import com.github.coldgust.ygoagent.decision.planexec.DuelMathService;
+import com.github.coldgust.ygoagent.knowledge.CardFacts;
+import com.github.coldgust.ygoagent.context.ContextPackBuilder;
+import com.github.coldgust.ygoagent.context.DuelMathService;
 import com.github.coldgust.ygoprosdk.session.DuelListener;
 import com.github.coldgust.ygoprosdk.session.ResponseSource;
 
@@ -41,7 +41,7 @@ public final class BattlefieldReporter implements DuelListener {
         }
         PrintWriter writer = new PrintWriter(Files.newBufferedWriter(path, StandardCharsets.UTF_8), true);
         ContextPackBuilder packer = facts == null ? null
-                : new ContextPackBuilder(facts, DuelMathService.instance());
+                : new ContextPackBuilder(facts, new DuelMathService());
         return new BattlefieldReporter(writer, packer);
     }
 

@@ -1,7 +1,7 @@
 package com.github.coldgust.ygoplay;
 
-import com.github.coldgust.ygoagent.decision.port.DecisionTraceWriter;
-import com.github.coldgust.ygoagent.decision.planexec.llm.RecordedComboSource;
+import com.github.coldgust.ygoagent.trace.DecisionTraceWriter;
+import com.github.coldgust.ygoagent.knowledge.RecordedComboSource;
 
 public record DuelWebHooks(DecisionTraceWriter extraTraceWriter,
                            ComboRecordSink comboRecordSink,

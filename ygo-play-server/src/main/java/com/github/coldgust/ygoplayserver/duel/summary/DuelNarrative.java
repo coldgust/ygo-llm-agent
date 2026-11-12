@@ -1,6 +1,6 @@
 package com.github.coldgust.ygoplayserver.duel.summary;
 
-import com.github.coldgust.ygoagent.decision.planexec.Texts;
+import com.github.coldgust.ygoagent.support.Texts;
 import com.github.coldgust.ygoduellog.model.DecisionEpisode;
 import com.github.coldgust.ygoduellog.model.DuelRecord;
 import com.github.coldgust.ygoplay.DuelRunResult;

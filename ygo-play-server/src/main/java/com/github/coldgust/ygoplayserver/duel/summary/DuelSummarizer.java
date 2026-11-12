@@ -3,8 +3,9 @@ package com.github.coldgust.ygoplayserver.duel.summary;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
 
-import com.github.coldgust.ygoagent.decision.planexec.llm.ChatClient;
-import com.github.coldgust.ygoagent.decision.planexec.llm.LlmTrace;
+import com.github.coldgust.ygoagent.llm.ChatClient;
+import com.github.coldgust.ygoagent.llm.VerboseLog;
+import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,11 +26,13 @@ public final class DuelSummarizer {
     private final ChatClient chat;
     private final int maxTokens;
     private final Duration timeout;
+    private final VerboseLog trace;
 
-    public DuelSummarizer(ChatClient chat, int maxTokens, Duration timeout) {
+    public DuelSummarizer(ChatClient chat, int maxTokens, Duration timeout, VerboseLog trace) {
         this.chat = chat;
         this.maxTokens = Math.max(500, maxTokens);
         this.timeout = timeout;
+        this.trace = trace == null ? new VerboseLog(VerboseLogSettings.off()) : trace;
     }
 
     public Optional<Review> summarize(String facts, String timeline) {
@@ -37,7 +40,7 @@ public final class DuelSummarizer {
         try {
             // 作用域标签让日志能分清"这次请求是赛后复盘还是对局决策"
             String raw;
-            try (var ignored = LlmTrace.scope("赛后复盘")) {
+            try (var ignored = trace.scope("赛后复盘")) {
                 raw = chat.complete(
                         List.of(SystemMessage.from(DuelSummaryPrompts.SYSTEM),
                                 UserMessage.from(prompt)),

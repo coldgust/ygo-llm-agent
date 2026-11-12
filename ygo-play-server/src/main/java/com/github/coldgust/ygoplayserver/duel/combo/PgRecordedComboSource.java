@@ -1,6 +1,6 @@
 package com.github.coldgust.ygoplayserver.duel.combo;
 
-import com.github.coldgust.ygoagent.decision.planexec.llm.RecordedComboSource;
+import com.github.coldgust.ygoagent.knowledge.RecordedComboSource;
 import com.github.coldgust.ygoplayserver.duel.ComboCatalog;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import tools.jackson.databind.JsonNode;
