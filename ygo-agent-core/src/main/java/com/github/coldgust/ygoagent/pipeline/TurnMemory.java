@@ -5,6 +5,7 @@ import com.github.coldgust.ygoagent.model.ChoiceIntent;
 import com.github.coldgust.ygoagent.model.DecisionPoint;
 import com.github.coldgust.ygoagent.model.DuelDecision;
 import com.github.coldgust.ygoagent.model.RequestKind;
+import com.github.coldgust.ygoagent.support.FoldedLines;
 import com.github.coldgust.ygodomain.zone.ZoneRef;
 
 import java.util.ArrayList;
@@ -145,17 +146,7 @@ public final class TurnMemory {
         if (intentLine == null || intentLine.isBlank()) {
             return;
         }
-        if (!turnActions.isEmpty()) {
-            String last = turnActions.get(turnActions.size() - 1);
-            int mark = last.lastIndexOf(" ×");
-            String base = mark > 0 ? last.substring(0, mark) : last;
-            if (base.equals(intentLine)) {
-                int times = mark > 0 ? Integer.parseInt(last.substring(mark + 2)) : 1;
-                turnActions.set(turnActions.size() - 1, base + " ×" + (times + 1));
-                return;
-            }
-        }
-        turnActions.add(intentLine);
+        FoldedLines.add(turnActions, intentLine);
         while (turnActions.size() > TURN_ACTION_LIMIT) {
             turnActions.remove(0);
         }

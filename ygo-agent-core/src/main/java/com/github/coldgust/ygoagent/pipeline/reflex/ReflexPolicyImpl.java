@@ -40,7 +40,7 @@ public final class ReflexPolicyImpl implements ReflexPolicy {
             case OPTION -> option(point);
             case DECLARE_RACE -> declareRace(point);
             case DECLARE_ATTRIBUTE -> declareAttribute(point);
-            case DECLARE_CARD -> Optional.of(new ChoiceIntent.DeclareCard(14558127L));
+            case DECLARE_CARD -> Optional.of(new ChoiceIntent.DeclareCard(RequestQuirks.DEFAULT_DECLARE_CARD));
             case DECLARE_NUMBER -> declareNumber(point);
             case SORT -> sort(point);
             case COUNTER -> counter(point);

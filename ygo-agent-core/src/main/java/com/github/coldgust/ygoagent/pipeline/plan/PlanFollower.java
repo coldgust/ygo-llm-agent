@@ -18,6 +18,7 @@ import java.util.Optional;
  * ② 照计划 + ③ 走预案：把规划器的回合计划接到当前决策点的真实候选上。
  * <p>② 沿计划主线找下一个能接地的步；③ 主线接不上时给分支预案一次机会（高 stakes 时由编排方跳过）。
  * 接地失败不做改判——是否作废计划、何时进 ④，由 {@code DecisionPipeline} 编排决定。
+ * 命中结果带结构化的步号（{@link PlanHit}），编排方不再从 evidence 字符串反解析。
  */
 public final class PlanFollower {
 
@@ -39,7 +40,7 @@ public final class PlanFollower {
     }
 
     /** ② 计划精确匹配：从游标向后找第一个匹配本请求且能接地的步。 */
-    public Optional<DuelDecision> tryExact(DecisionPoint point, TurnPlan plan) {
+    public Optional<PlanHit> tryExact(DecisionPoint point, TurnPlan plan) {
         if (!plan.active()) {
             return Optional.empty();
         }
@@ -53,14 +54,14 @@ public final class PlanFollower {
                             + (i > plan.cursor() ? "（跳过 " + i + " 步不可接地的前置步）" : ""));
             if (decision.isPresent()) {
                 planner.advanceCursorTo(i + 1);
-                return decision;
+                return Optional.of(new PlanHit(decision.get(), step.index(), false));
             }
         }
         return Optional.empty();
     }
 
     /** ③ 分支相似命中 → 分支首步（接不地 = 假命中，§2.2.4）。 */
-    public Optional<DuelDecision> trySimilar(DecisionPoint point, TurnPlan plan) {
+    public Optional<PlanHit> trySimilar(DecisionPoint point, TurnPlan plan) {
         Optional<SimilarityMatcher.Match> match =
                 similarity.bestBranch(point, plan, settings.similarityThreshold());
         if (match.isEmpty() || match.get().branch().steps().isEmpty()) {
@@ -69,7 +70,8 @@ public final class PlanFollower {
         PlanStep branchStep = match.get().branch().steps().getFirst();
         return buildFromStep(point, branchStep, PathKind.PLAN_BRANCH,
                 "分支[" + match.get().branch().name() + "] 相似度 "
-                        + String.format(Locale.ROOT, "%.2f", match.get().score()));
+                        + String.format(Locale.ROOT, "%.2f", match.get().score()))
+                .map(decision -> new PlanHit(decision, branchStep.index(), true));
     }
 
     private Optional<DuelDecision> buildFromStep(DecisionPoint point, PlanStep step,

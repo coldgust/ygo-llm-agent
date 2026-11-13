@@ -81,9 +81,11 @@ class PlannerSessionRecordBatchTest {
                 }
             }
         };
-        ContextPackBuilder packer = new ContextPackBuilder(
-                TestDuels.facts(), new DuelMathService(), null, null, null,
-                true, List.of(), null, timeline);
+        ContextPackBuilder packer = ContextPackBuilder.builder(
+                TestDuels.facts(), new DuelMathService())
+                .advisory(true)
+                .timeline(timeline)
+                .build();
         PlannerSession planner = new PlannerSession(chat, packer, TestDuels.facts(),
                 settings(), null, (com.github.coldgust.ygoagent.llm.DecisionTools) null,
                 timeline, trace);

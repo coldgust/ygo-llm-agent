@@ -51,73 +51,85 @@ public final class ContextPackBuilder {
     private final CandidateSections candidateSections;
     private final DuelRecordSections recordSections;
 
+    /** 最小构造：可选依赖（思路/规则速查/主题/卡组清单/连招/记录端口）全部缺席。 */
     public ContextPackBuilder(CardFacts facts, DuelMathService math) {
-        this(facts, math, null, null);
+        this(facts, math, null, null, null, false, null, null, null);
     }
 
     /**
-     * @param deckStrategy 用户为本卡组写的打法思路（可为空）。它是**人给的**策略知识，
-     *                     优先级高于通用战术常识，但要低于当前局面的硬事实。
+     * 可选依赖用 Builder 逐项声明（原来的 3–9 参望远镜重载已删除——
+     * 每加一个依赖就加一条重载链的做法在 8 个构造器时已经失控）。
      */
-    public ContextPackBuilder(CardFacts facts, DuelMathService math, String deckStrategy) {
-        this(facts, math, deckStrategy, null);
+    public static Builder builder(CardFacts facts, DuelMathService math) {
+        return new Builder(facts, math);
     }
 
-    /**
-     * @param ruleDigest 游戏王通用规则浓缩版（可为空）。预置在上下文里，模型不必为了
-     *                   "召唤条件/连锁速度/战斗结算"这类常识反复检索；精确条文仍可走
-     *                   {@code search_rulebook} 工具查规则书原文。
-     */
-    public ContextPackBuilder(CardFacts facts, DuelMathService math, String deckStrategy,
-                              String ruleDigest) {
-        this(facts, math, deckStrategy, ruleDigest, null);
+    /** 依赖收集器：字段与 {@link ContextPackBuilder} 的可选参数一一对应。 */
+    public static final class Builder {
+        private final CardFacts facts;
+        private final DuelMathService math;
+        private String deckStrategy;
+        private String ruleDigest;
+        private String selfArchetype;
+        private boolean advisoryPlan;
+        private List<Long> deckPasscodes = List.of();
+        private String comboReference;
+        private DuelTimeline timeline;
+
+        private Builder(CardFacts facts, DuelMathService math) {
+            this.facts = facts;
+            this.math = math;
+        }
+
+        /** 用户为本卡组写的打法思路（可为空）。人给的策略知识，优先级高于通用战术常识。 */
+        public Builder deckStrategy(String value) {
+            this.deckStrategy = value;
+            return this;
+        }
+
+        /** 规则速查文本（可为空）。预置后模型不必为常识反复检索；见 {@link RuleDigest}。 */
+        public Builder ruleDigest(String value) {
+            this.ruleDigest = value;
+            return this;
+        }
+
+        /** 己方卡组主题（前端指定，可为空）。作为已知事实注入，避免模型猜自己的系列。 */
+        public Builder archetype(String value) {
+            this.selfArchetype = value;
+            return this;
+        }
+
+        /** 顾问模式：规划器只产战术建议、不产可执行步骤（{@code PLANNER_PATH_PLANNING=false}）。 */
+        public Builder advisory(boolean value) {
+            this.advisoryPlan = value;
+            return this;
+        }
+
+        /** 己方卡组清单（主+额外）。给全了规划器才知道"能检索到什么、额外能出什么"。 */
+        public Builder deckPasscodes(List<Long> value) {
+            this.deckPasscodes = value;
+            return this;
+        }
+
+        /** 实战连招参考文本（PG combo 库按主题取最近几条，可为空）。 */
+        public Builder comboReference(String value) {
+            this.comboReference = value;
+            return this;
+        }
+
+        /** 决斗过程记录端口（可为空 = 不注入记录段）。 */
+        public Builder timeline(DuelTimeline value) {
+            this.timeline = value;
+            return this;
+        }
+
+        public ContextPackBuilder build() {
+            return new ContextPackBuilder(facts, math, deckStrategy, ruleDigest, selfArchetype,
+                    advisoryPlan, deckPasscodes, comboReference, timeline);
+        }
     }
 
-    /**
-     * @param selfArchetype 己方卡组主题（前端指定，可为空）。作为已知事实注入，
-     *                      避免模型去猜"自己是什么系列"。
-     */
-    public ContextPackBuilder(CardFacts facts, DuelMathService math, String deckStrategy,
-                              String ruleDigest, String selfArchetype) {
-        this(facts, math, deckStrategy, ruleDigest, selfArchetype, false);
-    }
-
-    /**
-     * @param advisoryPlan 顾问模式：规划器不产出可执行路径，计划段落按"战术建议"渲染。
-     */
-    public ContextPackBuilder(CardFacts facts, DuelMathService math, String deckStrategy,
-                              String ruleDigest, String selfArchetype, boolean advisoryPlan) {
-        this(facts, math, deckStrategy, ruleDigest, selfArchetype, advisoryPlan, null);
-    }
-
-    /**
-     * @param deckPasscodes 己方卡组清单（主+额外）。给全是为了让规划器知道"能检索到什么、能特召什么"，
-     *                      而不是每次靠 {@code find_card} 现查——实战里查一轮就是好几秒。
-     */
-    public ContextPackBuilder(CardFacts facts, DuelMathService math, String deckStrategy,
-                              String ruleDigest, String selfArchetype, boolean advisoryPlan,
-                              List<Long> deckPasscodes) {
-        this(facts, math, deckStrategy, ruleDigest, selfArchetype, advisoryPlan, deckPasscodes, null);
-    }
-
-    /**
-     * @param comboReference 实战连招参考文本（PG combo 库按主题取最近几条，可为空）。
-     *                       它回答"这套卡组实际怎么打"：真实玩家的展开顺序、终端与代价，
-     *                       比通用战术常识更贴近本卡组；同样只是资料，局面硬事实优先。
-     */
-    public ContextPackBuilder(CardFacts facts, DuelMathService math, String deckStrategy,
-                              String ruleDigest, String selfArchetype, boolean advisoryPlan,
-                              List<Long> deckPasscodes, String comboReference) {
-        this(facts, math, deckStrategy, ruleDigest, selfArchetype, advisoryPlan,
-                deckPasscodes, comboReference, null);
-    }
-
-    /**
-     * @param timeline 决斗过程记录端口（可为空 = 不注入记录段）。决策包带本回合时间线、
-     *                 规划器锚点带开局至今的压缩记录；由组装根用 {@code session.duelLog()}
-     *                 的适配器注入（见 docs/duel-context-and-record.md）。
-     */
-    public ContextPackBuilder(CardFacts facts, DuelMathService math, String deckStrategy,
+    private ContextPackBuilder(CardFacts facts, DuelMathService math, String deckStrategy,
                               String ruleDigest, String selfArchetype, boolean advisoryPlan,
                               List<Long> deckPasscodes, String comboReference, DuelTimeline timeline) {
         this.facts = facts;
@@ -139,107 +151,6 @@ public final class ContextPackBuilder {
         this.candidateSections = new CandidateSections(facts, this.cardText);
         this.recordSections = new DuelRecordSections(facts, this.cardText);
     }
-
-    /**
-     * 游戏王通用规则速查（浓缩版）。
-     *
-     * <p>规则是长期稳定的知识：直接内嵌在代码里即可，不必每次启动从文件或 RAG 加载——
-     * 零 IO、离线可用，也不会因为部署漏拷资源而静默丢失。
-     * 需要精确条文/冷门判定时，仍由模型调用 {@code search_rulebook} 查规则书原文。
-     */
-    public static final String RULE_DIGEST = """
-            一、场地与基本数字
-            - 主卡组 40–60；额外卡组 ≤15（融合/同调/超量/连接）；副卡组 ≤15。
-            - 场地：主怪兽区 5、魔陷区 5、场地魔法区 1、额外怪兽区 2（双方各 2，只能放从额外卡组特召的连接/灵摆怪兽）、灵摆区 2。
-            - 起始 LP 8000、手牌 5。先手第 1 回合不抽卡、不能攻击。EP 手牌超过 6 张弃到 6。
-
-            二、回合与优先权
-            抽卡(DP) → 准备(SP) → 主要阶段1(M1) → 战斗(BP) → 主要阶段2(M2) → 结束(EP)。
-            - 每个时点由回合玩家先拿到优先权，双方都放弃才进入下一阶段或结算。
-            - 能发动的只有"这个时点合法"的效果；发动后对方可连锁，连锁**逆算**（最后发动的先结算）。
-            - 伤害步骤内只能发动：反击陷阱、明确写在"伤害步骤/伤害计算时"的效果、改变攻守的效果、
-              以及无效对方发动的效果；一般的起动效果与诱发即时效果在伤害步骤内不能发动。
-
-            三、召唤
-            - 通常召唤每回合 1 次（表侧攻击表示，或里侧守备盖放）。5–6 星 1 只祭品，7 星以上 2 只。
-            - 特殊召唤不占通召次数（卡面另说除外）：融合/同调/超量/连接/仪式/灵摆。
-              同调：调整+非调整，等级合计相等；超量：同等级叠放，按阶级用；连接：素材数 = LINK 值。
-            - 反转召唤：里侧守备 → 表侧攻击，不占通召次数。
-            - 连接怪兽没有守备表示，不能盖放、不能转守备。
-            - 灵摆怪兽从**场上**送去墓地时不进墓地，而是表侧加入额外卡组（从手牌/卡组送墓仍进墓地）。
-
-            四、战斗
-            - 攻对攻：比 ATK，低者破坏，差值扣 LP。攻对守：ATK>DEF 破坏且不扣 LP（贯穿除外）；
-              ATK<DEF 时攻击方吃差值；相等都不破坏。
-            - 守备表示不能攻击；对方场上没有怪兽才能直接攻击。
-            - 战斗破坏和效果破坏都是"破坏"，但"因战斗被破坏"与"被效果破坏"触发的效果不是一回事。
-
-            五、咒文速度与连锁结算（含"发动 ≠ 生效"）
-            - 速度 1：通常/装备/场地/永续/仪式魔法、怪兽的起动效果与诱发效果。
-            - 速度 2：速攻魔法、通常陷阱、永续陷阱、诱发即时效果。
-            - 速度 3：反击陷阱。
-            - 只能被同速或更高速度连锁；连锁逆算，后发先结算。
-            - 一段效果要走完三步才算数：**发动 → 结算 → 生效**。连锁上只是"已发动"，
-              结算前一律视为"还不知道结果"。
-            - 逆算推演：从**最后一环往前**逐环问"轮到我这一环时，它还在吗、还有效吗"。
-              链上后发的无效/除外/无效并除外类效果**先结算**，可以让前面任何一环作废——包括我方发的。
-            - 所以只要连锁上还有"针对我方那一环"的无效类效果，就不能说自己那一环"已无效对方"、
-              "已经通过了"；正确说法是"取决于它结算时是否被无效"。
-            - 反过来，**场面是已发生结果的记录**：如果场上/墓地/除外区出现了"只有该效果通过才会有的东西"
-              （对方场上多出怪兽、我方卡被除外、某张卡进了墓地），那就是它已经结算并生效了。
-              此时以 [局面] 为准，撤回之前"它应该被无效了"的预期，不要用预期去解释反证。
-            - 判据句：**"我手里/链上的这一环，到它结算时还成立吗？"** 答不上来就不能当既成事实用。
-
-            六、六类魔法卡与发动时机（最常错的一段）
-            - 通常魔法：自己主要阶段从手牌发动。**盖放的通常魔法，盖的当回合就能发动**。
-            - 速攻魔法：从**手牌**发动只能在自己回合的主要阶段；想在对手回合用，必须提前一回合盖到魔陷区。
-            - 永续/装备/场地/仪式魔法：自己主要阶段发动；盖的当回合也能发动，盖放对它们只等于"先藏着"。
-            - 陷阱：必须先盖，且**盖的当回合不能发动**（卡面写明可从手牌发动的除外）。
-            - 所以"盖的当回合不能发动"这条**只适用于速攻魔法和陷阱**，不要套到其他魔法上。
-            - **对手回合**能发动的牌只有三类，别把别的算进去：
-              ① 已盖在魔陷区的速攻魔法 / 陷阱（盖的当回合不能发，所以必须**上一回合**盖）；
-              ② 手牌里卡面写明"自己·对方回合，把这张卡从手卡丢弃/送去墓地才能发动"的怪兽（手坑）；
-              ③ 场上已表侧的效果（诱发即时、永续效果）。
-            - 反过来说死：**手牌里的速攻魔法、通常魔法、陷阱，在对手回合一律发不出来**
-              （除非卡面明写可以从手牌发动）。留手 ≠ 留着能用。
-            - 所以"给对手回合留速攻魔法当阻抗"= **这回合先盖下去**；留在手牌等于放弃它整个对手回合。
-              回合结束前该自检一遍：手上还有几张速攻魔法/陷阱？要留阻抗就现在盖。
-            - 盖放本身不产生任何效果：它只是把卡放进魔陷区。别把"盖了一张"当成"多了一个阻抗"。
-
-            七、无效 / 破坏 / 除外 / 送墓：四种结果互不等价
-            - 效果无效：效果不发生，但卡**不破坏、仍留在场**；ATK/DEF 不变（卡面另说除外）。
-              所以"无效"既不能用来压打点，也不能解掉一只打不过的怪兽。
-            - 被无效的效果**仍算已经发动过**（"效果发动时"类触发照样成立），只是效果不处理。
-            - 破坏 → 送墓；但"不会被效果破坏"的卡只是挡破坏，仍可能被除外/送墓/弹回手牌。
-            - 除外 ≠ 送墓 ≠ 回手牌/回卡组，各自触发不同的效果；"不能破坏"不等于"不能被除去"。
-            - 召唤/特殊召唤被无效时，那只怪兽视为从未上场，不触发"被破坏""送去墓地"类效果。
-
-            八、取对象 / 不取对象（决定"能不能选到它"）
-            - 卡面里的「自己 / 对方」是**发卡者的视角**：对手的卡上写"对方"，指的就是我方
-              （我方墓地 / 我方场上 / 我方手牌）。对手写"以对方墓地1只怪兽为对象"，就是从**我方墓地**选，
-              而且往往是冲着我方刚丢进墓地的那只怪兽来的——这类效果会把它除外并无效化。
-            - 取对象：卡面写"以…为对象"，发动时就选定；结算时对象已不在原处（离场、变里侧等）→ 该效果不处理。
-            - 不取对象：卡面写"选/那些/全部/场上所有"，发动时不选，结算时按当时场面处理。
-            - 「不能作为效果的对象」只挡取对象的效果，不取对象的效果照样能作用它。
-            - 「不受效果影响」才是全挡（取对象与不取对象都挡）。
-
-            九、什么时候"无效 / 除去"是白亏（通用判据，任何卡都用）
-            1) 这个效果**接下来还会不会再结算一次**？不会（召唤时诱发已经处理完、效果已经用完）
-               → 现在去无效它是净亏一张。
-            2) 这个效果是从**哪个场所**发动的？若是墓地/手牌/卡组/除外的效果，
-               无效"场上的这张卡"对它没有影响。
-            3) 无效之后我实际多了什么（保住怪兽？拦住检索？让攻击通过？）说不出来 → 不要发。
-            4) 对手没有参与这一环（只是自己在处理自己的效果）时，追加发卡几乎都是白亏。
-
-            十、其他高频误区
-            - 「1回合1次」按卡名计（同名卡合计）；「这个卡名的①效果1回合1次」按卡名+效果编号计。
-            - 超量素材不是卡：超量怪兽被破坏时素材送墓，但不触发"卡被送去墓地"类效果。
-            - 衍生物离场即消灭，不进墓地，不触发"送去墓地"的效果。
-            - 里侧守备怪兽被攻击时翻开（反转），反转效果在此时发动；里侧怪兽的信息对手不可见。
-            - 墓地/除外是公开信息；手牌/卡组/额外卡组是隐藏信息。
-            - 效果文本里的「才能发动」是发动条件，「的场合」是触发条件（可以不发）；
-              但**条件是否满足由引擎判定**：候选集与"是否发动"请求递到你面前，就说明它此刻发得出来。
-            """;
 
     public boolean hasRuleDigest() {
         return ruleDigest != null;

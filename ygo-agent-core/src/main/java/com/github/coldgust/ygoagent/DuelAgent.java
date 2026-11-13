@@ -2,8 +2,10 @@ package com.github.coldgust.ygoagent;
 
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
 import com.github.coldgust.ygoagent.context.DuelMathService;
+import com.github.coldgust.ygoagent.context.RuleDigest;
 import com.github.coldgust.ygoagent.context.DuelTimeline;
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
+import com.github.coldgust.ygoagent.knowledge.ComboReferenceText;
 import com.github.coldgust.ygoagent.knowledge.JsonlCardFacts;
 import com.github.coldgust.ygoagent.knowledge.RecordedComboSource;
 import com.github.coldgust.ygoagent.llm.CardTool;
@@ -79,18 +81,18 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
                 throw new UncheckedIOException("卡牌事实加载失败: " + settings.cardRagPath(), e);
             }
         }
-        String comboReference = comboReferenceText(config.combos(), config.archetype(),
+        String comboReference = ComboReferenceText.render(config.combos(), config.archetype(),
                 config.comboContextLimit());
-        ContextPackBuilder packer = new ContextPackBuilder(
-                facts, new DuelMathService(),
-                config.deckStrategy(),
-                ContextPackBuilder.RULE_DIGEST,
-                config.archetype(),
-                !settings.pathPlanning(),
+        ContextPackBuilder packer = ContextPackBuilder.builder(facts, new DuelMathService())
+                .deckStrategy(config.deckStrategy())
+                .ruleDigest(RuleDigest.TEXT)
+                .archetype(config.archetype())
+                .advisory(!settings.pathPlanning())
                 // 己方卡组全清单：规划器据此判断能检索/特召什么，不必现查
-                config.deckPasscodes(),
-                comboReference,
-                config.timeline());
+                .deckPasscodes(config.deckPasscodes())
+                .comboReference(comboReference)
+                .timeline(config.timeline())
+                .build();
         if (packer.hasDeckStrategy()) {
             log.info("已注入卡组思路（{} 字），将作为规划器与决策器判断（④）的重点参考",
                     config.deckStrategy().length());
@@ -176,41 +178,4 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
                          DuelTimeline timeline) {
     }
 
-    /** 实战连招参考文本：按主题取最近录入拼成上下文段；没有可用录入时为 null（注入段缺席）。 */
-    static String comboReferenceText(RecordedComboSource recorded, String archetype,
-                                     int comboContextLimit) {
-        if (recorded == null || !recorded.available()
-                || archetype == null || archetype.isBlank()) {
-            return null;
-        }
-        var entries = recorded.recentByArchetype(archetype, comboContextLimit);
-        if (entries.isEmpty()) {
-            return null;
-        }
-        StringBuilder sb = new StringBuilder();
-        int n = 1;
-        for (var entry : entries) {
-            sb.append("#").append(n++).append("（").append(entry.stepCount()).append(" 步）");
-            if (!entry.keyCards().isEmpty()) {
-                sb.append(" 关键卡牌：").append(String.join("、", entry.keyCards()));
-            }
-            sb.append("\n");
-            if (entry.summary() != null && !entry.summary().isBlank()) {
-                sb.append(entry.summary()).append("\n");
-            }
-            var steps = entry.stepDescriptions();
-            if (steps.isEmpty()) {
-                continue;
-            }
-            sb.append("实际操作：");
-            for (int i = 0; i < Math.min(6, steps.size()); i++) {
-                sb.append(i == 0 ? "" : " → ").append(steps.get(i));
-            }
-            if (steps.size() > 6) {
-                sb.append(" → …（共 ").append(steps.size()).append(" 步）");
-            }
-            sb.append("\n\n");
-        }
-        return sb.toString().trim();
-    }
 }
