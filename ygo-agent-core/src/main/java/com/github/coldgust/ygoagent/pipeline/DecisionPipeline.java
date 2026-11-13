@@ -21,6 +21,7 @@ import com.github.coldgust.ygoagent.model.Timing;
 import com.github.coldgust.ygoagent.pipeline.fallback.RuleBasedEngine;
 import com.github.coldgust.ygoagent.pipeline.judge.LlmJudge;
 import com.github.coldgust.ygoagent.pipeline.plan.PlanFollower;
+import com.github.coldgust.ygoagent.pipeline.plan.PlanHit;
 import com.github.coldgust.ygoagent.pipeline.plan.PlanStep;
 import com.github.coldgust.ygoagent.pipeline.plan.PlacementResolver;
 import com.github.coldgust.ygoagent.pipeline.plan.SimilarityMatcher;
@@ -41,8 +42,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * 五级流水主干（§4.2）：⓪ 位置兑现 → ① 唯一合法 → ② 照计划 → ③ 走预案 → ④ 决策器判断 → ⑤ 兜底。
@@ -82,24 +81,6 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
                                     ContextPackBuilder packer, ChatClient chat,
                                     PipelineSettings settings, CardFacts facts,
                                     DecisionEngine delegate, DecisionTraceWriter traceWriter,
-                                    RulebookTool rulebook, VerboseLog trace) {
-        this(reflex, planner, packer, chat, settings, facts, delegate, traceWriter,
-                rulebook, null, trace);
-    }
-
-    public DecisionPipeline(ReflexPolicy reflex, PlannerSession planner,
-                                    ContextPackBuilder packer, ChatClient chat,
-                                    PipelineSettings settings, CardFacts facts,
-                                    DecisionEngine delegate, DecisionTraceWriter traceWriter,
-                                    RulebookTool rulebook, ComboTool combo, VerboseLog trace) {
-        this(reflex, planner, packer, chat, settings, facts, delegate, traceWriter,
-                new DecisionTools(rulebook, combo, null), trace);
-    }
-
-    public DecisionPipeline(ReflexPolicy reflex, PlannerSession planner,
-                                    ContextPackBuilder packer, ChatClient chat,
-                                    PipelineSettings settings, CardFacts facts,
-                                    DecisionEngine delegate, DecisionTraceWriter traceWriter,
                                     DecisionTools tools, VerboseLog trace) {
         this.reflex = reflex;
         this.planner = planner;
@@ -124,11 +105,14 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
             // 规划器故障不影响决策
         }
         DuelDecision decision;
+        Integer planStep = null;
         String level;
         String levelLabel;
         List<String> missReasons = new ArrayList<>();
         try {
-            decision = decideInner(point, deadline, missReasons);
+            Outcome outcome = decideInner(point, deadline, missReasons);
+            decision = outcome.decision();
+            planStep = outcome.planStep();
             level = decision.pathKind().name();
             levelLabel = decision.pathKind().label();
         } catch (RuntimeException e) {
@@ -173,9 +157,8 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
             payload.put("planSteps", plan.steps().size());
             payload.put("planGoal", plan.goal());
         }
-        Integer hitStep = planStepOf(conclusion);
-        if (hitStep != null) {
-            payload.put("planStep", hitStep);
+        if (planStep != null) {
+            payload.put("planStep", planStep);
         }
         event(point, "EXEC_DECISION", payload);
         // 位置线索：本次选了会落场的动作 → 记住模型一并给出的格子；本次就是位置请求 → 用完清掉
@@ -199,21 +182,25 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
                 intentSummary.of(decision.intent(), point));
     }
 
-    private DuelDecision decideInner(DecisionPoint point, DecisionDeadline deadline, List<String> missReasons) {
+    /** 一次编排的结果：决策本体 + 结构化的命中步号（无计划命中为 null）。 */
+    private record Outcome(DuelDecision decision, Integer planStep) {
+    }
+
+    private Outcome decideInner(DecisionPoint point, DecisionDeadline deadline, List<String> missReasons) {
         // ⓪ 位置兑现：模型在选动作时已一并给出位置 → 直接用，不再额外问一次
         if (point.kind() == RequestKind.PLACE) {
             Optional<DuelDecision> placed = placement.resolve(point);
             if (placed.isPresent()) {
                 trace.decision("⓪ 位置兑现", placed.get().explanation().conclusion());
-                return placed.get();
+                return new Outcome(placed.get(), null);
             }
         }
         // ① Reflex（机械请求 + 已知表格策略）
         Optional<ChoiceIntent> quick = reflex.tryAnswer(point);
         if (quick.isPresent()) {
             trace.decision("① 唯一合法", quick.get().getClass().getSimpleName() + "（没有判断余地）");
-            return new DuelDecision(quick.get(), PathKind.ONLY_CHOICE, 1.0,
-                    DecisionExplanation.of("规则直觉命中"), Timing.ZERO);
+            return new Outcome(new DuelDecision(quick.get(), PathKind.ONLY_CHOICE, 1.0,
+                    DecisionExplanation.of("规则直觉命中"), Timing.ZERO), null);
         }
         if (!point.candidates().isEmpty()) {
             Optional<TurnPlan> planOpt = planner.currentPlan()
@@ -234,9 +221,9 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
             TurnPlan plan = planOpt.orElse(null);
             if (plan != null) {
                 // ② 计划精确匹配
-                Optional<DuelDecision> exact = follower.tryExact(point, plan);
+                Optional<PlanHit> exact = follower.tryExact(point, plan);
                 if (exact.isPresent()) {
-                    return exact.get();
+                    return new Outcome(exact.get().decision(), exact.get().stepIndex());
                 }
                 if (plan.steps().isEmpty()) {
                     // 骨架计划：不接地、不重复作废，直接进 ④，
@@ -256,9 +243,9 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
                     // ③ 相似匹配（stakes 高时跳过，§2.2.4）：
                     // 分支是"另一条计划"，主线接不上时它仍可能成立，所以先给分支一次机会。
                     if (!highStakes(point)) {
-                        Optional<DuelDecision> similar = follower.trySimilar(point, plan);
+                        Optional<PlanHit> similar = follower.trySimilar(point, plan);
                         if (similar.isPresent()) {
-                            return similar.get();
+                            return new Outcome(similar.get().decision(), similar.get().stepIndex());
                         }
                         missReasons.add("无分支相似命中（阈值 " + settings.similarityThreshold() + "）");
                     } else {
@@ -279,7 +266,7 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
             if (judged.isPresent()) {
                 trace.step("④ 决策器判断", System.currentTimeMillis() - judgeStart,
                         judged.get().pathKind().label() + " ｜ " + judged.get().explanation().conclusion());
-                return judged.get();
+                return new Outcome(judged.get(), null);
             }
             missReasons.add("升级无有效结果（超时/校验失败）");
             log.debug("执行器降级到决策器判断/兜底: {}", missReasons);
@@ -288,7 +275,7 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
         DuelDecision fallback = delegate.decide(point, deadline);
         trace.decision("⑤ 兜底", fallback.pathKind().label() + " ｜ "
                 + fallback.explanation().conclusion());
-        return fallback;
+        return new Outcome(fallback, null);
     }
 
     /**
@@ -352,13 +339,8 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
         };
     }
 
-    private static Integer planStepOf(String conclusion) {
-        if (conclusion == null) {
-            return null;
-        }
-        Matcher m = Pattern.compile("计划步#(\\d+)").matcher(conclusion);
-        return m.find() ? Integer.valueOf(m.group(1)) : null;
-    }
+    /** 高 stakes 判定里的 LP 危急线（确定性近似的阈值，非规则事实）。 */
+    private static final int LOW_LP_THRESHOLD = 3000;
 
     /** 高 stakes 判定（slice 1 的确定性近似：对方已知攻击总和可斩 或 我方 LP 危急）。 */
     private boolean highStakes(DecisionPoint point) {
@@ -368,7 +350,7 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
                 .mapToInt(c -> facts.byPasscode(c.passcode()).map(CardFact::atk).orElse(0))
                 .sum();
         return (oppAttack >= state.self().lifePoints() && oppAttack > 0)
-                || state.self().lifePoints() <= 3000;
+                || state.self().lifePoints() <= LOW_LP_THRESHOLD;
     }
 
 

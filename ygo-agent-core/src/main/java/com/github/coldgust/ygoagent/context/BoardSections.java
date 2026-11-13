@@ -17,7 +17,7 @@ import com.github.coldgust.ygoagent.support.Texts;
 
 /**
  * 局面段的逐行渲染：手牌 / 场面 / 墓地与除外 / 场地槽位。
- * 只做确定性陈述，不做判断；卡名一律经 {@link DuelMathService#labelOf}（卡库无资料时保留卡号，绝不编名字）。
+ * 只做确定性陈述，不做判断；卡名一律经 {@link CardLabels#labelOf}（卡库无资料时保留卡号，绝不编名字）。
  */
 final class BoardSections {
 
@@ -41,7 +41,7 @@ final class BoardSections {
                     .filter(fact -> !fact.isMonster())
                     .map(CardFact::cardType)
                     .filter(type -> type != null && type.contains("魔法"))
-                    .ifPresent(type -> spells.add(DuelMathService.labelOf(card, facts) + "〔" + type + "〕"));
+                    .ifPresent(type -> spells.add(CardLabels.labelOf(card, facts) + "〔" + type + "〕"));
         }
         if (spells.isEmpty()) {
             return;
@@ -62,7 +62,7 @@ final class BoardSections {
             return "（无）";
         }
         StringJoiner sj = new StringJoiner("、");
-        hand.forEach(c -> sj.add(DuelMathService.labelOf(c, facts) + typeTagOf(c)));
+        hand.forEach(c -> sj.add(CardLabels.labelOf(c, facts) + typeTagOf(c)));
         return sj.toString();
     }
 
@@ -138,7 +138,7 @@ final class BoardSections {
             StringJoiner bj = new StringJoiner("、");
             backrow.forEach(c -> {
                 boolean known = !c.isUnknown();
-                String name = known ? DuelMathService.labelOf(c, facts) : "盖卡";
+                String name = known ? CardLabels.labelOf(c, facts) : "盖卡";
                 if (c.position() == null) {
                     // 朝向未同步：别硬说里侧（表侧永续魔陷很常见），如实标注
                     bj.add(known ? name + "[朝向未知]" : "盖卡");
@@ -151,7 +151,7 @@ final class BoardSections {
             sj.add("魔陷：" + bj);
         }
         state.fieldSpell(side).ifPresent(field ->
-                sj.add("场地：" + DuelMathService.labelOf(field, facts)));
+                sj.add("场地：" + CardLabels.labelOf(field, facts)));
         return sj.toString();
     }
 
@@ -160,10 +160,10 @@ final class BoardSections {
         if (c.position() == null) {
             // 表示形式未同步：身份已知也别猜"里侧"，如实标注
             base = c.isUnknown() ? "盖卡怪"
-                    : DuelMathService.labelOf(c, facts) + "[状态未知]";
+                    : CardLabels.labelOf(c, facts) + "[状态未知]";
         } else if (!c.position().isFaceUp()) {
             base = c.isUnknown() ? "盖卡怪"
-                    : DuelMathService.labelOf(c, facts) + "[里侧]";
+                    : CardLabels.labelOf(c, facts) + "[里侧]";
         } else {
             CardFact fact = facts.byPasscode(c.passcode()).orElse(null);
             String pos = c.position() == Position.FACE_UP_ATTACK ? "攻" : "守";
@@ -227,7 +227,7 @@ final class BoardSections {
 
     private String identities(List<CardIdentity> identities) {
         StringJoiner sj = new StringJoiner("、");
-        identities.forEach(id -> sj.add(DuelMathService.labelOf(
+        identities.forEach(id -> sj.add(CardLabels.labelOf(
                 new CardInstance(0, id, null, null, null, null), facts)));
         return sj.toString();
     }

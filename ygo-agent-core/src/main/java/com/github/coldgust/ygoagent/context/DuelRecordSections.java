@@ -3,6 +3,7 @@ package com.github.coldgust.ygoagent.context;
 import com.github.coldgust.ygoagent.knowledge.CardFact;
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
 import com.github.coldgust.ygoagent.pipeline.plan.ZoneCodes;
+import com.github.coldgust.ygoagent.support.FoldedLines;
 import com.github.coldgust.ygoagent.support.Texts;
 import com.github.coldgust.ygodomain.zone.ZoneKind;
 import com.github.coldgust.ygodomain.zone.ZoneRef;
@@ -213,18 +214,8 @@ public final class DuelRecordSections {
             if (line == null) {
                 continue;
             }
-            if (!out.isEmpty()) {
-                // 连续同文行折叠 ×N：对手一次抽 3 张是 3 条同文事件，逐条只会刷屏
-                String last = out.getLast();
-                int mark = last.lastIndexOf(" ×");
-                String base = mark > 0 ? last.substring(0, mark) : last;
-                if (base.equals(line)) {
-                    int times = mark > 0 ? Integer.parseInt(last.substring(mark + 2)) : 1;
-                    out.set(out.size() - 1, base + " ×" + (times + 1));
-                    continue;
-                }
-            }
-            out.add(line);
+            // 连续同文行折叠 ×N：对手一次抽 3 张是 3 条同文事件，逐条只会刷屏
+            FoldedLines.add(out, line);
         }
         return out;
     }

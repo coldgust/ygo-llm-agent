@@ -262,9 +262,10 @@ class ContextPackBuilderTest {
     void deckStrategyIsInjectedFirstAndActsAsGuidance() {
         // 用户在界面里写的打法：在静态资料段最前面，且带"冲突时以此为准"的措辞，
         // 否则模型会把它当成普通参考资料忽略掉。
-        ContextPackBuilder withStrategy = new ContextPackBuilder(facts, new DuelMathService(),
-                "闪刀是资源型卡组：先用交闪赚卡，别为了打点把场铺满；\n"
-                        + "墓地魔法不足 3 张时不要发抓锚的抢控制权效果。");
+        ContextPackBuilder withStrategy = ContextPackBuilder.builder(facts, new DuelMathService())
+                .deckStrategy("闪刀是资源型卡组：先用交闪赚卡，别为了打点把场铺满；\n"
+                        + "墓地魔法不足 3 张时不要发抓锚的抢控制权效果。")
+                .build();
         DuelState state = TestDuels.state(2, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
         var point = TestDuels.mainPhasePoint(state,
                 List.of(TestDuels.cardChoice(201, TestDuels.WIDOW_ANCHOR)), List.of());
@@ -291,15 +292,17 @@ class ContextPackBuilderTest {
                 "静态资料不进锚点（独立消息，跨回合一致）:\n" + withStrategy.plannerAnchorPack(state));
 
         assertFalse(builder.anchorPack(state).contains("[卡组思路]"));
-        assertFalse(new ContextPackBuilder(facts, new DuelMathService(), "   ")
-                .anchorPack(state).contains("[卡组思路]"), "空白串等同于没填");
+        assertFalse(ContextPackBuilder.builder(facts, new DuelMathService())
+                .deckStrategy("   ").build().anchorPack(state).contains("[卡组思路]"), "空白串等同于没填");
     }
 
     @Test
     void staticMaterialIsByteStableForPrefixCache() {
         // 前缀缓存的前提：整局内静态资料逐字节一致（与回合/局面无关），动态段随局面变化
-        ContextPackBuilder withDigest = new ContextPackBuilder(facts, new DuelMathService(),
-                "思路：先交闪赚卡", ContextPackBuilder.RULE_DIGEST);
+        ContextPackBuilder withDigest = ContextPackBuilder.builder(facts, new DuelMathService())
+                .deckStrategy("思路：先交闪赚卡")
+                .ruleDigest(RuleDigest.TEXT)
+                .build();
         DuelState early = TestDuels.state(1, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
         DuelState late = TestDuels.state(4, false, List.of(), List.of(), List.of(), List.of(), 3000, 6000);
 
@@ -315,8 +318,9 @@ class ContextPackBuilderTest {
     @Test
     void ruleDigestIsInjectedBeforeBoardAndOnlyWhenProvided() {
         // 规则速查是通用背景知识：要预置、要出现在局面之前，但不能在没有提供时凭空生成。
-        ContextPackBuilder withDigest = new ContextPackBuilder(facts, new DuelMathService(),
-                null, "# 速查\n- 连接怪兽只能从额外卡组特召到额外怪兽区。");
+        ContextPackBuilder withDigest = ContextPackBuilder.builder(facts, new DuelMathService())
+                .ruleDigest("# 速查\n- 连接怪兽只能从额外卡组特召到额外怪兽区。")
+                .build();
         DuelState state = TestDuels.state(2, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
 
         String anchor = withDigest.anchorPack(state);
@@ -325,13 +329,13 @@ class ContextPackBuilderTest {
         assertTrue(anchor.indexOf("[规则速查]") < anchor.indexOf("[局面]"), "规则应作为背景先于局面:\n" + anchor);
 
         assertFalse(builder.anchorPack(state).contains("[规则速查]"), "未提供 digest 时不该出现");
-        assertFalse(new ContextPackBuilder(facts, new DuelMathService(), null, "   ")
-                .anchorPack(state).contains("[规则速查]"), "空白串等同于没提供");
+        assertFalse(ContextPackBuilder.builder(facts, new DuelMathService())
+                .ruleDigest("   ").build().anchorPack(state).contains("[规则速查]"), "空白串等同于没提供");
     }
 
     @Test
     void ruleDigestSeparatesActivationFromResolution() {
-        String digest = ContextPackBuilder.RULE_DIGEST;
+        String digest = RuleDigest.TEXT;
 
         assertTrue(digest.contains("发动 → 结算 → 生效"), "要把三段态写清:\n" + digest);
         assertTrue(digest.contains("从**最后一环往前**"), "逆算推演要写成可执行的动作:\n" + digest);
@@ -389,7 +393,7 @@ class ContextPackBuilderTest {
                 base.cards(), base.currentChain(), base.result(), base.selfSeat());
 
         ContextPackBuilder quickBuilder = new ContextPackBuilder(
-                withQuick, new DuelMathService(), null, null);
+                withQuick, new DuelMathService());
         String section = quickBuilder.candidatesSection(TestDuels.mainPhasePoint(state, List.of(), List.of()));
 
         assertTrue(section.contains("结束回合（提醒"), "提醒要挂在结束回合这个选项上:\n" + section);
@@ -412,7 +416,7 @@ class ContextPackBuilderTest {
 
     @Test
     void ruleDigestStatesTheTimingAndEffectFactsModelsGetWrong() {
-        String digest = ContextPackBuilder.RULE_DIGEST;
+        String digest = RuleDigest.TEXT;
 
         assertTrue(digest.contains("盖的当回合不能发动") && digest.contains("只适用于速攻魔法和陷阱"),
                 "盖放当回合的发动限制只能落在速攻/陷阱上:\n" + digest);
@@ -480,8 +484,8 @@ class ContextPackBuilderTest {
     void advisoryPlanReadsAsAdviceNeverAsSteps() {
         // 顾问模式（PLANNER_PATH_PLANNING=false）：计划本来就没有路径，措辞必须说清
         // "这是建议、你自己选"，而不是"步骤已作废"（后者会让模型以为是异常状态）。
-        ContextPackBuilder advisory = new ContextPackBuilder(TestDuels.facts(),
-                new DuelMathService(), null, null, null, true);
+        ContextPackBuilder advisory = ContextPackBuilder.builder(TestDuels.facts(),
+                new DuelMathService()).advisory(true).build();
         DuelState state = TestDuels.state(2, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
         var point = TestDuels.mainPhasePoint(state,
                 List.of(TestDuels.cardChoice(201, TestDuels.WIDOW_ANCHOR)), List.of());
@@ -522,9 +526,9 @@ class ContextPackBuilderTest {
     void plannerAnchorListsTheWholeOwnDeck() {
         // 己方卡组是已知信息：给全了规划器才能判断"这张检索能拿到什么"，不必每次现查。
         // 卡组清单整局不变 → 归入规划器静态消息（跨回合前缀缓存），锚点不重复携带。
-        ContextPackBuilder withDeck = new ContextPackBuilder(TestDuels.facts(),
-                new DuelMathService(), null, null, null, true,
-                List.of(TestDuels.KAGARI, TestDuels.ENGAGE));
+        ContextPackBuilder withDeck = ContextPackBuilder.builder(TestDuels.facts(),
+                new DuelMathService()).advisory(true)
+                .deckPasscodes(List.of(TestDuels.KAGARI, TestDuels.ENGAGE)).build();
         DuelState state = TestDuels.state(2, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
 
         String staticMaterial = withDeck.plannerStaticMaterial();
@@ -625,7 +629,7 @@ class ContextPackBuilderTest {
                 List.of(TestDuels.instance(5, TestDuels.WIDOW_ANCHOR, ZoneRef.spellTrap(PlayerSide.SELF, 2))),
                 List.of(), List.of(), 8000, 8000);
         ContextPackBuilder targetingBuilder = new ContextPackBuilder(
-                targetingFacts, new DuelMathService(), null, null);
+                targetingFacts, new DuelMathService());
 
         ChainNode withTarget = new ChainNode(1, TestDuels.known(targeter),
                 targeter << 4, ZoneRef.spellTrap(PlayerSide.OPPONENT, 2), PlayerSide.OPPONENT,
@@ -880,9 +884,9 @@ class ContextPackBuilderTest {
                 request, state, Candidates.from(request), "h", "r", RequestKind.MAIN_PHASE);
 
         // T2（已结算）+ T3（本回合）各一条事件：前缀带 T2，决策包时间线带 T3
-        ContextPackBuilder withTimeline = new ContextPackBuilder(
-                facts, new DuelMathService(), null, null, null, true, List.of(), null,
-                new DuelTimeline() {
+        ContextPackBuilder withTimeline = ContextPackBuilder.builder(facts, new DuelMathService())
+                .advisory(true)
+                .timeline(new DuelTimeline() {
                     @Override
                     public List<DuelTimeline.Entry> since(long seq) {
                         List<DuelTimeline.Entry> all = List.of(
@@ -900,7 +904,8 @@ class ContextPackBuilderTest {
                     public long latestSeq() {
                         return 2;
                     }
-                });
+                })
+                .build();
 
         assertTrue(withTimeline.decisionPack(point).contains("[本回合时间线] T3"),
                 "有记录端口时决策包要带本回合时间线");

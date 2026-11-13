@@ -191,28 +191,4 @@ public final class DuelMathService {
 
     public DuelMathService() {
     }
-
-
-    public static String labelOf(CardInstance card, CardFacts facts) {
-        if (card.isUnknown()) {
-            return "未知卡";
-        }
-        return facts.byPasscode(card.passcode()).map(CardFact::label)
-                .orElseGet(() -> "卡(" + card.passcode() + ")");
-    }
-
-    public static String zoneLabel(ZoneKind kind) {
-        return switch (kind) {
-            case MAIN_MONSTER_ZONE -> "主怪区";
-            case EXTRA_MONSTER_ZONE -> "额外怪区";
-            case SPELL_TRAP_ZONE -> "魔陷区";
-            case PENDULUM_ZONE -> "灵摆区";
-            case FIELD_ZONE -> "场地区";
-            case GRAVEYARD -> "墓地";
-            case BANISHED -> "除外";
-            case HAND -> "手牌";
-            case DECK -> "卡组";
-            case EXTRA_DECK -> "额外卡组";
-        };
-    }
 }

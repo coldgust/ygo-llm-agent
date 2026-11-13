@@ -167,7 +167,7 @@ final class CandidateSections {
                 long passcode = node.identity().passcode();
                 sj.add("  #" + node.index() + " "
                         + (node.controller() == PlayerSide.SELF ? "我方" : "对方") + " "
-                        + DuelMathService.labelOf(new CardInstance(0, node.identity(), node.source(),
+                        + CardLabels.labelOf(new CardInstance(0, node.identity(), node.source(),
                                 null, null, null), facts)
                         + "（" + ZoneCodes.describe(node.source()) + "）"
                         + (node.negated() ? "  ← 已被无效：这一环不会生效" : ""));
@@ -206,7 +206,7 @@ final class CandidateSections {
             String name = state.cards().values().stream()
                     .filter(card -> zone.equals(card.zone()))
                     .findFirst()
-                    .map(card -> DuelMathService.labelOf(card, facts))
+                    .map(card -> CardLabels.labelOf(card, facts))
                     .orElse("（该位置的卡）");
             sj.add(name + "（" + ZoneCodes.describe(zone) + "）");
         }
@@ -248,7 +248,7 @@ final class CandidateSections {
     }
 
     private String effectCardLabel(ChoiceRequest.CardChoice card) {
-        return DuelMathService.labelOf(instanceOf(card), facts);
+        return CardLabels.labelOf(instanceOf(card), facts);
     }
 
     private void appendUnlabeledEffectClauses(StringJoiner sj, long passcode) {
@@ -321,7 +321,7 @@ final class CandidateSections {
     }
 
     private String cardLabel(Candidate.CardC card) {
-        return card.id().value() + " " + DuelMathService.labelOf(instanceOf(card.value()), facts)
+        return card.id().value() + " " + CardLabels.labelOf(instanceOf(card.value()), facts)
                 + typeTag(card.value());
     }
 
@@ -371,7 +371,7 @@ final class CandidateSections {
         }
         StringJoiner items = new StringJoiner("；");
         effects.forEach(e -> items.add(e.id().value() + " "
-                + DuelMathService.labelOf(instanceOf(e.value().card()), facts)
+                + CardLabels.labelOf(instanceOf(e.value().card()), facts)
                 + "： " + cardText.fired(e.value().card().identity().passcode(),
                         e.value().description())));
         sj.add(title + "：" + items);
@@ -445,7 +445,7 @@ final class CandidateSections {
         StringJoiner sj = new StringJoiner("、");
         int limit = Math.min(cards.size(), 4);
         for (int i = 0; i < limit; i++) {
-            sj.add(DuelMathService.labelOf(instanceOf(cards.get(i)), facts));
+            sj.add(CardLabels.labelOf(instanceOf(cards.get(i)), facts));
         }
         return cards.size() > limit ? sj + "…" : sj.toString();
     }
@@ -468,7 +468,7 @@ final class CandidateSections {
                 continue;
             }
             if (type.contains("速攻") || type.contains("陷阱")) {
-                usable.add(DuelMathService.labelOf(card, facts) + "〔" + type + "〕");
+                usable.add(CardLabels.labelOf(card, facts) + "〔" + type + "〕");
             }
         }
         if (usable.isEmpty()) {
