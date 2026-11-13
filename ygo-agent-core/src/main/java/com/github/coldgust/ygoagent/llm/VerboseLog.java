@@ -57,13 +57,12 @@ public final class VerboseLog {
         }
         String who = label();
         int total = messages.stream().mapToInt(VerboseLog::messageChars).sum();
-        log.info("[LLM→] #{} {}model={} temp={} max_tokens={} json={} reasoning={} timeout={}ms 消息 {} 条/共 {} 字",
+        log.info("[LLM→] #{} {}model={} temp={} max_tokens={} json={} reasoning={} 消息 {} 条/共 {} 字",
                 id, who, model,
                 options == null ? "-" : options.temperature(),
                 options == null ? "-" : options.maxTokens(),
                 options != null && options.jsonMode(),
                 options == null || options.reasoning() == null ? "-" : options.reasoning(),
-                options == null ? "-" : options.timeout().toMillis(),
                 messages.size(), total);
         for (ChatMessage message : messages) {
             String text = messageText(message);

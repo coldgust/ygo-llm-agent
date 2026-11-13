@@ -1,5 +1,6 @@
 package com.github.coldgust.ygoplay;
 
+import com.github.coldgust.ygoagent.llm.LightRagSettings;
 import com.github.coldgust.ygoagent.pipeline.PipelineSettings;
 import com.github.coldgust.ygoagent.support.Texts;
 import org.slf4j.Logger;
@@ -25,7 +26,7 @@ import java.util.function.Function;
  * @param archetype    卡组主题（combo 注入与检索的键；可空）
  * @param duelLogPath  对局记录 JSONL 落盘路径
  * @param tracePath    决策轨迹 JSONL 落盘路径
- * @param lightRag     LightRAG 知识栈连接（规则/历史对局检索）
+ * @param lightRag     LightRAG 知识栈连接（规则/历史对局检索；url 缺省 localhost:9621）
  * @param battleReport 实况战场播报输出目标；null/0 = 关闭，"1" = /tmp/ygo-live/battlefield.log，其余 = 文件路径
  * @param deckStrategy 用户手写的卡组打法思路（注入规划器/决策器上下文；可空）
  * @param tuning       一局对局的运行调参（原始帧/看门狗/进房等待/combo 注入上限）
@@ -35,7 +36,7 @@ public record RuntimeConfig(
         String host, int port, String name, String ydkPath, String move,
         String archetype,
         Path duelLogPath, Path tracePath,
-        LightRagEndpoint lightRag,
+        LightRagSettings lightRag,
         String battleReport,
         String deckStrategy,
         DuelTuning tuning,
@@ -60,8 +61,8 @@ public record RuntimeConfig(
         Path trace = cli.tracePath() != null
                 ? Path.of(cli.tracePath()) : Path.of("/tmp/ygo-trace/" + stamp + ".jsonl");
 
-        LightRagEndpoint lightRag = new LightRagEndpoint(
-                lookup.apply("LIGHTRAG_URL"),
+        LightRagSettings lightRag = new LightRagSettings(
+                Texts.firstNonBlank(lookup.apply("LIGHTRAG_URL"), "http://localhost:9621"),
                 lookup.apply("LIGHTRAG_API_KEY"),
                 parseLong(lookup.apply("LIGHTRAG_TIMEOUT_MS"), 8_000L));
         return new RuntimeConfig(host, port, name, cli.ydkPath(), move, cli.archetype(),

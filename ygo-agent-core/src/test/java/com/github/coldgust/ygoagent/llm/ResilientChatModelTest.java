@@ -37,7 +37,7 @@ class ResilientChatModelTest {
     void 空正文_放宽到下限2000重试一次() {
         FakeModel fake = new FakeModel("", "ok");
         var model = new ResilientChatModel(fake);
-        var options = new ChatOptions(0.2, 100, true, TIMEOUT, null);
+        var options = new ChatOptions(0.2, 100, true, null);
 
         assertEquals("ok", model.chat(request(options)).aiMessage().text());
         assertEquals(2000, maxTokens(fake.requests.getLast()));
@@ -48,7 +48,7 @@ class ResilientChatModelTest {
     void 空正文_放宽上限8000() {
         FakeModel fake = new FakeModel("", "ok");
         var model = new ResilientChatModel(fake);
-        var options = new ChatOptions(0.2, 6000, true, TIMEOUT, null);
+        var options = new ChatOptions(0.2, 6000, true, null);
 
         assertEquals("ok", model.chat(request(options)).aiMessage().text());
         assertEquals(8000, maxTokens(fake.requests.getLast()));
@@ -59,7 +59,7 @@ class ResilientChatModelTest {
         FakeModel fake = new FakeModel();
         fake.enqueueToolCall("call-1", "t", "{}");
         var model = new ResilientChatModel(fake);
-        var options = new ChatOptions(0.2, 100, true, TIMEOUT, null);
+        var options = new ChatOptions(0.2, 100, true, null);
 
         assertTrue(model.chat(request(options)).aiMessage().hasToolExecutionRequests());
         assertEquals(1, fake.requests.size());
@@ -71,7 +71,7 @@ class ResilientChatModelTest {
         fake.failWith(new LlmChatException("LLM 调用超时: 10s",
                 new HttpTimeoutException("request timeout")));
         var model = new ResilientChatModel(fake);
-        var options = new ChatOptions(0.2, 100, true, TIMEOUT, "low");
+        var options = new ChatOptions(0.2, 100, true, "low");
 
         assertThrows(LlmChatException.class, () -> model.chat(request(options)));
         assertEquals(1, fake.requests.size());
@@ -84,7 +84,7 @@ class ResilientChatModelTest {
         var model = new ResilientChatModel(fake);
 
         assertThrows(LlmChatException.class,
-                () -> model.chat(request(new ChatOptions(0.2, 100, false, TIMEOUT, null))));
+                () -> model.chat(request(new ChatOptions(0.2, 100, false, null))));
         assertEquals(1, fake.requests.size());
     }
 
@@ -93,7 +93,7 @@ class ResilientChatModelTest {
         FakeModel fake = new FakeModel("ok");
         fake.failWith(new LlmChatException("LLM HTTP 400: unknown field", null));
         var model = new ResilientChatModel(fake);
-        var options = new ChatOptions(0.2, 4000, true, TIMEOUT, "low");
+        var options = new ChatOptions(0.2, 4000, true, "low");
 
         assertEquals("ok", model.chat(request(options)).aiMessage().text());
         assertEquals(2, fake.requests.size());
@@ -106,7 +106,7 @@ class ResilientChatModelTest {
         FakeModel fake = new FakeModel("ok");
         fake.failWith(new LlmChatException("LLM HTTP 503: busy", null));
         var model = new ResilientChatModel(fake);
-        var options = new ChatOptions(0.2, 100, false, TIMEOUT, null);
+        var options = new ChatOptions(0.2, 100, false, null);
 
         assertEquals("ok", model.chat(request(options)).aiMessage().text());
         assertEquals(2, fake.requests.size());
@@ -121,7 +121,7 @@ class ResilientChatModelTest {
         var model = new ResilientChatModel(fake);
 
         LlmChatException e = assertThrows(LlmChatException.class,
-                () -> model.chat(request(new ChatOptions(0.2, 100, false, TIMEOUT, null))));
+                () -> model.chat(request(new ChatOptions(0.2, 100, false, null))));
         assertTrue(e.getMessage().contains("HTTP 429"), e.getMessage());
         assertEquals(2, fake.requests.size());
     }

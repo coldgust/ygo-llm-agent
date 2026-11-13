@@ -87,7 +87,6 @@
     PLAN_PUBLISHED: '发布计划',
     KEEP: '计划维持',
     PARSE_FAILED: '解析失败',
-    PLAN_EMPTY: '空输出',
     CHECKPOINT_FAILED: '存档失败',
   }
 
@@ -264,7 +263,6 @@
       if (e.planKind === 'KEEP') return '规划器确认计划仍有效'
       if (e.planKind === 'PARSE_FAILED')
         return `规划器输出解析失败（保持当前计划）${e.reason ? '：' + e.reason : ''}`
-      if (e.planKind === 'PLAN_EMPTY') return '规划器返回空内容（按计划维持处理，不降级）'
       if (e.planKind === 'CHECKPOINT_FAILED') return '规划器存档失败（冷却降级）'
       return e.planKind
     }

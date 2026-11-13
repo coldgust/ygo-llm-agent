@@ -41,7 +41,7 @@ public final class DuelRunner {
     private final DuelListener extraListener;
     private final CardFacts cardFactsOverride;
     /** 规则/历史对局检索的连接配置：由组装根注入（CLI 从 env+dotenv 解析；server 由 Spring 配置绑定）。 */
-    private final LightRagEndpoint lightRag;
+    private final LightRagSettings lightRag;
     private final VerboseLog verbose;
 
     public DuelRunner(PipelineSettings planExecSettings) {
@@ -63,14 +63,14 @@ public final class DuelRunner {
                       DuelWebHooks webHooks,
                       DuelListener extraListener,
                       CardFacts cardFactsOverride) {
-        this(planExecSettings, webHooks, extraListener, cardFactsOverride, new LightRagEndpoint(null, null, 8_000L));
+        this(planExecSettings, webHooks, extraListener, cardFactsOverride, null);
     }
 
     public DuelRunner(PipelineSettings planExecSettings,
                       DuelWebHooks webHooks,
                       DuelListener extraListener,
                       CardFacts cardFactsOverride,
-                      LightRagEndpoint lightRag) {
+                      LightRagSettings lightRag) {
         this(planExecSettings, webHooks, extraListener, cardFactsOverride, lightRag,
                 new VerboseLog(VerboseLogSettings.off()));
     }
@@ -79,13 +79,13 @@ public final class DuelRunner {
                       DuelWebHooks webHooks,
                       DuelListener extraListener,
                       CardFacts cardFactsOverride,
-                      LightRagEndpoint lightRag,
+                      LightRagSettings lightRag,
                       VerboseLog verbose) {
         this.planExecSettings = planExecSettings;
         this.webHooks = webHooks == null ? DuelWebHooks.none() : webHooks;
         this.extraListener = extraListener;
         this.cardFactsOverride = cardFactsOverride;
-        this.lightRag = lightRag == null ? new LightRagEndpoint(null, null, 8_000L) : lightRag;
+        this.lightRag = lightRag;
         this.verbose = verbose == null ? new VerboseLog(VerboseLogSettings.off()) : verbose;
     }
 
@@ -175,7 +175,7 @@ public final class DuelRunner {
                         deckPasscodes(deck),
                         webHooks.recordedCombos(),
                         spec.tuning().comboContextLimit(),
-                        new LightRagSettings(lightRag.url(), lightRag.apiKey(), lightRag.timeoutMillis()),
+                        lightRag,
                         timeline),
                         verbose);
                 try {

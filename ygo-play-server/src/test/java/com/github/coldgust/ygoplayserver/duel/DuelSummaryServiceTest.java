@@ -1,11 +1,10 @@
 package com.github.coldgust.ygoplayserver.duel;
 
-import com.github.coldgust.ygoagent.llm.AgentChatFactory;
 import com.github.coldgust.ygoagent.llm.LlmEndpoint;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
 import com.github.coldgust.ygoagent.llm.LlmChatException;
-import com.github.coldgust.ygoagent.llm.service.AgentChatServices;
+import com.github.coldgust.ygoagent.llm.service.NarratorAgent;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
@@ -40,7 +39,7 @@ class DuelSummaryServiceTest {
                 null, null, "SKY_STRIKER", false, log, trace, null);
     }
 
-    private static DuelSummaryService service(DuelSummaryProperties props, AgentChatServices chat) {
+    private static DuelSummaryService service(DuelSummaryProperties props, NarratorAgent chat) {
         return new DuelSummaryService(new LightRagProperties(null, null, 8_000L), props, chat, new VerboseLog(VerboseLogSettings.off()));
     }
 
@@ -48,7 +47,7 @@ class DuelSummaryServiceTest {
             new LlmEndpoint("http://localhost:9", "k", "deepseek-chat");
 
     /** 固定回复的假模型：记录最后一条 user 消息（narrative 返回 String，无格式指令）。 */
-    private static AgentChatServices markdownService(String[] seen, boolean[] called, String reply) {
+    private static NarratorAgent markdownService(String[] seen, boolean[] called, String reply) {
         ChatModel model = new ChatModel() {
             @Override
             public ChatResponse chat(ChatRequest request) {
@@ -65,19 +64,17 @@ class DuelSummaryServiceTest {
                 return ChatResponse.builder().aiMessage(AiMessage.from(reply)).build();
             }
         };
-        return new AgentChatServices(AgentChatFactory.withSource((t, tier, w) -> model),
-                new VerboseLog(VerboseLogSettings.off()));
+        return new NarratorAgent(model, "sys", null);
     }
 
-    private static AgentChatServices brokenService() {
+    private static NarratorAgent brokenService() {
         ChatModel model = new ChatModel() {
             @Override
             public ChatResponse chat(ChatRequest request) {
                 throw new LlmChatException("boom");
             }
         };
-        return new AgentChatServices(AgentChatFactory.withSource((t, tier, w) -> model),
-                new VerboseLog(VerboseLogSettings.off()));
+        return new NarratorAgent(model, "sys", null);
     }
 
     @Test
@@ -105,7 +102,7 @@ class DuelSummaryServiceTest {
             Files.writeString(trace, TRACE);
             Files.writeString(log, "");
             String[] seen = new String[1];
-            AgentChatServices fake = markdownService(seen, null, """
+            NarratorAgent fake = markdownService(seen, null, """
                         ## 一句话结论
                         先手无展开点空过，第二回合被对手铺场 OTK。
 
@@ -139,7 +136,7 @@ class DuelSummaryServiceTest {
         try {
             Files.writeString(trace, TRACE);
             Files.writeString(log, "");
-            AgentChatServices rambling = markdownService(null, null, "这局打得还行，下次注意资源。");
+            NarratorAgent rambling = markdownService(null, null, "这局打得还行，下次注意资源。");
 
             String summary = service(DuelSummaryProperties.defaults(), rambling)
                     .build("d3", spec(log, trace), null);
@@ -160,7 +157,7 @@ class DuelSummaryServiceTest {
             Files.writeString(trace, TRACE);
             Files.writeString(log, "");
             boolean[] called = new boolean[1];
-            AgentChatServices fake = markdownService(null, called, "## 一句话结论\nxx\n\n## 局面走向\nxx\n");
+            NarratorAgent fake = markdownService(null, called, "## 一句话结论\nxx\n\n## 局面走向\nxx\n");
             DuelSummaryProperties props = new DuelSummaryProperties(null, "template", null, null, null, null);
 
             String summary = service(props, fake).build("d4", spec(log, trace), null);
@@ -180,7 +177,7 @@ class DuelSummaryServiceTest {
         try {
             Files.writeString(trace, TRACE);
             Files.writeString(log, "");
-            AgentChatServices broken = brokenService();
+            NarratorAgent broken = brokenService();
 
             String summary = service(DuelSummaryProperties.defaults(), broken)
                     .build("d5", spec(log, trace), null);
@@ -230,7 +227,7 @@ class DuelSummaryServiceTest {
         try {
             Files.writeString(trace, TRACE);
             Files.writeString(log, "");
-            AgentChatServices fake = markdownService(null, null, """
+            NarratorAgent fake = markdownService(null, null, """
                     ## 一句话结论
                     双方均无展开，资源互换后平推结束，没有任何转折。
 
@@ -263,7 +260,7 @@ class DuelSummaryServiceTest {
         try {
             Files.writeString(trace, TRACE);
             Files.writeString(log, "");
-            AgentChatServices fake = markdownService(null, null, """
+            NarratorAgent fake = markdownService(null, null, """
                     ## 一句话结论
                     我方后手顶住对手第一波场面后，抓住对手断资源的一回合完成反打并带走比赛。
 

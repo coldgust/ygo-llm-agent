@@ -3,12 +3,17 @@ package com.github.coldgust.ygoagent.planner;
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
 import com.github.coldgust.ygoagent.context.DuelMathService;
 import com.github.coldgust.ygoagent.context.DuelTimeline;
-import com.github.coldgust.ygoagent.llm.AgentChatFactory;
+import com.github.coldgust.ygoagent.llm.ChatOptions;
+import com.github.coldgust.ygoagent.llm.service.Narrator;
+import com.github.coldgust.ygoagent.llm.ResilientChatModel;
+import com.github.coldgust.ygoagent.llm.service.JudgeAgent;
+import com.github.coldgust.ygoagent.llm.service.PlannerAgent;
+import com.github.coldgust.ygoagent.llm.service.PlannerUrgentAgent;
+import com.github.coldgust.ygoagent.llm.memory.PlannerChatMemory;
 import com.github.coldgust.ygoagent.llm.FakeChatModel;
-import com.github.coldgust.ygoagent.llm.LlmEndpoint;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
-import com.github.coldgust.ygoagent.llm.service.AgentChatServices;
+import com.github.coldgust.ygoagent.planner.PlannerPrompts;
 import com.github.coldgust.ygoagent.model.ChoiceIntent;
 import com.github.coldgust.ygoagent.model.DecisionPoint;
 import com.github.coldgust.ygoagent.pipeline.PipelineSettings;
@@ -29,9 +34,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 没有记录行时规划器在回合中段看不到对手的动作。
  */
 class PlannerSessionRecordBatchTest {
-
-    private static final LlmEndpoint ENDPOINT =
-            new LlmEndpoint("http://localhost:9", "k", "deepseek-chat");
 
     private static PipelineSettings settings() {
         PipelineSettings s = PipelineSettings.defaults(Path.of("data/card_rag/cards.jsonl"),
@@ -62,7 +64,14 @@ class PlannerSessionRecordBatchTest {
             }
         };
         var trace = new VerboseLog(VerboseLogSettings.off());
-        AgentChatServices services = new AgentChatServices(AgentChatFactory.withSource((t, tier, w) -> chat.baked(tier, w)), trace);
+        var memory = new PlannerChatMemory("test");
+        PlannerAgent plannerAgent = new PlannerAgent(
+                new ResilientChatModel(chat.baked(settings().checkpointOptions(), true)),
+                PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), "", trace);
+        PlannerUrgentAgent urgentAgent = new PlannerUrgentAgent(
+                new ResilientChatModel(chat.baked(
+                        ChatOptions.decision(settings().judgeMaxTokens()).withReasoning(settings().reasoningDecision()), true)),
+                PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), trace);
 
         // 可变假记录：锚点构建时为空（水位对齐 0），之后才追加事件 → 事件批要能增量拿到
         List<DuelTimeline.Entry> store = Collections.synchronizedList(new ArrayList<>());
@@ -93,8 +102,8 @@ class PlannerSessionRecordBatchTest {
                 .advisory(true)
                 .timeline(timeline)
                 .build();
-        PlannerSession planner = new PlannerSession(services, packer, TestDuels.facts(),
-                settings(), null, null, timeline, trace);
+        PlannerSession planner = new PlannerSession(plannerAgent, urgentAgent, packer, TestDuels.facts(),
+                settings(), null, timeline, trace);
 
         DecisionPoint point = pointOf(3);
         planner.observePoint(point);

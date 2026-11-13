@@ -193,10 +193,10 @@ public final class PlannerPrompts {
 
 
     public static final String ANCHOR_TEMPLATE = """
-            ===回合锚点（第 %d 段，%s）===
+            ===回合锚点（第 %d 回合，%s）===
             %s
 
-            请给出本段（本回合）的计划 JSON。
+            请给出本回合的计划 JSON。
             """;
 
 
@@ -204,7 +204,7 @@ public final class PlannerPrompts {
      * 顾问模式的本回合锚点请求：局面与决斗记录是首要证据。
      */
     public static final String ADVISOR_ANCHOR_TEMPLATE = """
-            ===回合锚点（第 %d 段，%s）===
+            ===回合锚点（第 %d 回合，%s）===
             %s
 
             请基于 [局面] 与 [决斗记录] 给出本回合的**战术建议** JSON
@@ -217,7 +217,7 @@ public final class PlannerPrompts {
      * 顾问模式的对方回合锚点。
      */
     public static final String ADVISOR_ANCHOR_OPP_TEMPLATE = """
-            ===回合锚点（第 %d 段，对方回合——防守）===
+            ===回合锚点（第 %d 回合，对方回合——防守）===
             %s
 
             请基于 [局面] 与 [决斗记录] 给出防守建议 JSON（analysis / goal / tactics / combo / confidence）：
@@ -239,7 +239,7 @@ public final class PlannerPrompts {
             """;
 
     public static final String ANCHOR_OPP_TEMPLATE = """
-            ===回合锚点（第 %d 段，对方回合——防守计划）===
+            ===回合锚点（第 %d 回合，对方回合——防守计划）===
             %s
 
             对方回合你的计划是应对策略而非主动动作，但**不要把 steps 写成空数组**：
@@ -252,7 +252,7 @@ public final class PlannerPrompts {
             """;
 
     /**
-     * 规划器回了 keep，但本段其实没有可沿用的计划（锚点解析失败后的常见退化）。
+     * 规划器回了 keep，但本回合其实没有可沿用的计划（锚点解析失败后的常见退化）。
      */
     public static final String KEEP_RECOVERY_TEMPLATE = """
             ===没有可沿用的计划===

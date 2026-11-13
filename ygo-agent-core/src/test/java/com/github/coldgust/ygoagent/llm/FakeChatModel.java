@@ -25,7 +25,6 @@ public class FakeChatModel implements ChatModel {
     private final AtomicInteger index = new AtomicInteger();
     public final List<ChatRequest> requests = new ArrayList<>();
     public boolean fail = false;
-    private OpenAiChatRequestParameters bakedDefaults;
 
     public FakeChatModel(String... replies) {
         this.replies = List.of(replies.length == 0 ? new String[]{"{\"keep\": true}"} : replies);
@@ -49,12 +48,24 @@ public class FakeChatModel implements ChatModel {
     }
 
     /**
-     * 给假模型配上默认档位参数（模拟生产里 bake 进模型的 defaultRequestParameters），
+     * 给假模型套上默认档位参数（模拟生产里 bake 进模型的 defaultRequestParameters），
      * 供需要断言 wire 参数的测试走真实的 ResilientChatModel 合并路径。
+     * 返回独立包装（同一个假模型可按不同档位套多个包装，回复序列共享）。
      */
-    public FakeChatModel baked(ChatOptions tier, boolean withTools) {
-        bakedDefaults = TierParameters.of(tier, "deepseek-chat", withTools);
-        return this;
+    public ChatModel baked(ChatOptions tier, boolean withTools) {
+        OpenAiChatRequestParameters defaults = TierParameters.of(tier, "deepseek-chat", withTools);
+        FakeChatModel parent = this;
+        return new ChatModel() {
+            @Override
+            public ChatRequestParameters defaultRequestParameters() {
+                return defaults;
+            }
+
+            @Override
+            public ChatResponse chat(ChatRequest request) {
+                return parent.chat(request);
+            }
+        };
     }
 
     /** 给任意模型套上默认档位参数（Recorder 等自建假模型用）。 */

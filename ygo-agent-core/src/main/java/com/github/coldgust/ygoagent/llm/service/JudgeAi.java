@@ -14,7 +14,7 @@ import dev.langchain4j.service.V;
  * <p>档位参数 bake 在模型 defaultRequestParameters 里（plain 带 json、tools 变体不带），
  * 方法不带 wire 参数。
  */
-public interface JudgeAi {
+interface JudgeAi {
 
     @SystemMessage(JudgePrompts.SYSTEM)
     @UserMessage("{{staticMaterial}}\n\n{{closedTurns}}\n\n{{decisionPack}}")

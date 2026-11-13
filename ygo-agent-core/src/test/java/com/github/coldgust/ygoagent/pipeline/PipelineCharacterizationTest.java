@@ -2,12 +2,16 @@ package com.github.coldgust.ygoagent.pipeline;
 
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
 import com.github.coldgust.ygoagent.context.DuelMathService;
-import com.github.coldgust.ygoagent.llm.AgentChatFactory;
+import com.github.coldgust.ygoagent.llm.ChatOptions;
+import com.github.coldgust.ygoagent.llm.service.Narrator;
+import com.github.coldgust.ygoagent.llm.ResilientChatModel;
+import com.github.coldgust.ygoagent.llm.service.JudgeAgent;
+import com.github.coldgust.ygoagent.llm.service.PlannerAgent;
+import com.github.coldgust.ygoagent.llm.service.PlannerUrgentAgent;
+import com.github.coldgust.ygoagent.llm.memory.PlannerChatMemory;
 import com.github.coldgust.ygoagent.llm.FakeChatModel;
-import com.github.coldgust.ygoagent.llm.LlmEndpoint;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
-import com.github.coldgust.ygoagent.llm.service.AgentChatServices;
 import com.github.coldgust.ygoagent.model.ChoiceIntent;
 import com.github.coldgust.ygoagent.model.DecisionDeadline;
 import com.github.coldgust.ygoagent.model.DecisionExplanation;
@@ -16,6 +20,7 @@ import com.github.coldgust.ygoagent.model.DuelDecision;
 import com.github.coldgust.ygoagent.model.PathKind;
 import com.github.coldgust.ygoagent.model.Timing;
 import com.github.coldgust.ygoagent.pipeline.reflex.ReflexPolicyImpl;
+import com.github.coldgust.ygoagent.planner.PlannerPrompts;
 import com.github.coldgust.ygoagent.planner.PlannerSession;
 import com.github.coldgust.ygoagent.trace.DecisionTraceWriter;
 import com.github.coldgust.ygoagent.pipeline.TestDuels;
@@ -38,9 +43,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  */
 class PipelineCharacterizationTest {
 
-    private static final LlmEndpoint ENDPOINT =
-            new LlmEndpoint("http://localhost:9", "k", "deepseek-chat");
-
     private final VerboseLog trace = new VerboseLog(VerboseLogSettings.off());
 
     private static PipelineSettings cfg() {
@@ -50,6 +52,24 @@ class PipelineCharacterizationTest {
                 0, 0, 20_000, 6, 0.80, 300,
                 d.plannerCallTimeoutMs(), d.plannerCooldownMs(),
                 d.cardRagPath(), d.judgeMaxTokens(), true, true);
+    }
+
+    private record Agents(PlannerAgent planner, PlannerUrgentAgent urgent, JudgeAgent judge) {
+    }
+
+    private Agents agents(FakeChatModel chat, PipelineSettings cfg) {
+        var memory = new PlannerChatMemory("test");
+        return new Agents(
+                new PlannerAgent(new ResilientChatModel(chat.baked(cfg.checkpointOptions(), true)),
+                        cfg.pathPlanning() ? PlannerPrompts.PLANNER_SYSTEM : PlannerPrompts.ADVISOR_SYSTEM,
+                        memory, List.of(), "", trace),
+                new PlannerUrgentAgent(new ResilientChatModel(chat.baked(
+                        ChatOptions.decision(cfg.judgeMaxTokens()).withReasoning(cfg.reasoningDecision()), true)),
+                        cfg.pathPlanning() ? PlannerPrompts.PLANNER_SYSTEM : PlannerPrompts.ADVISOR_SYSTEM,
+                        memory, List.of(), trace),
+                new JudgeAgent(new ResilientChatModel(chat.baked(
+                        ChatOptions.decision(cfg.judgeMaxTokens()).withReasoning(cfg.reasoningDecision()),
+                        false)), List.of(), trace));
     }
 
     private static DecisionPoint mainPoint() {
@@ -85,13 +105,12 @@ class PipelineCharacterizationTest {
     void execDecisionPayloadKeysAndPlanStepAreStable() {
         EventCatcher catcher = new EventCatcher();
         FakeChatModel chat = new FakeChatModel(planJson("activate", TestDuels.ENGAGE), "{\"keep\": true}");
-        AgentChatServices services = new AgentChatServices(AgentChatFactory.withSource((t, tier, w) -> chat), trace);
-        PlannerSession planner = new PlannerSession(services,
+        PlannerSession planner = new PlannerSession(agents(chat, cfg()).planner(), agents(chat, cfg()).urgent(),
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
                 TestDuels.facts(), cfg(), trace);
         DecisionPipeline port = new DecisionPipeline(point -> Optional.empty(), planner,
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
-                services, cfg(), TestDuels.facts(),
+                agents(chat, cfg()).judge(), cfg(), TestDuels.facts(),
                 (p, d) -> new DuelDecision(new ChoiceIntent.EndTurn(), PathKind.TACTICAL, 0.5,
                         DecisionExplanation.of("delegate"), Timing.ZERO),
                 catcher, trace);
@@ -116,13 +135,12 @@ class PipelineCharacterizationTest {
     void judgePayloadOmitsPlanFieldsWhenNoPlan() {
         EventCatcher catcher = new EventCatcher();
         FakeChatModel chat = new FakeChatModel("{\"choice\": \"C1\", \"rationale\": \"r\", \"confidence\": 0.5}");
-        AgentChatServices services = new AgentChatServices(AgentChatFactory.withSource((t, tier, w) -> chat), trace);
-        PlannerSession planner = new PlannerSession(services,
+        PlannerSession planner = new PlannerSession(agents(chat, cfg()).planner(), agents(chat, cfg()).urgent(),
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
                 TestDuels.facts(), cfg(), trace);
         DecisionPipeline port = new DecisionPipeline(point -> Optional.empty(), planner,
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
-                services, cfg(), TestDuels.facts(),
+                agents(chat, cfg()).judge(), cfg(), TestDuels.facts(),
                 (p, d) -> new DuelDecision(new ChoiceIntent.EndTurn(), PathKind.TACTICAL, 0.5,
                         DecisionExplanation.of("delegate"), Timing.ZERO),
                 catcher, trace);

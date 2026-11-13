@@ -1,6 +1,10 @@
 package com.github.coldgust.ygoagent.llm;
 
+import com.github.coldgust.ygoagent.llm.LlmEndpoint;
+import com.github.coldgust.ygoagent.llm.VerboseLog;
+import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
 import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -27,10 +31,11 @@ class DeepseekWireTest {
 
     private StubLlm stub;
 
-    private AgentChatFactory factory() throws IOException {
+    private ChatModel factory() throws IOException {
         stub = new StubLlm();
-        return AgentChatFactory.openAiCompatible(
+        return AgentModels.openAi(
                 new LlmEndpoint(stub.url(), "test-key", "deepseek-chat"),
+                ChatOptions.decision(100), Duration.ofSeconds(5), false,
                 new VerboseLog(VerboseLogSettings.off()));
     }
 
@@ -43,12 +48,12 @@ class DeepseekWireTest {
 
     @Test
     void 决策档_请求体带json与thinking_disabled() throws IOException {
-        AgentChatFactory factory = factory();
+        ChatModel agents = factory();
         stub.enqueue(200, StubLlm.content("ok"));
-        var options = ChatOptions.decision(100, Duration.ofSeconds(5));
+        var options = ChatOptions.decision(100);
 
         // 档位参数 bake 进模型：请求不带 parameters，由 defaultRequestParameters 供给
-        factory.modelFor(options.timeout(), options, false).chat(ChatRequest.builder()
+        agents.chat(ChatRequest.builder()
                 .messages(List.of(UserMessage.from("q")))
                 .build());
 
@@ -62,11 +67,15 @@ class DeepseekWireTest {
 
     @Test
     void 推理档_请求体带thinking_enabled与effort() throws IOException {
-        AgentChatFactory factory = factory();
+        stub = new StubLlm();
         stub.enqueue(200, StubLlm.content("ok"));
-        var options = new ChatOptions(0.4, 8000, true, Duration.ofSeconds(5), "low");
+        var options = new ChatOptions(0.4, 8000, true, "low");
+        ChatModel agents = AgentModels.openAi(
+                new LlmEndpoint(stub.url(), "test-key", "deepseek-chat"),
+                options, Duration.ofSeconds(5), false,
+                new VerboseLog(VerboseLogSettings.off()));
 
-        factory.modelFor(options.timeout(), options, false).chat(ChatRequest.builder()
+        agents.chat(ChatRequest.builder()
                 .messages(List.of(UserMessage.from("q")))
                 .build());
 
@@ -78,13 +87,14 @@ class DeepseekWireTest {
     @Test
     void baseUrl去尾斜杠_拼接chat_completions() throws IOException {
         stub = new StubLlm();
-        AgentChatFactory factory = AgentChatFactory.openAiCompatible(
+        ChatModel agents = AgentModels.openAi(
                 new LlmEndpoint(stub.url() + "/", "k", "deepseek-chat"),
+                ChatOptions.decision(100), Duration.ofSeconds(5), false,
                 new VerboseLog(VerboseLogSettings.off()));
         stub.enqueue(200, StubLlm.content("ok"));
-        var options = new ChatOptions(0.2, 100, false, Duration.ofSeconds(5), null);
+        var options = new ChatOptions(0.2, 100, false, null);
 
-        factory.modelFor(Duration.ofSeconds(5), options, false).chat(ChatRequest.builder()
+        agents.chat(ChatRequest.builder()
                 .messages(List.of(UserMessage.from("q")))
                 .build());
 

@@ -1,13 +1,12 @@
 package com.github.coldgust.ygoplayserver.duel.summary;
 
-import com.github.coldgust.ygoagent.llm.ChatOptions;
+import com.github.coldgust.ygoagent.llm.service.NarratorAgent;
+import com.github.coldgust.ygoagent.llm.LlmEndpoint;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
-import com.github.coldgust.ygoagent.llm.service.AgentChatServices;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.time.Duration;
 import java.util.Optional;
 
 public final class DuelSummarizer {
@@ -20,15 +19,11 @@ public final class DuelSummarizer {
     public record Review(String body, boolean worthStoring) {
     }
 
-    private final AgentChatServices services;
-    private final int maxTokens;
-    private final Duration timeout;
+    private final NarratorAgent narratorAgent;
     private final VerboseLog trace;
 
-    public DuelSummarizer(AgentChatServices services, int maxTokens, Duration timeout, VerboseLog trace) {
-        this.services = services;
-        this.maxTokens = Math.max(500, maxTokens);
-        this.timeout = timeout;
+    public DuelSummarizer(NarratorAgent narratorAgent, VerboseLog trace) {
+        this.narratorAgent = narratorAgent;
         this.trace = trace == null ? new VerboseLog(VerboseLogSettings.off()) : trace;
     }
 
@@ -38,8 +33,7 @@ public final class DuelSummarizer {
             // 作用域标签让日志能分清"这次请求是赛后复盘还是对局决策"
             String raw;
             try (var ignored = trace.scope("赛后复盘")) {
-                raw = services.narrate(timeout, DuelSummaryPrompts.SYSTEM, prompt,
-                        ChatOptions.narrative(maxTokens, timeout), null);
+                raw = narratorAgent.write(prompt);
             }
             String body = DuelSummaryPrompts.stripWrapper(raw);
             if (!DuelSummaryPrompts.looksUsable(body)) {

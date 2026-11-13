@@ -4,10 +4,8 @@ import com.github.coldgust.ygoagent.context.ContextPackBuilder;
 import com.github.coldgust.ygoagent.context.IntentSummary;
 import com.github.coldgust.ygoagent.knowledge.CardFact;
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
-import com.github.coldgust.ygoagent.llm.ComboTool;
-import com.github.coldgust.ygoagent.llm.service.AgentChatServices;
+import com.github.coldgust.ygoagent.llm.service.JudgeAgent;
 import com.github.coldgust.ygoagent.llm.DecisionTools;
-import com.github.coldgust.ygoagent.llm.RulebookTool;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
 import com.github.coldgust.ygoagent.model.ChoiceIntent;
@@ -69,19 +67,10 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
     private final LlmJudge judge;
 
     public DecisionPipeline(ReflexPolicy reflex, PlannerSession planner,
-                                    ContextPackBuilder packer, AgentChatServices chat,
+                                    ContextPackBuilder packer, JudgeAgent judgeAgent,
                                     PipelineSettings settings, CardFacts facts,
                                     DecisionEngine delegate, DecisionTraceWriter traceWriter,
                                     VerboseLog trace) {
-        this(reflex, planner, packer, chat, settings, facts, delegate, traceWriter,
-                DecisionTools.NONE, trace);
-    }
-
-    public DecisionPipeline(ReflexPolicy reflex, PlannerSession planner,
-                                    ContextPackBuilder packer, AgentChatServices chat,
-                                    PipelineSettings settings, CardFacts facts,
-                                    DecisionEngine delegate, DecisionTraceWriter traceWriter,
-                                    DecisionTools tools, VerboseLog trace) {
         this.reflex = reflex;
         this.planner = planner;
         this.settings = settings;
@@ -93,7 +82,7 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
         this.placement = new PlacementResolver(planner, memory);
         this.follower = new PlanFollower(planner, new StepGrounder(), new SimilarityMatcher(),
                 settings, memory, this.trace);
-        this.judge = new LlmJudge(chat, packer, tools, settings, planner, memory, this.trace);
+        this.judge = new LlmJudge(judgeAgent, packer, settings, planner, memory, this.trace);
     }
 
     @Override

@@ -2,7 +2,7 @@ package com.github.coldgust.ygoplayserver.duel;
 
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
 import com.github.coldgust.ygoagent.knowledge.JsonlCardFacts;
-import com.github.coldgust.ygoplay.LightRagEndpoint;
+import com.github.coldgust.ygoagent.llm.LightRagSettings;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
 import com.github.coldgust.ygoagent.trace.CallbackTraceWriter;
@@ -72,7 +72,7 @@ public class DuelRunnerFactory {
                         : null,
                 recordedSource(),
                 (id, eventName, payload) -> eventHub.publish(id, eventName, payload));
-        LightRagEndpoint lightRag = new LightRagEndpoint(lightRagProps.url(),
+        LightRagSettings lightRag = new LightRagSettings(lightRagProps.url(),
                 lightRagProps.apiKey(), lightRagProps.timeoutMs());
         DuelRunner runner = new DuelRunner(planExec, hooks, null, cardFacts, lightRag, trace);
         return runner::run;

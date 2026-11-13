@@ -25,10 +25,6 @@ public record DecisionTools(RulebookTool rulebook, ComboTool combo, CardTool car
         this(rulebook, combo, card, null);
     }
 
-    public boolean isEmpty() {
-        return providers().isEmpty();
-    }
-
     /** 可注册给模型的 @Tool 工具对象（按可用性挑选）。 */
     public List<Object> providers() {
         List<Object> out = new ArrayList<>();

@@ -16,7 +16,12 @@ import com.github.coldgust.ygoagent.llm.LightRagSettings;
 import com.github.coldgust.ygoagent.llm.RulebookTool;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
-import com.github.coldgust.ygoagent.llm.service.AgentChatServices;
+import com.github.coldgust.ygoagent.llm.ChatOptions;
+import com.github.coldgust.ygoagent.llm.memory.PlannerChatMemory;
+import com.github.coldgust.ygoagent.llm.AgentModels;
+import com.github.coldgust.ygoagent.llm.service.JudgeAgent;
+import com.github.coldgust.ygoagent.llm.service.PlannerAgent;
+import com.github.coldgust.ygoagent.llm.service.PlannerUrgentAgent;
 import com.github.coldgust.ygoagent.model.DecisionDeadline;
 import com.github.coldgust.ygoagent.model.DecisionPoint;
 import com.github.coldgust.ygoagent.model.DuelDecision;
@@ -27,12 +32,14 @@ import com.github.coldgust.ygoagent.pipeline.fallback.RuleBasedEngine;
 import com.github.coldgust.ygoagent.pipeline.fallback.SimpleArbiter;
 import com.github.coldgust.ygoagent.pipeline.fallback.TacticalPlannerImpl;
 import com.github.coldgust.ygoagent.pipeline.reflex.ReflexPolicyImpl;
+import com.github.coldgust.ygoagent.planner.PlannerPrompts;
 import com.github.coldgust.ygoagent.planner.PlannerSession;
 import com.github.coldgust.ygoagent.trace.DecisionTraceWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.io.UncheckedIOException;
 import java.util.List;
 
@@ -111,7 +118,6 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
             log.info("LightRAG 未配置：规则/历史对局检索工具停用（模型只依赖[规则速查]与卡面）");
         }
         RulebookTool rulebook = knowledge ? new RulebookTool(config.lightRag(), "mix", 8) : null;
-        AgentChatServices chat = AgentChatServices.openAiCompatible(settings.endpoint(), log0);
         // 连招查询工具：按主题/关键卡查 PG 实战录入（主要用于推断对手卡组后参考）
         ComboTool comboTool = config.combos() != null && config.combos().available()
                 ? new ComboTool(config.combos(), config.archetype())
@@ -121,14 +127,35 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
         CardTool cardTool = new CardTool(facts);
         // 规划器的工具集：规则 + 查卡 + 连招（不含历史对局检索，那是执行器的事）
         DecisionTools plannerTools = new DecisionTools(rulebook, comboTool, cardTool);
-        PlannerSession planner = new PlannerSession(
-                chat, packer, facts, settings, traceWriter, plannerTools,
-                config.timeline(), log0);
         DuelRecallTool duelRecall = knowledge ? new DuelRecallTool(config.lightRag(), "mix", 4) : null;
         DecisionTools decisionTools = new DecisionTools(rulebook, comboTool, cardTool, duelRecall);
+        // 四个固定 agent：档位与超时在构造期固定（决策侧调用方另有 deadline 预算兜底）
+        String plannerSystem = settings.pathPlanning() ? PlannerPrompts.PLANNER_SYSTEM
+                : PlannerPrompts.ADVISOR_SYSTEM;
+        var plannerMemory = new PlannerChatMemory("ygo-planner");
+        PlannerAgent plannerAgent = new PlannerAgent(
+                AgentModels.openAi(settings.endpoint(), settings.checkpointOptions(),
+                        settings.checkpointTimeout(), true, log0),
+                plannerSystem, plannerMemory, plannerTools.providers(),
+                packer.plannerStaticMaterial(), log0);
+        PlannerUrgentAgent urgentAgent = new PlannerUrgentAgent(
+                AgentModels.openAi(settings.endpoint(),
+                        ChatOptions.decision(settings.judgeMaxTokens())
+                                .withReasoning(settings.reasoningDecision()),
+                        Duration.ofMillis(settings.waitPerDecisionMs()), true, log0),
+                plannerSystem, plannerMemory, plannerTools.providers(), log0);
+        JudgeAgent judgeAgent = new JudgeAgent(
+                AgentModels.openAi(settings.endpoint(),
+                        ChatOptions.decision(settings.judgeMaxTokens())
+                                .withReasoning(settings.reasoningDecision()),
+                        Duration.ofMillis(settings.judgeTimeoutMs()), true, log0),
+                decisionTools.providers(), log0);
+        PlannerSession planner = new PlannerSession(
+                plannerAgent, urgentAgent, packer, facts, settings, traceWriter,
+                config.timeline(), log0);
         DecisionPipeline pipeline = new DecisionPipeline(
-                new ReflexPolicyImpl(), planner, packer, chat, settings, facts,
-                baseEngine, traceWriter, decisionTools, log0);
+                new ReflexPolicyImpl(), planner, packer, judgeAgent, settings, facts,
+                baseEngine, traceWriter, log0);
         log.info("五级流水已启用（model={} wait-decision={}ms wait-turn={}ms 卡库 {}）",
                 settings.model(), settings.waitPerDecisionMs(),
                 settings.waitPerTurnMs(), facts.knownCount());

@@ -111,16 +111,21 @@ public record PipelineSettings(
         return new LlmEndpoint(baseUrl, apiKey, model);
     }
 
+    /** checkpoint 档（推理强度由 LLM_REASONING_PLANNER 推导；medium/high 在此生效）。 */
     public ChatOptions checkpointOptions() {
         String effectiveLevel = reasoningPlanner;
         if ("off".equals(effectiveLevel)) {
             // 顾问模式四段 + 方案比较合计约 900–1100 字，额度给足避免截成半截 JSON；路径模式 JSON 更紧凑
-            return ChatOptions.fastPlan(pathPlanning ? 1_200 : 2_600,
-                    Duration.ofMillis(plannerCallTimeoutMs));
+            return ChatOptions.fastPlan(pathPlanning ? 1_200 : 2_600);
         }
-        long budget = Math.min(plannerCallTimeoutMs, 20_000);
-        ChatOptions options = ChatOptions.deepPlan(8_000, Duration.ofMillis(budget));
-        // low 与推理档默认相同（no-op）；medium/high 在这里生效
+        ChatOptions options = ChatOptions.deepPlan(8_000);
         return effectiveLevel == null ? options : options.withReasoning(effectiveLevel);
+    }
+
+    /** checkpoint 的模型桶超时（快档走满额，推理档封顶 20s 防止思维链吃光回合预算）。 */
+    public Duration checkpointTimeout() {
+        return "off".equals(reasoningPlanner)
+                ? Duration.ofMillis(plannerCallTimeoutMs)
+                : Duration.ofMillis(Math.min(plannerCallTimeoutMs, 20_000));
     }
 }

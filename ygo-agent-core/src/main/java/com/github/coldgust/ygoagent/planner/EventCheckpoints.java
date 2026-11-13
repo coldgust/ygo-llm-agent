@@ -22,8 +22,8 @@ final class EventCheckpoints {
     /** 回合预算：本回合"为等规划器而推迟应答"的累计毫秒（waitForPlan 与 urgent 路径累计）。 */
     private final AtomicLong turnBudgetUsedMs = new AtomicLong();
     /**
-     * 事件批已拉取到的记录 seq（段内）。只在 planner 单线程（worker）上读写。
-     * 段轮换时对齐到锚点构建时刻，避免"锚点记录里已有 + 首个事件批再发一遍"的重复。
+     * 事件批已拉取到的记录 seq（回合内）。只在 planner 单线程（worker）上读写。
+     * 回合切换时对齐到锚点构建时刻，避免"锚点记录里已有 + 首个事件批再发一遍"的重复。
      */
     private long watermark;
 
@@ -50,7 +50,7 @@ final class EventCheckpoints {
                 && totalCheckpoints < totalQuota;
     }
 
-    void resetForNewSegment() {
+    void resetForTurn() {
         sentThisTurn.set(0);
         watermark = 0;
     }

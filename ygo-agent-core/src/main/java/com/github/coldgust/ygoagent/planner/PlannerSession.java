@@ -3,15 +3,11 @@ package com.github.coldgust.ygoagent.planner;
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
 import com.github.coldgust.ygoagent.context.DuelTimeline;
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
-import com.github.coldgust.ygoagent.llm.ChatOptions;
-import com.github.coldgust.ygoagent.llm.DecisionTools;
 import com.github.coldgust.ygoagent.llm.LlmChatException;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
-import com.github.coldgust.ygoagent.llm.memory.PlannerChatMemory;
-import com.github.coldgust.ygoagent.llm.service.AgentChatServices;
-import com.github.coldgust.ygoagent.llm.service.PlannerAi;
-import com.github.coldgust.ygoagent.llm.service.PlannerUrgentAi;
+import com.github.coldgust.ygoagent.llm.service.PlannerAgent;
+import com.github.coldgust.ygoagent.llm.service.PlannerUrgentAgent;
 import com.github.coldgust.ygoagent.model.ChoiceIntent;
 import com.github.coldgust.ygoagent.model.DecisionPoint;
 import com.github.coldgust.ygoagent.pipeline.PipelineSettings;
@@ -43,7 +39,7 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * DuelPlanner 的持续 session 门面（v6 §2.1 / §3）：只做编排，不持有可拆状态。
  * <ul>
- *   <li>连续对话：整局一份对话历史（{@link PlannerChatMemory} 托管，AiServices 经 @MemoryId 读写），
+ *   <li>连续对话：整局一份对话历史（{@link PlannerAgent} 与抢答 agent 共享），
  *       回合切换只重置计数，不清历史——跨回合上下文靠钉住前缀+窗口修剪承载；</li>
  *   <li>锚点：段首注入局面/记录/卡面 + 静态资料（经 @V 进锚点消息），请求本回合计划/建议
  *       （{@link PlanKeeper} 持有计划状态）；</li>
@@ -58,11 +54,10 @@ public final class PlannerSession implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(PlannerSession.class);
 
-    private final AgentChatServices services;
+    private final PlannerAgent plannerAgent;
+    private final PlannerUrgentAgent urgentAgent;
     private final ContextPackBuilder packer;
     private final CardFacts facts;
-    /** 规划器可用的工具（规则 / 查卡 / 连招）。至少含 find_card：卡面不确定时要查，不能凭记忆。 */
-    private final DecisionTools tools;
     private final PipelineSettings settings;
     private final DecisionTraceWriter traceWriter;
     /** 决斗过程记录端口（可空）。事件批由此增量补"对方做了什么"——pendingEvents 只有我方应答。 */
@@ -73,7 +68,6 @@ public final class PlannerSession implements AutoCloseable {
         return t;
     });
 
-    private final PlannerChatMemory memory = new PlannerChatMemory("ygo-planner");
     private final PlanKeeper keeper = new PlanKeeper();
     private final EventCheckpoints checkpoints = new EventCheckpoints();
     private final AnswerDescriber describer;
@@ -84,38 +78,29 @@ public final class PlannerSession implements AutoCloseable {
     private final List<String> pendingEvents = new ArrayList<>();
     private final Set<Integer> planWaitExhausted = ConcurrentHashMap.newKeySet();
     private final VerboseLog trace;
-    /** 工具集合只物化一次：AiService 代理按实例缓存，键里用同一 List 实例。 */
-    private final List<Object> toolProviders;
-    /** checkpoint 档（本局恒定，由 LLM_REASONING_PLANNER 推导）；抢答用决策档。 */
-    private final ChatOptions checkpointTier;
-    private final ChatOptions decisionTier;
-    /** 整局静态资料是否已种入对话（只在首个回合锚点前种一次，成为钉住前缀的一部分）。 */
-    private boolean staticSeeded;
 
     /** 当前回合键（"回合数:回合方"）：锚点触发、每回合配额与 keep 恢复的键。 */
-    private String segmentKey = "";
+    private String turnKey = "";
 
-    public PlannerSession(AgentChatServices services, ContextPackBuilder packer, CardFacts facts,
+    public PlannerSession(PlannerAgent plannerAgent, PlannerUrgentAgent urgentAgent,
+                          ContextPackBuilder packer, CardFacts facts,
                           PipelineSettings settings, VerboseLog trace) {
-        this(services, packer, facts, settings, null, null, null, trace);
+        this(plannerAgent, urgentAgent, packer, facts, settings, null, null, trace);
     }
 
-    public PlannerSession(AgentChatServices services, ContextPackBuilder packer, CardFacts facts,
+    public PlannerSession(PlannerAgent plannerAgent, PlannerUrgentAgent urgentAgent,
+                          ContextPackBuilder packer, CardFacts facts,
                           PipelineSettings settings, DecisionTraceWriter traceWriter,
-                          DecisionTools tools, DuelTimeline timeline, VerboseLog trace) {
-        this.services = services;
+                          DuelTimeline timeline, VerboseLog trace) {
+        this.plannerAgent = plannerAgent;
+        this.urgentAgent = urgentAgent;
         this.packer = packer;
         this.facts = facts;
         this.settings = settings;
         this.timeline = timeline;
-        this.tools = tools;
         this.trace = trace == null ? new VerboseLog(VerboseLogSettings.off()) : trace;
         this.traceWriter = traceWriter == null ? DecisionTraceWriter.NOOP : traceWriter;
         this.describer = new AnswerDescriber(facts);
-        this.toolProviders = tools == null ? List.of() : tools.providers();
-        this.checkpointTier = settings.checkpointOptions();
-        this.decisionTier = ChatOptions.decision(settings.judgeMaxTokens(), Duration.ZERO)
-                .withReasoning(settings.reasoningDecision());
     }
 
     private void planEvent(String kind, Map<String, Object> payload) {
@@ -131,7 +116,7 @@ public final class PlannerSession implements AutoCloseable {
 
     public void observePoint(DecisionPoint point) {
         String key = point.turn() + ":" + point.state().turnPlayer();
-        if (!key.equals(segmentKey)) {
+        if (!key.equals(turnKey)) {
             String anchor = packer.plannerAnchorPack(point.state());
             // 记录水位对齐到锚点内容构建时刻：锚点里的 [决斗记录] 已包含到此为止的事件，
             // 之后的事件批从这条水位继续，不会把同一段事件发两遍
@@ -167,8 +152,7 @@ public final class PlannerSession implements AutoCloseable {
                         String.join("；", missReasons), pack);
                 JudgeAnswer answer;
                 try (var ignored = trace.scope("规划器紧急决策")) {
-                    answer = urgentAiFor(Duration.ofMillis(Math.max(500, allowed)))
-                            .urgent(memory.id().toString(), prompt);
+                    answer = urgentAgent.urgent(prompt);
                 }
                 checkpoints.addTurnBudget((System.nanoTime() - start) / 1_000_000);
                 future.complete(Optional.of(answer));
@@ -195,16 +179,16 @@ public final class PlannerSession implements AutoCloseable {
         log.info("计划作废 {}（{}），改决策器判断并请求重新规划", stale.planId(), reason);
         planEvent("PLAN_ABANDONED", Map.of("planId", stale.planId(), "cursor", stale.cursor(),
                 "steps", stale.steps().size(), "reason", String.valueOf(reason)));
-        if (segmentKey.isEmpty() || degraded()) {
+        if (turnKey.isEmpty() || degraded()) {
             return;
         }
         if (checkpointCount.get() >= settings.maxCheckpointsPerTurn()) {
             log.info("本回合 checkpoint 已用尽，不请求重新规划（保持决策器判断）");
             return;
         }
-        String segment = segmentKey;
+        String segment = turnKey;
         worker.execute(() -> {
-            if (!segment.equals(segmentKey)) {
+            if (!segment.equals(turnKey)) {
                 return; // 已经换回合：旧计划作废就算了，新回合的锚点会重新规划
             }
             runCheckpoint("replan", PlannerPrompts.REPLAN_TEMPLATE.formatted(
@@ -278,32 +262,23 @@ public final class PlannerSession implements AutoCloseable {
 
     /**
      * 回合切换：只重置回合级计数与水位，对话历史连续不清——跨回合上下文由
-     * {@code PlannerChatMemory} 的钉住+窗口修剪承载（[system, 静态资料] 整局钉住，
-     * 前缀缓存跨回合有效）。静态资料每局只种入一次。
+     * AgentChat 持有的记忆（钉住前缀+窗口修剪）承载，前缀缓存跨回合有效。
      */
     private void beginTurnAnchor(String key, int turn, String side, String anchor, long recordSeq) {
-        segmentKey = key;
+        turnKey = key;
         checkpoints.markWatermark(recordSeq);
-        checkpoints.resetForNewSegment();
+        checkpoints.resetForTurn();
         checkpointCount.set(0);
         checkpoints.resetTurnBudget();
         planWaitExhausted.clear();
         synchronized (pendingEvents) {
             pendingEvents.clear();
         }
-        if (!staticSeeded) {
-            String staticMaterial = packer.plannerStaticMaterial();
-            if (!staticMaterial.isBlank()) {
-                memory.add(dev.langchain4j.data.message.UserMessage.from(staticMaterial));
-            }
-            staticSeeded = true;
-        }
         long startedAt = System.currentTimeMillis();
         try {
             PlanAnswer answer;
             try (var ignored = trace.scope("规划器 anchor")) {
-                answer = plannerAiFor(checkpointTier.timeout())
-                        .checkpoint(memory.id().toString(), anchorRequest(turn, side, anchor));
+                answer = plannerAgent.checkpoint(anchorRequest(turn, side, anchor));
             }
             completeCheckpoint("anchor", answer, startedAt);
         } catch (RuntimeException e) {
@@ -324,7 +299,7 @@ public final class PlannerSession implements AutoCloseable {
                 : PlannerPrompts.ADVISOR_ANCHOR_TEMPLATE.formatted(turn, side, anchor));
         if (keeper.isEmpty()) {
             anchorRequest = anchorRequest
-                    + "\n注意：这是本段首次请求，当前没有任何可沿用的建议/计划"
+                    + "\n注意：这是本回合首次请求，当前没有任何可沿用的建议/计划"
                     + "——禁止回复 {\"keep\": true}，请直接输出完整的建议/计划 JSON。";
         }
         return anchorRequest;
@@ -347,7 +322,7 @@ public final class PlannerSession implements AutoCloseable {
      * checkpoint：发送事件批并请求 keep/新计划（异步）。
      */
     public void flushEvents() {
-        if (segmentKey.isEmpty()) {
+        if (turnKey.isEmpty()) {
             return;
         }
         if (!checkpoints.quotaAvailable(eventsCheckpointQuota(),
@@ -361,10 +336,10 @@ public final class PlannerSession implements AutoCloseable {
         if (!checkpoints.tryQueue()) {
             return; // 已有在途检查点：事件留在 pendingEvents，等它结束后一起发
         }
-        String segment = segmentKey;
+        String segment = turnKey;
         worker.execute(() -> {
             try {
-                if (!segment.equals(segmentKey)) {
+                if (!segment.equals(turnKey)) {
                     return; // 段已轮换：这批事件属于上一回合，别再喂给新回合的 history
                 }
                 List<String> events;
@@ -392,7 +367,7 @@ public final class PlannerSession implements AutoCloseable {
             } finally {
                 checkpoints.release();
                 // 自排空：检查点期间又攒了新事件 → 立刻再发一批（仍受配额与间隔约束）
-                if (!segment.equals(segmentKey)) {
+                if (!segment.equals(turnKey)) {
                     return;
                 }
                 boolean more;
@@ -421,8 +396,7 @@ public final class PlannerSession implements AutoCloseable {
         try {
             PlanAnswer answer;
             try (var ignored = trace.scope("规划器 " + kind)) {
-                answer = plannerAiFor(checkpointTier.timeout())
-                        .checkpoint(memory.id().toString(), prompt);
+                answer = plannerAgent.checkpoint(prompt);
             }
             completeCheckpoint(kind, answer, startedAt);
         } catch (RuntimeException e) {
@@ -441,22 +415,22 @@ public final class PlannerSession implements AutoCloseable {
             if (keeper.isEmpty()) {
                 log.info("规划器回 keep 但当前没有计划（kind={}），改请求重新规划", kind);
                 planEvent("PLAN_KEEP_WITHOUT_PLAN", Map.of("checkpoint", String.valueOf(kind)));
-                if (keepWithoutPlanRetried.add(segmentKey)) {
+                if (keepWithoutPlanRetried.add(turnKey)) {
                     runCheckpoint("replan", settings.pathPlanning()
                             ? PlannerPrompts.KEEP_RECOVERY_TEMPLATE.formatted(String.valueOf(kind))
                             : PlannerPrompts.ADVISOR_KEEP_RECOVERY_TEMPLATE.formatted(String.valueOf(kind)));
                 }
                 return;
             }
-            keeper.carryOver(turnNumberOfSegment()).ifPresent(carried -> {
+            keeper.carryOver(turnNumber()).ifPresent(carried -> {
                 log.info("规划器回 keep（{}）：第 {} 回合的计划续到第 {} 回合（steps={} branches={} 置信 {}）",
-                        kind, carried.fromTurn(), turnNumberOfSegment(), carried.steps(),
+                        kind, carried.fromTurn(), turnNumber(), carried.steps(),
                         carried.branches(), String.format(Locale.ROOT, "%.2f", carried.confidence()));
                 planEvent("PLAN_CARRIED_OVER", Map.of(
                         "checkpoint", String.valueOf(kind),
                         "planId", carried.planId(),
                         "fromTurn", carried.fromTurn(),
-                        "turn", turnNumberOfSegment(),
+                        "turn", turnNumber(),
                         "steps", carried.steps(),
                         "confidence", carried.confidence()));
             });
@@ -465,8 +439,8 @@ public final class PlannerSession implements AutoCloseable {
         PlanAssembler.Result parsed = PlanAssembler.assemble(answer, this::isKnownCard);
         if (parsed.plan() != null) {
             PlanAssembler.Parsed plan = parsed.plan();
-            String planId = "P" + segmentKey + "#" + checkpointCount.get();
-            keeper.publish(plan, planId, turnNumberOfSegment());
+            String planId = "P" + turnKey + "#" + checkpointCount.get();
+            keeper.publish(plan, planId, turnNumber());
             log.info("规划器产出计划 {}（{}ms，steps={} branches={} 丢弃非法分支步={}）", planId,
                     elapsed, plan.steps().size(), plan.branches().size(), plan.droppedSteps());
             planEvent("PLAN_PUBLISHED",
@@ -505,29 +479,14 @@ public final class PlannerSession implements AutoCloseable {
         return false;
     }
 
-    /** 规划器 system（按模式二选一，本局恒定）。 */
-    private String systemPrompt() {
-        return settings.pathPlanning() ? PlannerPrompts.PLANNER_SYSTEM : PlannerPrompts.ADVISOR_SYSTEM;
-    }
-
-    /** 规划器 checkpoint 代理（工具恒注册；空集合时框架不会启用工具轮）。 */
-    private PlannerAi plannerAiFor(Duration timeout) {
-        return services.planner(memory, systemPrompt(), timeout, toolProviders, checkpointTier);
-    }
-
-    /** 抢答代理（决策档、共享 memory）。 */
-    private PlannerUrgentAi urgentAiFor(Duration timeout) {
-        return services.urgent(memory, systemPrompt(), timeout, toolProviders, decisionTier);
-    }
-
     private boolean isKnownCard(long passcode) {
         return facts.byPasscode(passcode).isPresent();
     }
 
-    private int turnNumberOfSegment() {
-        int colon = segmentKey.indexOf(':');
+    private int turnNumber() {
+        int colon = turnKey.indexOf(':');
         try {
-            return colon > 0 ? Integer.parseInt(segmentKey.substring(0, colon)) : 0;
+            return colon > 0 ? Integer.parseInt(turnKey.substring(0, colon)) : 0;
         } catch (NumberFormatException e) {
             return 0;
         }

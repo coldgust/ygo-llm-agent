@@ -2,12 +2,17 @@ package com.github.coldgust.ygoagent.planner;
 
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
 import com.github.coldgust.ygoagent.context.DuelMathService;
-import com.github.coldgust.ygoagent.llm.AgentChatFactory;
+import com.github.coldgust.ygoagent.llm.ChatOptions;
+import com.github.coldgust.ygoagent.llm.service.Narrator;
+import com.github.coldgust.ygoagent.llm.ResilientChatModel;
+import com.github.coldgust.ygoagent.llm.service.JudgeAgent;
+import com.github.coldgust.ygoagent.llm.service.PlannerAgent;
+import com.github.coldgust.ygoagent.llm.service.PlannerUrgentAgent;
+import com.github.coldgust.ygoagent.llm.memory.PlannerChatMemory;
 import com.github.coldgust.ygoagent.llm.FakeChatModel;
-import com.github.coldgust.ygoagent.llm.LlmEndpoint;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
-import com.github.coldgust.ygoagent.llm.service.AgentChatServices;
+import com.github.coldgust.ygoagent.planner.PlannerPrompts;
 import com.github.coldgust.ygoagent.model.ChoiceIntent;
 import com.github.coldgust.ygoagent.model.DecisionPoint;
 import com.github.coldgust.ygoagent.pipeline.PipelineSettings;
@@ -36,9 +41,6 @@ import com.github.coldgust.ygoagent.pipeline.plan.TurnPlan;
  */
 class PlannerSessionCarryOverTest {
 
-    private static final LlmEndpoint ENDPOINT =
-            new LlmEndpoint("http://localhost:9", "k", "deepseek-chat");
-
     private final VerboseLog trace = new VerboseLog(VerboseLogSettings.off());
 
     /** 记录每次请求的 wire 参数与消息，按序回脚本文本（超出后一直 keep）。 */
@@ -65,9 +67,22 @@ class PlannerSessionCarryOverTest {
         }
     }
 
-    private static AgentChatServices stack(VerboseLog trace, ChatModel model) {
-        return new AgentChatServices(AgentChatFactory.withSource(
-                (t, tier, w) -> FakeChatModel.baked(model, tier, w)), trace);
+    /** 规划/抢答两个 agent 架在 Recorder 上（档位参数经 ResilientChatModel 合并后可断言）。 */
+    private record Stack(PlannerAgent planner, PlannerUrgentAgent urgent) {
+    }
+
+    private static Stack stack(VerboseLog trace, ChatModel model) {
+        PipelineSettings cfg = settings();
+        var memory = new PlannerChatMemory("test");
+        return new Stack(
+                new PlannerAgent(
+                        new ResilientChatModel(FakeChatModel.baked(model, cfg.checkpointOptions(), true)),
+                        cfg.pathPlanning() ? PlannerPrompts.PLANNER_SYSTEM : PlannerPrompts.ADVISOR_SYSTEM,
+                        memory, List.of(), "", trace),
+                new PlannerUrgentAgent(
+                        new ResilientChatModel(FakeChatModel.baked(model, ChatOptions.decision(cfg.judgeMaxTokens()).withReasoning(cfg.reasoningDecision()), true)),
+                        cfg.pathPlanning() ? PlannerPrompts.PLANNER_SYSTEM : PlannerPrompts.ADVISOR_SYSTEM,
+                        memory, List.of(), trace));
     }
 
     private static PipelineSettings settings() {
@@ -95,7 +110,8 @@ class PlannerSessionCarryOverTest {
     void allCheckpointsShareTheReasoningTier() {
         Recorder recorder = new Recorder();
         recorder.script(planJson()); // 第一次给真计划（避免触发 keep 恢复路径），之后 keep
-        PlannerSession planner = new PlannerSession(stack(trace, recorder),
+        var stack = stack(trace, recorder);
+        PlannerSession planner = new PlannerSession(stack.planner(), stack.urgent(),
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
                 TestDuels.facts(), settings(), trace);
 
@@ -144,7 +160,8 @@ class PlannerSessionCarryOverTest {
     void replanUsesTheReasoningTierLikeEventsCheckpoints() {
         Recorder recorder = new Recorder();
         recorder.script(planJson());
-        PlannerSession planner = new PlannerSession(stack(trace, recorder),
+        var stack = stack(trace, recorder);
+        PlannerSession planner = new PlannerSession(stack.planner(), stack.urgent(),
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
                 TestDuels.facts(), settings(), trace);
 
@@ -178,7 +195,8 @@ class PlannerSessionCarryOverTest {
         Recorder recorder = new Recorder();
         recorder.script("{\"keep\": true}");
         recorder.script(planJson());
-        PlannerSession planner = new PlannerSession(stack(trace, recorder),
+        var stack = stack(trace, recorder);
+        PlannerSession planner = new PlannerSession(stack.planner(), stack.urgent(),
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
                 TestDuels.facts(), settings(), trace);
 
@@ -195,7 +213,8 @@ class PlannerSessionCarryOverTest {
     void keepOnANewTurnCarriesThePlanOver() {
         Recorder recorder = new Recorder();
         recorder.script(planJson());
-        PlannerSession planner = new PlannerSession(stack(trace, recorder),
+        var stack = stack(trace, recorder);
+        PlannerSession planner = new PlannerSession(stack.planner(), stack.urgent(),
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
                 TestDuels.facts(), settings(), trace);
 

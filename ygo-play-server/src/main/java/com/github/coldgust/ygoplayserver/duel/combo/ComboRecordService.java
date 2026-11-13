@@ -2,13 +2,16 @@ package com.github.coldgust.ygoplayserver.duel.combo;
 
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
 
+import com.github.coldgust.ygoagent.llm.AgentModels;
 import com.github.coldgust.ygoagent.llm.ChatOptions;
+import com.github.coldgust.ygoagent.llm.LlmEndpoint;
+import com.github.coldgust.ygoagent.llm.service.NarratorAgent;
 import com.github.coldgust.ygoagent.llm.LightRagContentRetriever;
 import com.github.coldgust.ygoagent.llm.LightRagSettings;
 import com.github.coldgust.ygoagent.llm.LlmEndpoint;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
-import com.github.coldgust.ygoagent.llm.service.AgentChatServices;
+
 import com.github.coldgust.ygoplay.ComboRecording;
 import com.github.coldgust.ygoplayserver.config.ComboProperties;
 import com.github.coldgust.ygoplayserver.config.LightRagProperties;
@@ -40,7 +43,7 @@ public class ComboRecordService {
     private final ObjectProvider<JdbcClient> jdbc;
     private final DuelEventHub eventHub;
     private final JsonMapper mapper = JsonMapper.builder().build();
-    private volatile AgentChatServices chat;
+    private volatile NarratorAgent chat;
     private volatile boolean tableReady;
     private final String baseUrl;
     private final String apiKey;
@@ -113,13 +116,10 @@ public class ComboRecordService {
         String summary = null;
         String summarySource = "NONE";
         String keyCards = null;
-        AgentChatServices client = chat();
+        NarratorAgent client = chat();
         if (client != null) {
             try {
-                String raw = client.narrate(SUMMARY_TIMEOUT, ComboSummaryPrompts.SYSTEM,
-                        ComboSummaryPrompts.user(archetype, descriptions),
-                        ChatOptions.narrative(SUMMARY_MAX_TOKENS, SUMMARY_TIMEOUT),
-                        rulebookRetriever);
+                String raw = client.write(ComboSummaryPrompts.user(archetype, descriptions));
                 String text = raw == null ? "" : raw.trim();
                 if (ComboSummaryPrompts.looksUsable(text)) {
                     summary = text;
@@ -218,8 +218,8 @@ public class ComboRecordService {
     }
 
 
-    private AgentChatServices chat() {
-        AgentChatServices client = chat;
+    private NarratorAgent chat() {
+        NarratorAgent client = chat;
         if (client != null) {
             return client;
         }
@@ -228,7 +228,10 @@ public class ComboRecordService {
         }
         synchronized (this) {
             if (chat == null) {
-                chat = AgentChatServices.openAiCompatible(new LlmEndpoint(baseUrl, apiKey, model), trace);
+                chat = new NarratorAgent(AgentModels.openAi(
+                        new LlmEndpoint(baseUrl, apiKey, model),
+                        ChatOptions.narrative(SUMMARY_MAX_TOKENS), SUMMARY_TIMEOUT, false, trace),
+                        ComboSummaryPrompts.SYSTEM, rulebookRetriever);
             }
             return chat;
         }

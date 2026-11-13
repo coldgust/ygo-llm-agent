@@ -3,12 +3,14 @@ package com.github.coldgust.ygoagent.planner;
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
 import com.github.coldgust.ygoagent.context.DuelMathService;
 import com.github.coldgust.ygoagent.context.RuleDigest;
-import com.github.coldgust.ygoagent.llm.AgentChatFactory;
+import com.github.coldgust.ygoagent.llm.ResilientChatModel;
+import com.github.coldgust.ygoagent.llm.service.PlannerAgent;
+import com.github.coldgust.ygoagent.llm.service.PlannerUrgentAgent;
 import com.github.coldgust.ygoagent.llm.FakeChatModel;
-import com.github.coldgust.ygoagent.llm.LlmEndpoint;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
-import com.github.coldgust.ygoagent.llm.service.AgentChatServices;
+import com.github.coldgust.ygoagent.planner.PlannerPrompts;
+import com.github.coldgust.ygoagent.llm.ChatOptions;
 import com.github.coldgust.ygoagent.llm.memory.PlannerChatMemory;
 import com.github.coldgust.ygoagent.model.ChoiceIntent;
 import com.github.coldgust.ygoagent.model.DecisionPoint;
@@ -33,8 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 class PlannerSessionTrimTest {
 
-    private static final LlmEndpoint ENDPOINT =
-            new LlmEndpoint("http://localhost:9", "k", "deepseek-chat");
+    private final VerboseLog trace = new VerboseLog(VerboseLogSettings.off());
 
     private static PipelineSettings cfg() {
         PipelineSettings d = PipelineSettings.defaults(Path.of("data/card_rag/cards.jsonl"),
@@ -59,14 +60,21 @@ class PlannerSessionTrimTest {
     void historyTrimKeepsSystemAndStaticMaterial() {
         FakeChatModel chat = new FakeChatModel(planJson(), "{\"keep\": true}");
         var trace = new VerboseLog(VerboseLogSettings.off());
-        AgentChatServices services = new AgentChatServices(AgentChatFactory.withSource((t, tier, w) -> chat.baked(tier, w)), trace);
-        // 带规则速查 → 整局静态资料非空 → 静态资料进锚点消息
-        PlannerSession planner = new PlannerSession(services,
-                ContextPackBuilder.builder(TestDuels.facts(), new DuelMathService())
-                        .ruleDigest(RuleDigest.TEXT)
-                        .advisory(true)
-                        .build(),
-                TestDuels.facts(), cfg(), trace);
+        // 带规则速查 → 整局静态资料非空 → 构造时种入 memory（钉住前缀的一部分）
+        ContextPackBuilder packer = ContextPackBuilder.builder(TestDuels.facts(), new DuelMathService())
+                .ruleDigest(RuleDigest.TEXT)
+                .advisory(true)
+                .build();
+        var memory = new PlannerChatMemory("test");
+        PlannerAgent plannerAgent = new PlannerAgent(
+                new ResilientChatModel(chat.baked(cfg().checkpointOptions(), true)),
+                PlannerPrompts.PLANNER_SYSTEM, memory, List.of(),
+                packer.plannerStaticMaterial(), trace);
+        PlannerSession planner = new PlannerSession(plannerAgent,
+                new PlannerUrgentAgent(new ResilientChatModel(chat.baked(
+                        ChatOptions.decision(cfg().judgeMaxTokens()).withReasoning(cfg().reasoningDecision()), true)),
+                        PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), trace),
+                packer, TestDuels.facts(), cfg(), trace);
 
         var point = pointOf(2);
         planner.observePoint(point);
@@ -81,13 +89,13 @@ class PlannerSessionTrimTest {
         assertInstanceOf(SystemMessage.class, last.getFirst(), "[0] 必须是 system");
         UserMessage anchorMessage = (UserMessage) last.get(1);
         assertTrue(anchorMessage.singleText().contains("[整局资料]"),
-                "[1] 必须是锚点消息（整局静态资料在里面，跨回合前缀缓存的前提）:"
+                "[1] 必须是整局静态资料（构造时种入，跨回合前缀缓存的前提）:"
                         + anchorMessage.singleText().substring(0, 60));
         // 修剪是锯齿语义：超过 24 条才剪，剪完 = [0..1] + 最近 12 条 → 在 10..25 之间振荡
         assertTrue(last.size() <= 25, "历史必须有界: " + last.size());
         assertTrue(last.size() >= 10, "最近 12 条与钉住前缀要留存: " + last.size());
         assertTrue(chat.requests.get(1).messages().size() >= 3,
-                "早期调用未被修剪（system+锚点+AI 回复）");
+                "早期调用未被修剪（system+静态+锚点+AI 回复）");
     }
 
     @Test
@@ -149,14 +157,20 @@ class PlannerSessionTrimTest {
     void 连续对话_跨回合交换保留且静态只种一次() {
         FakeChatModel chat = new FakeChatModel(planJson(), "{\"keep\": true}");
         var trace = new VerboseLog(VerboseLogSettings.off());
-        AgentChatServices services = new AgentChatServices(AgentChatFactory.withSource(
-                (t, tier, w) -> chat.baked(tier, w)), trace);
-        PlannerSession planner = new PlannerSession(services,
-                ContextPackBuilder.builder(TestDuels.facts(), new DuelMathService())
-                        .ruleDigest(RuleDigest.TEXT)
-                        .advisory(true)
-                        .build(),
-                TestDuels.facts(), cfg(), trace);
+        ContextPackBuilder packer = ContextPackBuilder.builder(TestDuels.facts(), new DuelMathService())
+                .ruleDigest(RuleDigest.TEXT)
+                .advisory(true)
+                .build();
+        var memory = new PlannerChatMemory("test");
+        PlannerAgent plannerAgent = new PlannerAgent(
+                new ResilientChatModel(chat.baked(cfg().checkpointOptions(), true)),
+                PlannerPrompts.PLANNER_SYSTEM, memory, List.of(),
+                packer.plannerStaticMaterial(), trace);
+        PlannerSession planner = new PlannerSession(plannerAgent,
+                new PlannerUrgentAgent(new ResilientChatModel(chat.baked(
+                        ChatOptions.decision(cfg().judgeMaxTokens()).withReasoning(cfg().reasoningDecision()), true)),
+                        PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), trace),
+                packer, TestDuels.facts(), cfg(), trace);
 
         planner.observePoint(pointOf(1));
         planner.drainForTests();

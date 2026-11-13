@@ -3,11 +3,9 @@ package com.github.coldgust.ygoagent.pipeline.judge;
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
 import com.github.coldgust.ygoagent.context.DecisionMemory;
 import com.github.coldgust.ygoagent.llm.ChatOptions;
-import com.github.coldgust.ygoagent.llm.DecisionTools;
 import com.github.coldgust.ygoagent.llm.LlmChatException;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
-import com.github.coldgust.ygoagent.llm.service.AgentChatServices;
-import com.github.coldgust.ygoagent.llm.service.JudgeAi;
+import com.github.coldgust.ygoagent.llm.service.JudgeAgent;
 import com.github.coldgust.ygoagent.model.Candidate;
 import com.github.coldgust.ygoagent.model.CandidateId;
 import com.github.coldgust.ygoagent.model.ChoiceIntent;
@@ -52,36 +50,27 @@ public final class LlmJudge implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(LlmJudge.class);
 
-    private final AgentChatServices services;
+    private final JudgeAgent judgeAgent;
     private final ContextPackBuilder packer;
-    private final DecisionTools tools;
     private final PipelineSettings settings;
     private final PlannerSession planner;
     private final TurnMemory memory;
     private final VerboseLog trace;
-    /** 工具集合只物化一次：AiService 代理按实例缓存，键里用同一 List 实例。 */
-    private final List<Object> toolProviders;
-    /** 决策档（本轮局内恒定）：温度/tokens/思考强度 bake 在按超时分桶的模型上。 */
-    private final ChatOptions decisionTier;
     private final ExecutorService judgePool = Executors.newFixedThreadPool(2, r -> {
         Thread t = new Thread(r, "ygo-judge");
         t.setDaemon(true);
         return t;
     });
 
-    public LlmJudge(AgentChatServices services, ContextPackBuilder packer, DecisionTools tools,
+    public LlmJudge(JudgeAgent judgeAgent, ContextPackBuilder packer,
                     PipelineSettings settings, PlannerSession planner, TurnMemory memory,
                     VerboseLog trace) {
-        this.services = services;
+        this.judgeAgent = judgeAgent;
         this.packer = packer;
-        this.tools = tools == null ? DecisionTools.NONE : tools;
         this.settings = settings;
         this.planner = planner;
         this.memory = memory;
         this.trace = trace;
-        this.toolProviders = this.tools.providers();
-        this.decisionTier = ChatOptions.decision(settings.judgeMaxTokens(), Duration.ZERO)
-                .withReasoning(settings.reasoningDecision());
     }
 
     private record Drafted(DuelDecision decision, ZoneRef zone) {
@@ -127,12 +116,10 @@ public final class LlmJudge implements AutoCloseable {
                     // 决策包只带每次变化的动态内容。
                     String material = packer.judgeStaticMaterial();
                     String record = packer.recordOfClosedTurns(point.turn());
-                    long decideTimeoutMs = Math.min(settings.judgeTimeoutMs(), deadlineMs);
                     // 工具按需注册：规则 / 连招 / 查卡 / 历史对局，模型自己决定要不要调用（工具轮对上层透明）
                     JudgeAnswer answer;
                     try (var ignored = trace.scope("决策器判断 T" + point.turn() + " " + point.kind())) {
-                        answer = judgeAiFor(Duration.ofMillis(decideTimeoutMs))
-                                .decide(material, record, pack);
+                        answer = judgeAgent.decide(material, record, pack);
                     } catch (RuntimeException e) {
                         notes.add(callFailure(e) ? "直答调用失败：" + rootCause(e)
                                 : "直答输出不可解析：" + rootCause(e));
@@ -151,7 +138,7 @@ public final class LlmJudge implements AutoCloseable {
                             + "（候选 " + point.candidates().size() + " 个），已要求重答");
                     JudgeAnswer second;
                     try (var ignored = trace.scope("决策器判断重答 T" + point.turn() + " " + point.kind())) {
-                        second = judgeAiFor(Duration.ofMillis(Math.max(600, decideTimeoutMs / 2)))
+                        second = judgeAgent
                                 .retry(pack, answer.choice(), candidateCodes(point));
                     } catch (RuntimeException e) {
                         notes.add(callFailure(e) ? "重答调用失败：" + rootCause(e)
@@ -214,10 +201,6 @@ public final class LlmJudge implements AutoCloseable {
         }
     }
 
-    private JudgeAi judgeAiFor(Duration timeout) {
-        return services.judge(timeout, toolProviders, decisionTier);
-    }
-
     private DuelDecision accept(Drafted drafted) {
         memory.recordDecisionZone(drafted.zone());
         return drafted.decision();
@@ -267,12 +250,12 @@ public final class LlmJudge implements AutoCloseable {
     private Optional<Drafted> buildFromDraft(DecisionPoint point, JudgeAnswer answer,
                                              String source, Queue<String> notes) {
         CandidateId id = answer.candidateId();
-        // 兼容：模型偶尔仍会写 C0/NONE/PASS（旧提示词的习惯）。此时把它当成本请求的弃权候选，
+        // 兼容：模型偶尔仍会写 C0/NONE/PASS/弃权（旧提示词的习惯）。此时把它当成本请求的弃权候选，
         // 而不是判越界——弃权本身是合法动作，不该因为编号写法不同就丢掉整条决策。
         if (id == null && isNoneAnswer(answer)) {
             id = CandidateId.of(0);
         }
-        if (isNoneChoice(id)) {
+        if (id != null && isNoneChoice(id)) {
             Optional<ChoiceIntent> none = point.candidatesOf(Candidate.DeclineC.class).stream()
                     .findFirst()
                     .flatMap(decline -> CandidateIntents.toIntent(point, decline));
@@ -318,10 +301,9 @@ public final class LlmJudge implements AutoCloseable {
                 || "不响应".equals(v) || "弃权".equals(v) || "取消".equals(v);
     }
 
+    /** CandidateId.of 生成的值只有 "C<n>" 形态，弃权候选即 C0。 */
     private static boolean isNoneChoice(CandidateId id) {
-        String v = id == null ? "" : id.value().trim().toUpperCase(Locale.ROOT);
-        return "C0".equals(v) || "0".equals(v) || "NONE".equals(v) || "PASS".equals(v)
-                || "不响应".equals(v) || "弃权".equals(v) || "取消".equals(v);
+        return "C0".equals(id.value());
     }
 
     /** 来源 + 模型理由 → 一句解释；理由为空时只留来源，不留悬空的分隔符。 */
