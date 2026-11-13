@@ -262,7 +262,7 @@ public final class PlannerSession implements AutoCloseable {
 
     /**
      * 回合切换：只重置回合级计数与水位，对话历史连续不清——跨回合上下文由
-     * AgentChat 持有的记忆（钉住前缀+窗口修剪）承载，前缀缓存跨回合有效。
+     * PlannerAgent/抢答 agent 共享的记忆（钉住前缀+窗口修剪）承载，前缀缓存跨回合有效。
      */
     private void beginTurnAnchor(String key, int turn, String side, String anchor, long recordSeq) {
         turnKey = key;
