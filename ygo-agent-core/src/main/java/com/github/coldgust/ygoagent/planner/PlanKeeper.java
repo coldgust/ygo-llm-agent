@@ -1,6 +1,6 @@
 package com.github.coldgust.ygoagent.planner;
 
-import com.github.coldgust.ygoagent.pipeline.plan.PlanTreeParser;
+import com.github.coldgust.ygoagent.pipeline.plan.PlanAssembler;
 import com.github.coldgust.ygoagent.pipeline.plan.TurnPlan;
 import com.github.coldgust.ygoagent.pipeline.plan.ZoneCodes;
 
@@ -32,7 +32,7 @@ final class PlanKeeper {
     }
 
     /** 发布新计划（段内新产出，cursor 从 0 起）。 */
-    void publish(PlanTreeParser.ParsedPlan plan, String planId, int turnNumber) {
+    void publish(PlanAssembler.Parsed plan, String planId, int turnNumber) {
         currentPlan.set(new TurnPlan(planId, turnNumber, plan.thinking(), plan.goal(),
                 plan.steps(), plan.branches(), 0, plan.confidence()));
     }
@@ -91,7 +91,7 @@ final class PlanKeeper {
     }
 
     /** 发布事件的载荷：前端要画"计划 → 决策"的因果，步骤/分支明细在这里展开。 */
-    Map<String, Object> publishedPayload(String planId, PlanTreeParser.ParsedPlan plan,
+    Map<String, Object> publishedPayload(String planId, PlanAssembler.Parsed plan,
                                          String checkpoint, long elapsedMs) {
         List<Map<String, Object>> stepDetails = plan.steps().stream()
                 .map(st -> Map.<String, Object>of(

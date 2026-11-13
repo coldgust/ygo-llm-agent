@@ -1,7 +1,7 @@
 package com.github.coldgust.ygoplayserver.duel;
 
 import com.github.coldgust.ygoagent.support.Texts;
-import com.github.coldgust.ygoagent.llm.ChatClient;
+import com.github.coldgust.ygoagent.llm.service.AgentChatServices;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoduellog.ingest.JsonlDuelParser;
 import com.github.coldgust.ygoduellog.model.DecisionEpisode;
@@ -47,7 +47,7 @@ public class DuelSummaryService {
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
     public DuelSummaryService(LightRagProperties lightRag, DuelSummaryProperties properties,
-                              ChatClient chat, VerboseLog trace) {
+                              AgentChatServices chat, VerboseLog trace) {
         String base = lightRag.url().trim();
         if (base.endsWith("/")) {
             base = base.substring(0, base.length() - 1);

@@ -1,43 +1,73 @@
 package com.github.coldgust.ygoagent.planner;
 
-import dev.langchain4j.data.message.ChatMessage;
-import com.github.coldgust.ygoagent.model.ChoiceIntent;
-import com.github.coldgust.ygoagent.model.DecisionPoint;
-import com.github.coldgust.ygoagent.llm.ChatClient;
+import com.github.coldgust.ygoagent.context.ContextPackBuilder;
+import com.github.coldgust.ygoagent.context.DuelMathService;
+import com.github.coldgust.ygoagent.llm.AgentChatFactory;
+import com.github.coldgust.ygoagent.llm.FakeChatModel;
+import com.github.coldgust.ygoagent.llm.LlmEndpoint;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
-import com.github.coldgust.ygoagent.planner.PlannerSession;
-import com.github.coldgust.ygoagent.pipeline.plan.TurnPlan;
+import com.github.coldgust.ygoagent.llm.service.AgentChatServices;
+import com.github.coldgust.ygoagent.model.ChoiceIntent;
+import com.github.coldgust.ygoagent.model.DecisionPoint;
+import com.github.coldgust.ygoagent.pipeline.PipelineSettings;
+import com.github.coldgust.ygoagent.pipeline.TestDuels;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.ArrayList;
-import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import com.github.coldgust.ygoagent.knowledge.CardFacts;
-import com.github.coldgust.ygoagent.pipeline.PipelineSettings;
-import com.github.coldgust.ygoagent.pipeline.TestDuels;
-import com.github.coldgust.ygoagent.context.ContextPackBuilder;
-import com.github.coldgust.ygoagent.context.DuelMathService;
+import com.github.coldgust.ygoagent.pipeline.plan.TurnPlan;
 
 /**
- * 回归：规划器在新回合回 {@code {"keep": true}} 时，计划必须"续期"到新回合。
+ * 回归：规划器在新回合回 {@code {"keep": true}} 时，计划必须"续期"到新回合；
+ * 锚点/事件批/replan 全部走同一推理档（wire 参数在请求里断言）。
  */
 class PlannerSessionCarryOverTest {
 
+    private static final LlmEndpoint ENDPOINT =
+            new LlmEndpoint("http://localhost:9", "k", "deepseek-chat");
+
     private final VerboseLog trace = new VerboseLog(VerboseLogSettings.off());
 
-    /** 第一次返回计划，之后一直返回 keep。 */
-    private static ChatClient chat(String... replies) {
-        AtomicInteger calls = new AtomicInteger();
-        return (messages, options) -> {
+    /** 记录每次请求的 wire 参数与消息，按序回脚本文本（超出后一直 keep）。 */
+    private static final class Recorder implements ChatModel {
+
+        final List<OpenAiChatRequestParameters> params =
+                Collections.synchronizedList(new ArrayList<>());
+        final List<List<ChatMessage>> prompts =
+                Collections.synchronizedList(new ArrayList<>());
+        private final AtomicInteger calls = new AtomicInteger();
+        private final List<String> replies = new ArrayList<>();
+
+        void script(String reply) {
+            replies.add(reply);
+        }
+
+        @Override
+        public ChatResponse chat(ChatRequest request) {
+            params.add((OpenAiChatRequestParameters) request.parameters());
+            prompts.add(request.messages());
             int i = calls.getAndIncrement();
-            return i < replies.length ? replies[i] : "{\"keep\": true}";
-        };
+            String reply = i < replies.size() ? replies.get(i) : "{\"keep\": true}";
+            return ChatResponse.builder().aiMessage(AiMessage.from(reply)).build();
+        }
+    }
+
+    private static AgentChatServices stack(VerboseLog trace, ChatModel model) {
+        return new AgentChatServices(AgentChatFactory.withSource(
+                (t, tier, w) -> FakeChatModel.baked(model, tier, w)), trace);
     }
 
     private static PipelineSettings settings() {
@@ -63,32 +93,27 @@ class PlannerSessionCarryOverTest {
 
     @Test
     void allCheckpointsShareTheReasoningTier() {
-        List<ChatClient.ChatOptions> seen =
-                Collections.synchronizedList(new ArrayList<>());
-        AtomicInteger calls = new AtomicInteger();
-        ChatClient recorder = (messages, options) -> {
-            seen.add(options);
-            // 第一次给真计划（避免触发 keep 恢复路径），之后 keep
-            return calls.getAndIncrement() == 0 ? planJson() : "{\"keep\": true}";
-        };
-        PlannerSession planner = new PlannerSession(recorder,
+        Recorder recorder = new Recorder();
+        recorder.script(planJson()); // 第一次给真计划（避免触发 keep 恢复路径），之后 keep
+        PlannerSession planner = new PlannerSession(stack(trace, recorder),
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
                 TestDuels.facts(), settings(), trace);
 
         planner.observePoint(pointOf(1));
         planner.drainForTests();
-        assertEquals(1, seen.size(), "锚点只调一次");
-        assertEquals("low", seen.getFirst().reasoning(), "锚点与增量修订同走推理档");
-        assertTrue(seen.getFirst().maxTokens() >= 8_000, "推理档要给足 token 预算，否则正文会被思维链挤空");
+        assertEquals(1, recorder.params.size(), "锚点只调一次");
+        assertEquals("low", recorder.params.getFirst().reasoningEffort(),
+                "锚点与增量修订同走推理档");
+        assertTrue(recorder.params.getFirst().maxOutputTokens() >= 8_000,
+                "推理档要给足 token 预算，否则正文会被思维链挤空");
 
-        planner.observeAnswered(pointOf(1),
-                new ChoiceIntent.EndTurn());
+        planner.observeAnswered(pointOf(1), new ChoiceIntent.EndTurn());
         planner.flushEvents();
         planner.drainForTests();
 
-        assertTrue(seen.size() >= 2, "事件批应触发第二次 checkpoint");
-        assertEquals("low", seen.get(1).reasoning(), "事件批同样走推理档");
-        assertTrue(seen.get(1).maxTokens() >= 8_000);
+        assertTrue(recorder.params.size() >= 2, "事件批应触发第二次 checkpoint");
+        assertEquals("low", recorder.params.get(1).reasoningEffort(), "事件批同样走推理档");
+        assertTrue(recorder.params.get(1).maxOutputTokens() >= 8_000);
     }
 
     @Test
@@ -117,29 +142,24 @@ class PlannerSessionCarryOverTest {
 
     @Test
     void replanUsesTheReasoningTierLikeEventsCheckpoints() {
-        List<ChatClient.ChatOptions> seen = Collections.synchronizedList(new ArrayList<>());
-        List<List<ChatMessage>> prompts = Collections.synchronizedList(new ArrayList<>());
-        ChatClient recorder = (messages, options) -> {
-            prompts.add(List.copyOf(messages));
-            seen.add(options);
-            return planJson();
-        };
-        PlannerSession planner = new PlannerSession(recorder,
+        Recorder recorder = new Recorder();
+        recorder.script(planJson());
+        PlannerSession planner = new PlannerSession(stack(trace, recorder),
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
                 TestDuels.facts(), settings(), trace);
 
         planner.observePoint(pointOf(1));
         planner.drainForTests();
         assertTrue(planner.currentPlan().isPresent());
-        int callsBefore = seen.size();
+        int callsBefore = recorder.params.size();
 
         planner.abandonAndReplan("测试作废");
         planner.drainForTests();
 
-        assertTrue(seen.size() > callsBefore, "作废后应触发一次 replan checkpoint");
+        assertTrue(recorder.params.size() > callsBefore, "作废后应触发一次 replan checkpoint");
         int replanCall = -1;
-        for (int i = 0; i < prompts.size(); i++) {
-            boolean marked = prompts.get(i).stream()
+        for (int i = 0; i < recorder.prompts.size(); i++) {
+            boolean marked = recorder.prompts.get(i).stream()
                     .anyMatch(m -> VerboseLog.messageText(m).contains("===重新规划==="));
             if (marked) {
                 replanCall = i;
@@ -147,14 +167,18 @@ class PlannerSessionCarryOverTest {
             }
         }
         assertTrue(replanCall >= 0, "replan 请求应带『===重新规划===』模板");
-        assertEquals("low", seen.get(replanCall).reasoning(), "replan 应与 events 同走推理档");
-        assertTrue(seen.get(replanCall).maxTokens() >= 8_000, "推理档要给足 token 预算");
+        assertEquals("low", recorder.params.get(replanCall).reasoningEffort(),
+                "replan 应与 events 同走推理档");
+        assertTrue(recorder.params.get(replanCall).maxOutputTokens() >= 8_000,
+                "推理档要给足 token 预算");
     }
 
     @Test
     void keepWithoutAnyPlanTriggersOneRecoveryPlan() {
-        PlannerSession planner = new PlannerSession(
-                chat("{\"keep\": true}", planJson()),
+        Recorder recorder = new Recorder();
+        recorder.script("{\"keep\": true}");
+        recorder.script(planJson());
+        PlannerSession planner = new PlannerSession(stack(trace, recorder),
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
                 TestDuels.facts(), settings(), trace);
 
@@ -169,7 +193,9 @@ class PlannerSessionCarryOverTest {
 
     @Test
     void keepOnANewTurnCarriesThePlanOver() {
-        PlannerSession planner = new PlannerSession(chat(planJson()),
+        Recorder recorder = new Recorder();
+        recorder.script(planJson());
+        PlannerSession planner = new PlannerSession(stack(trace, recorder),
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
                 TestDuels.facts(), settings(), trace);
 

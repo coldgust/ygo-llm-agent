@@ -4,8 +4,8 @@ import com.github.coldgust.ygoagent.context.ContextPackBuilder;
 import com.github.coldgust.ygoagent.context.IntentSummary;
 import com.github.coldgust.ygoagent.knowledge.CardFact;
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
-import com.github.coldgust.ygoagent.llm.ChatClient;
 import com.github.coldgust.ygoagent.llm.ComboTool;
+import com.github.coldgust.ygoagent.llm.service.AgentChatServices;
 import com.github.coldgust.ygoagent.llm.DecisionTools;
 import com.github.coldgust.ygoagent.llm.RulebookTool;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
@@ -69,7 +69,7 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
     private final LlmJudge judge;
 
     public DecisionPipeline(ReflexPolicy reflex, PlannerSession planner,
-                                    ContextPackBuilder packer, ChatClient chat,
+                                    ContextPackBuilder packer, AgentChatServices chat,
                                     PipelineSettings settings, CardFacts facts,
                                     DecisionEngine delegate, DecisionTraceWriter traceWriter,
                                     VerboseLog trace) {
@@ -78,7 +78,7 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
     }
 
     public DecisionPipeline(ReflexPolicy reflex, PlannerSession planner,
-                                    ContextPackBuilder packer, ChatClient chat,
+                                    ContextPackBuilder packer, AgentChatServices chat,
                                     PipelineSettings settings, CardFacts facts,
                                     DecisionEngine delegate, DecisionTraceWriter traceWriter,
                                     DecisionTools tools, VerboseLog trace) {

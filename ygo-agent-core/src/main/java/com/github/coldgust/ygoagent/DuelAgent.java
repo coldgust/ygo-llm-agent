@@ -9,7 +9,6 @@ import com.github.coldgust.ygoagent.knowledge.ComboReferenceText;
 import com.github.coldgust.ygoagent.knowledge.JsonlCardFacts;
 import com.github.coldgust.ygoagent.knowledge.RecordedComboSource;
 import com.github.coldgust.ygoagent.llm.CardTool;
-import com.github.coldgust.ygoagent.llm.ChatClient;
 import com.github.coldgust.ygoagent.llm.ComboTool;
 import com.github.coldgust.ygoagent.llm.DecisionTools;
 import com.github.coldgust.ygoagent.llm.DuelRecallTool;
@@ -17,6 +16,7 @@ import com.github.coldgust.ygoagent.llm.LightRagSettings;
 import com.github.coldgust.ygoagent.llm.RulebookTool;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
+import com.github.coldgust.ygoagent.llm.service.AgentChatServices;
 import com.github.coldgust.ygoagent.model.DecisionDeadline;
 import com.github.coldgust.ygoagent.model.DecisionPoint;
 import com.github.coldgust.ygoagent.model.DuelDecision;
@@ -104,9 +104,14 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
         if (packer.hasRuleDigest()) {
             log.info("已预置规则速查（浓缩版）；精确条文可由模型自主调用 search_rulebook 检索");
         }
-        // 规则检索工具：LightRAG 不可达时工具调用会失败并回填错误，模型仍可基于速查继续
-        RulebookTool rulebook = new RulebookTool(config.lightRag(), "mix", 8);
-        ChatClient chat = ChatClient.openAiCompatible(settings.endpoint(), log0);
+        // 检索工具：lightRag 为 null = 不启用检索（工具不注册）；配置了但服务不可达时
+        // 工具调用失败回填错误文案，模型仍可基于速查继续
+        boolean knowledge = config.lightRag() != null;
+        if (!knowledge) {
+            log.info("LightRAG 未配置：规则/历史对局检索工具停用（模型只依赖[规则速查]与卡面）");
+        }
+        RulebookTool rulebook = knowledge ? new RulebookTool(config.lightRag(), "mix", 8) : null;
+        AgentChatServices chat = AgentChatServices.openAiCompatible(settings.endpoint(), log0);
         // 连招查询工具：按主题/关键卡查 PG 实战录入（主要用于推断对手卡组后参考）
         ComboTool comboTool = config.combos() != null && config.combos().available()
                 ? new ComboTool(config.combos(), config.archetype())
@@ -119,7 +124,7 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
         PlannerSession planner = new PlannerSession(
                 chat, packer, facts, settings, traceWriter, plannerTools,
                 config.timeline(), log0);
-        DuelRecallTool duelRecall = new DuelRecallTool(config.lightRag(), "mix", 4);
+        DuelRecallTool duelRecall = knowledge ? new DuelRecallTool(config.lightRag(), "mix", 4) : null;
         DecisionTools decisionTools = new DecisionTools(rulebook, comboTool, cardTool, duelRecall);
         DecisionPipeline pipeline = new DecisionPipeline(
                 new ReflexPolicyImpl(), planner, packer, chat, settings, facts,
@@ -163,7 +168,7 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
      * @param deckPasscodes     己方卡组全清单（含额外卡组）
      * @param combos            PG 实战连招数据源（可空 = 无连招注入与检索）
      * @param comboContextLimit 连招注入的录入条数上限
-     * @param lightRag          LightRAG 连接（规则速查/历史对局检索）
+     * @param lightRag          LightRAG 连接；null = 不注册规则/对局检索工具（检索不可用的唯一表达方式）
      * @param timeline          决斗过程记录端口（可空 = 不注入记录段）；宿主用
      *                          {@code session.duelLog()} 的适配器提供
      */

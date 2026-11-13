@@ -1,17 +1,17 @@
 package com.github.coldgust.ygoplayserver.duel.combo;
 
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
-import dev.langchain4j.data.message.SystemMessage;
-import dev.langchain4j.data.message.UserMessage;
 
-import com.github.coldgust.ygoagent.llm.ChatClient;
+import com.github.coldgust.ygoagent.llm.ChatOptions;
+import com.github.coldgust.ygoagent.llm.LightRagContentRetriever;
+import com.github.coldgust.ygoagent.llm.LightRagSettings;
 import com.github.coldgust.ygoagent.llm.LlmEndpoint;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
-import com.github.coldgust.ygoagent.llm.LangChain4jChat;
-import com.github.coldgust.ygoagent.llm.ResilientChatClient;
+import com.github.coldgust.ygoagent.llm.service.AgentChatServices;
 import com.github.coldgust.ygoplay.ComboRecording;
 import com.github.coldgust.ygoplayserver.config.ComboProperties;
+import com.github.coldgust.ygoplayserver.config.LightRagProperties;
 import com.github.coldgust.ygoplayserver.config.LlmProperties;
 import com.github.coldgust.ygoplayserver.web.DuelEventHub;
 import org.slf4j.Logger;
@@ -40,21 +40,29 @@ public class ComboRecordService {
     private final ObjectProvider<JdbcClient> jdbc;
     private final DuelEventHub eventHub;
     private final JsonMapper mapper = JsonMapper.builder().build();
-    private volatile ChatClient chat;
+    private volatile AgentChatServices chat;
     private volatile boolean tableReady;
     private final String baseUrl;
     private final String apiKey;
     private final String model;
     private final VerboseLog trace;
+    private final LightRagContentRetriever rulebookRetriever;
 
     public ComboRecordService(ObjectProvider<JdbcClient> jdbc, DuelEventHub eventHub,
-                              LlmProperties llm, ComboProperties combo, VerboseLog trace) {
+                              LlmProperties llm, ComboProperties combo, VerboseLog trace,
+                              LightRagProperties lightRag) {
         this.jdbc = jdbc;
         this.eventHub = eventHub;
         this.apiKey = llm.apiKey();
         this.baseUrl = llm.baseUrl();
         this.model = combo.summaryModel() == null ? llm.model() : combo.summaryModel();
         this.trace = trace == null ? new VerboseLog(VerboseLogSettings.off()) : trace;
+        // combo 摘要的规则检索增强：LightRAG 未配置时为 null（narrate 退化为无检索）
+        this.rulebookRetriever = lightRag == null || lightRag.url() == null || lightRag.url().isBlank()
+                ? null
+                : new LightRagContentRetriever(
+                        new LightRagSettings(lightRag.url(), lightRag.apiKey(), lightRag.timeoutMs()),
+                        "mix", 4);
     }
 
 
@@ -105,13 +113,13 @@ public class ComboRecordService {
         String summary = null;
         String summarySource = "NONE";
         String keyCards = null;
-        ChatClient client = chat();
+        AgentChatServices client = chat();
         if (client != null) {
             try {
-                String raw = client.complete(
-                        List.of(SystemMessage.from(ComboSummaryPrompts.SYSTEM),
-                                UserMessage.from(ComboSummaryPrompts.user(archetype, descriptions))),
-                        ChatClient.ChatOptions.narrative(SUMMARY_MAX_TOKENS, SUMMARY_TIMEOUT));
+                String raw = client.narrate(SUMMARY_TIMEOUT, ComboSummaryPrompts.SYSTEM,
+                        ComboSummaryPrompts.user(archetype, descriptions),
+                        ChatOptions.narrative(SUMMARY_MAX_TOKENS, SUMMARY_TIMEOUT),
+                        rulebookRetriever);
                 String text = raw == null ? "" : raw.trim();
                 if (ComboSummaryPrompts.looksUsable(text)) {
                     summary = text;
@@ -210,8 +218,8 @@ public class ComboRecordService {
     }
 
 
-    private ChatClient chat() {
-        ChatClient client = chat;
+    private AgentChatServices chat() {
+        AgentChatServices client = chat;
         if (client != null) {
             return client;
         }
@@ -220,7 +228,7 @@ public class ComboRecordService {
         }
         synchronized (this) {
             if (chat == null) {
-                chat = ChatClient.openAiCompatible(new LlmEndpoint(baseUrl, apiKey, model), trace);
+                chat = AgentChatServices.openAiCompatible(new LlmEndpoint(baseUrl, apiKey, model), trace);
             }
             return chat;
         }

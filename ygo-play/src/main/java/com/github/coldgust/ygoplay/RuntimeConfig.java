@@ -25,7 +25,6 @@ import java.util.function.Function;
  * @param archetype    卡组主题（combo 注入与检索的键；可空）
  * @param duelLogPath  对局记录 JSONL 落盘路径
  * @param tracePath    决策轨迹 JSONL 落盘路径
- * @param llm          LLM 网关凭据（api-key 为空则 v6 流水不启用）
  * @param lightRag     LightRAG 知识栈连接（规则/历史对局检索）
  * @param battleReport 实况战场播报输出目标；null/0 = 关闭，"1" = /tmp/ygo-live/battlefield.log，其余 = 文件路径
  * @param deckStrategy 用户手写的卡组打法思路（注入规划器/决策器上下文；可空）
@@ -36,7 +35,6 @@ public record RuntimeConfig(
         String host, int port, String name, String ydkPath, String move,
         String archetype,
         Path duelLogPath, Path tracePath,
-        Llm llm,
         LightRagEndpoint lightRag,
         String battleReport,
         String deckStrategy,
@@ -45,15 +43,6 @@ public record RuntimeConfig(
 
     private static final Logger log = LoggerFactory.getLogger(RuntimeConfig.class);
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
-
-    public record Llm(String model, String baseUrl, String apiKey) {
-
-        @Override
-        public String toString() {
-            return "Llm[model=" + model + ", baseUrl=" + baseUrl
-                    + ", apiKey=" + (apiKey == null ? "null" : "***") + "]";
-        }
-    }
 
     public static RuntimeConfig resolve(CliOptions cli) {
         String host = cli.host() != null ? cli.host() : "127.0.0.1";
@@ -71,13 +60,12 @@ public record RuntimeConfig(
         Path trace = cli.tracePath() != null
                 ? Path.of(cli.tracePath()) : Path.of("/tmp/ygo-trace/" + stamp + ".jsonl");
 
-        Llm llm = resolveLlm(lookup);
         LightRagEndpoint lightRag = new LightRagEndpoint(
                 lookup.apply("LIGHTRAG_URL"),
                 lookup.apply("LIGHTRAG_API_KEY"),
                 parseLong(lookup.apply("LIGHTRAG_TIMEOUT_MS"), 8_000L));
         return new RuntimeConfig(host, port, name, cli.ydkPath(), move, cli.archetype(),
-                duelLog, trace, llm, lightRag,
+                duelLog, trace, lightRag,
                 lookup.apply("BATTLE_REPORT"),
                 deckStrategy(lookup),
                 tuning(lookup),
@@ -87,13 +75,6 @@ public record RuntimeConfig(
     /** OS env 优先、.env 并入的合并查表。 */
     private static Function<String, String> setting(Map<String, String> dotenv) {
         return key -> Texts.firstNonBlank(System.getenv(key), dotenv.get(key));
-    }
-
-    private static Llm resolveLlm(Function<String, String> lookup) {
-        return new Llm(
-                Texts.firstNonBlank(lookup.apply("LLM_MODEL"), "deepseek-chat"),
-                Texts.firstNonBlank(lookup.apply("LLM_BASE_URL"), "https://api.deepseek.com"),
-                lookup.apply("LLM_API_KEY"));
     }
 
     /** 卡组思路：优先读文件（DECK_STRATEGY_FILE），其次内联文本（DECK_STRATEGY）。 */

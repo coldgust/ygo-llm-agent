@@ -1,16 +1,13 @@
 package com.github.coldgust.ygoplayserver.duel.summary;
 
-import dev.langchain4j.data.message.SystemMessage;
-import dev.langchain4j.data.message.UserMessage;
-
-import com.github.coldgust.ygoagent.llm.ChatClient;
+import com.github.coldgust.ygoagent.llm.ChatOptions;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
+import com.github.coldgust.ygoagent.llm.service.AgentChatServices;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
-import java.util.List;
 import java.util.Optional;
 
 public final class DuelSummarizer {
@@ -23,13 +20,13 @@ public final class DuelSummarizer {
     public record Review(String body, boolean worthStoring) {
     }
 
-    private final ChatClient chat;
+    private final AgentChatServices services;
     private final int maxTokens;
     private final Duration timeout;
     private final VerboseLog trace;
 
-    public DuelSummarizer(ChatClient chat, int maxTokens, Duration timeout, VerboseLog trace) {
-        this.chat = chat;
+    public DuelSummarizer(AgentChatServices services, int maxTokens, Duration timeout, VerboseLog trace) {
+        this.services = services;
         this.maxTokens = Math.max(500, maxTokens);
         this.timeout = timeout;
         this.trace = trace == null ? new VerboseLog(VerboseLogSettings.off()) : trace;
@@ -41,10 +38,8 @@ public final class DuelSummarizer {
             // 作用域标签让日志能分清"这次请求是赛后复盘还是对局决策"
             String raw;
             try (var ignored = trace.scope("赛后复盘")) {
-                raw = chat.complete(
-                        List.of(SystemMessage.from(DuelSummaryPrompts.SYSTEM),
-                                UserMessage.from(prompt)),
-                        ChatClient.ChatOptions.narrative(maxTokens, timeout));
+                raw = services.narrate(timeout, DuelSummaryPrompts.SYSTEM, prompt,
+                        ChatOptions.narrative(maxTokens, timeout), null);
             }
             String body = DuelSummaryPrompts.stripWrapper(raw);
             if (!DuelSummaryPrompts.looksUsable(body)) {

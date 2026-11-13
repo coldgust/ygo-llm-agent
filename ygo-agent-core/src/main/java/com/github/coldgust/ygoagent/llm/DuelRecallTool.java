@@ -8,12 +8,6 @@ import tools.jackson.databind.json.JsonMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,28 +30,12 @@ public final class DuelRecallTool {
     private static final List<String> KEEP_SECTIONS = List.of(
             "一句话结论", "转折点", "失误与代价", "下次遇到类似局面");
 
-    private final HttpClient http;
-    private final JsonMapper mapper = JsonMapper.builder().build();
-    private final String endpoint;
-    private final String apiKey;
-    private final Duration timeout;
-    private final String mode;
+    private final LightRagClient client;
     private final int defaultLimit;
 
     public DuelRecallTool(LightRagSettings lightRag, String mode, int defaultLimit) {
-        String base = lightRag.url() == null || lightRag.url().isBlank() ? "http://localhost:9621" : lightRag.url().trim();
-        if (base.endsWith("/")) {
-            base = base.substring(0, base.length() - 1);
-        }
-        this.endpoint = base + "/query/data";
-        this.apiKey = lightRag.apiKey();
-        this.timeout = Duration.ofMillis(lightRag.timeoutMillis() <= 0 ? 8_000 : lightRag.timeoutMillis());
-        this.mode = mode == null || mode.isBlank() ? "mix" : mode;
+        this.client = new LightRagClient(lightRag, mode);
         this.defaultLimit = defaultLimit <= 0 ? 4 : Math.min(defaultLimit, 10);
-        this.http = HttpClient.newBuilder()
-                .version(HttpClient.Version.HTTP_1_1)
-                .connectTimeout(Duration.ofSeconds(3))
-                .build();
     }
 
     @Tool(name = NAME, value = "检索历史对局复盘（我方主题、先后手、胜负，以及关键决策/转折点/失误与教训）。"
@@ -73,41 +51,9 @@ public final class DuelRecallTool {
             return "（请描述当前局面或想参考的问题，例如 query=\"后手闪刀被清后场\"）";
         }
         int effectiveLimit = limit == null ? defaultLimit : Math.max(1, Math.min(10, limit));
-
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("query", query);
-        payload.put("mode", mode);
-        payload.put("top_k", Math.max(effectiveLimit * 2, 8));
-        payload.put("chunk_top_k", Math.max(effectiveLimit * 2, 8));
-        payload.put("include_chunk_content", true);
-
-        String text = render(post(payload), effectiveLimit);
+        String text = render(client.query(query, Math.max(effectiveLimit * 2, 8)), effectiveLimit);
         log.info("对局摘要检索 query='{}' → {} 字", Texts.flattenClip(query, 40), text.length());
         return text;
-    }
-
-    private JsonNode post(Map<String, Object> payload) {
-        try {
-            HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(endpoint))
-                    .header("Content-Type", "application/json")
-                    .timeout(timeout)
-                    .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(payload)));
-            if (apiKey != null && !apiKey.isBlank()) {
-                builder.header("X-API-Key", apiKey);
-            }
-            HttpResponse<String> response = http.send(builder.build(),
-                    HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() != 200) {
-                throw new IllegalStateException("LightRAG HTTP " + response.statusCode() + ": "
-                        + Texts.flattenClip(response.body(), 200));
-            }
-            return mapper.readTree(response.body());
-        } catch (IOException e) {
-            throw new IllegalStateException("对局检索 IO 失败: " + e.getMessage(), e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("对局检索被中断", e);
-        }
     }
 
     /**
@@ -233,7 +179,7 @@ public final class DuelRecallTool {
         if (text.isEmpty()) {
             return;
         }
-        if (merged.length() > 0 && merged.charAt(merged.length() - 1) != '\n') {
+        if (!merged.isEmpty() && merged.charAt(merged.length() - 1) != '\n') {
             merged.append('\n');
         }
         merged.append(text).append('\n');

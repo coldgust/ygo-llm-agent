@@ -1,10 +1,13 @@
 package com.github.coldgust.ygoagent.pipeline;
 
-import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.data.message.ChatMessage;
-import dev.langchain4j.data.message.SystemMessage;
-import dev.langchain4j.data.message.UserMessage;
-import com.github.coldgust.ygoagent.model.Candidates;
+import com.github.coldgust.ygoagent.context.ContextPackBuilder;
+import com.github.coldgust.ygoagent.context.DuelMathService;
+import com.github.coldgust.ygoagent.llm.AgentChatFactory;
+import com.github.coldgust.ygoagent.llm.FakeChatModel;
+import com.github.coldgust.ygoagent.llm.LlmEndpoint;
+import com.github.coldgust.ygoagent.llm.VerboseLog;
+import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
+import com.github.coldgust.ygoagent.llm.service.AgentChatServices;
 import com.github.coldgust.ygoagent.model.ChoiceIntent;
 import com.github.coldgust.ygoagent.model.DecisionDeadline;
 import com.github.coldgust.ygoagent.model.DecisionExplanation;
@@ -13,17 +16,18 @@ import com.github.coldgust.ygoagent.model.DuelDecision;
 import com.github.coldgust.ygoagent.model.PathKind;
 import com.github.coldgust.ygoagent.model.RequestKind;
 import com.github.coldgust.ygoagent.model.Timing;
-import com.github.coldgust.ygoagent.llm.ChatClient;
-import com.github.coldgust.ygoagent.llm.VerboseLog;
-import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
+import com.github.coldgust.ygoagent.model.Candidates;
 import com.github.coldgust.ygoagent.planner.PlannerSession;
 import com.github.coldgust.ygoagent.pipeline.plan.TurnPlan;
-import com.github.coldgust.ygoagent.pipeline.DecisionEngine;
-import com.github.coldgust.ygoagent.trace.DecisionTraceWriter;
 import com.github.coldgust.ygoagent.pipeline.reflex.ReflexPolicyImpl;
+import com.github.coldgust.ygoagent.trace.DecisionTraceWriter;
 import com.github.coldgust.ygodomain.decision.ChoiceRequest;
 import com.github.coldgust.ygodomain.duel.PlayerSide;
 import com.github.coldgust.ygodomain.zone.ZoneRef;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.response.ChatResponse;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -37,33 +41,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import com.github.coldgust.ygoagent.context.ContextPackBuilder;
-import com.github.coldgust.ygoagent.context.DuelMathService;
 
 class DecisionPipelineTest {
 
     private final VerboseLog trace = new VerboseLog(VerboseLogSettings.off());
 
-    /** 可编程假聊天客户端：按调用序返回预置回复（超出后返回最后一条）。 */
-    private static final class FakeChat implements ChatClient {
-        private final List<String> replies;
-        private final AtomicInteger index = new AtomicInteger();
-        final List<List<ChatMessage>> calls = new ArrayList<>();
-        boolean fail = false;
+    private static final LlmEndpoint ENDPOINT =
+            new LlmEndpoint("http://localhost:9", "k", "deepseek-chat");
 
-        FakeChat(String... replies) {
-            this.replies = List.of(replies.length == 0 ? new String[]{"{\"keep\": true}"} : replies);
-        }
-
-        @Override
-        public String complete(List<ChatMessage> messages, ChatOptions options) {
-            calls.add(List.copyOf(messages));
-            if (fail) {
-                throw new ChatException("boom");
-            }
-            int i = index.getAndIncrement();
-            return replies.get(Math.min(i, replies.size() - 1));
-        }
+    /** AiServices 代理直接架在假模型上：解析/模板/记忆都走真实框架路径。 */
+    private static AgentChatServices stack(VerboseLog trace, ChatModel model) {
+        return new AgentChatServices(AgentChatFactory.withSource((t, tier, w) -> model), trace);
     }
 
     private static PipelineSettings settings() {
@@ -89,7 +77,7 @@ class DecisionPipelineTest {
                 + "]}, \"confidence\": 0.8}";
     }
 
-    private record Rig(DecisionPipeline port, PlannerSession planner, FakeChat chat,
+    private record Rig(DecisionPipeline port, PlannerSession planner, FakeChatModel chat,
                        AtomicInteger delegateCalls) {
     }
 
@@ -107,8 +95,9 @@ class DecisionPipelineTest {
     }
 
     private Rig rig(PipelineSettings cfg, String... chatReplies) {
-        FakeChat chat = new FakeChat(chatReplies);
-        PlannerSession planner = new PlannerSession(chat, new ContextPackBuilder(TestDuels.facts(),
+        FakeChatModel chat = new FakeChatModel(chatReplies);
+        AgentChatServices services = stack(trace, chat);
+        PlannerSession planner = new PlannerSession(services, new ContextPackBuilder(TestDuels.facts(),
                 new DuelMathService()), TestDuels.facts(), cfg, trace);
         AtomicInteger delegateCalls = new AtomicInteger();
         DecisionEngine delegate = (point, deadline) -> {
@@ -120,7 +109,7 @@ class DecisionPipelineTest {
         var port = new DecisionPipeline(new ReflexPolicyImpl(),
                 planner,
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
-                chat, cfg, TestDuels.facts(), delegate,
+                services, cfg, TestDuels.facts(), delegate,
                 DecisionTraceWriter.NOOP, trace);
         return new Rig(port, planner, chat, delegateCalls);
     }
@@ -140,9 +129,9 @@ class DecisionPipelineTest {
         assertEquals(0, rig.delegateCalls().get());
         rig.planner().drainForTests();
         // 规划器照常观察（回合锚点），但决策路径没有走 直答：
-        // 调用数 = 锚点 1 次（rig 默认回空 → 可能再补一次 keep 恢复），关键是"没有第 3 次决策器判断"。
-        assertTrue(rig.chat().calls.size() <= 2,
-                "REFLEX 命中后不应再调 LLM 做决策器判断，实际调用 " + rig.chat().calls.size());
+        // 调用数 = 锚点 1 次（rig 默认回 keep），关键是"没有第 3 次决策器判断"。
+        assertTrue(rig.chat().requests.size() <= 2,
+                "REFLEX 命中后不应再调 LLM 做决策器判断，实际调用 " + rig.chat().requests.size());
     }
 
     @Test
@@ -216,8 +205,8 @@ class DecisionPipelineTest {
 
         DuelDecision decision = rig.port().decide(point, DecisionDeadline.of(3000));
         assertEquals(PathKind.LLM_CALL, decision.pathKind(), "升级仍应由直答接住");
-        assertTrue(rig.chat().calls.stream()
-                        .flatMap(List::stream)
+        assertTrue(rig.chat().requests.stream()
+                        .flatMap(r -> r.messages().stream())
                         .noneMatch(m -> VerboseLog.messageText(m).contains("===发散")),
                 "抢答关闭后规划会话不应收到紧急决策请求");
         assertEquals(0, rig.delegateCalls().get());
@@ -400,8 +389,9 @@ class DecisionPipelineTest {
                 settings().model(), 0, 0, 20_000, 6, 0.80, 300,
                 settings().plannerCallTimeoutMs(), settings().plannerCooldownMs(),
                 settings().cardRagPath(), settings().judgeMaxTokens(), true, true);
-        FakeChat chat = new FakeChat(replies);
-        PlannerSession planner = new PlannerSession(chat, new ContextPackBuilder(TestDuels.facts(),
+        FakeChatModel chat = new FakeChatModel(replies);
+        AgentChatServices services = stack(trace, chat);
+        PlannerSession planner = new PlannerSession(services, new ContextPackBuilder(TestDuels.facts(),
                 new DuelMathService()), TestDuels.facts(), cfg, trace);
         AtomicInteger calls = new AtomicInteger();
         DecisionEngine delegate = (point, deadline) -> {
@@ -412,7 +402,7 @@ class DecisionPipelineTest {
         };
         var port = new DecisionPipeline(point -> Optional.empty(), planner,
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
-                chat, cfg, TestDuels.facts(), delegate, tracer, trace);
+                services, cfg, TestDuels.facts(), delegate, tracer, trace);
         return new Rig(port, planner, chat, calls);
     }
 
@@ -495,16 +485,44 @@ class DecisionPipelineTest {
         assertEquals(PathKind.LLM_CALL, decision.pathKind());
     }
 
-    /** 计划"迟到"的场景：慢速聊天客户端（模拟真实规划调用耗时）。 */
-    private static ChatClient slowChat(long delayMs, String reply) {
-        return (messages, options) -> {
+    /** 计划"迟到"的场景：慢速假模型（模拟真实规划调用耗时）。 */
+    private static final class SlowModel implements ChatModel {
+        private final long delayMs;
+        private final String reply;
+
+        SlowModel(long delayMs, String reply) {
+            this.delayMs = delayMs;
+            this.reply = reply;
+        }
+
+        @Override
+        public ChatResponse chat(dev.langchain4j.model.chat.request.ChatRequest request) {
             try {
                 Thread.sleep(delayMs);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-            return reply;
-        };
+            return ChatResponse.builder().aiMessage(AiMessage.from(reply)).build();
+        }
+    }
+
+    /** 先秒回 keep（锚点无计划），之后每次 直答 都要花 700ms。 */
+    private static final class LateAnswerModel implements ChatModel {
+        private final AtomicInteger calls = new AtomicInteger();
+
+        @Override
+        public ChatResponse chat(dev.langchain4j.model.chat.request.ChatRequest request) {
+            if (calls.getAndIncrement() == 0) {
+                return ChatResponse.builder().aiMessage(AiMessage.from("{\"keep\": true}")).build();
+            }
+            try {
+                Thread.sleep(700); // 直答 本身要花 700ms
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return ChatResponse.builder().aiMessage(
+                    AiMessage.from("{\"choice\":\"C1\",\"rationale\":\"断检索\",\"confidence\":0.8}")).build();
+        }
     }
 
     @Test
@@ -515,15 +533,15 @@ class DecisionPipelineTest {
                 settings().model(), 800, 3_000, 20_000, 6, 0.80, 300,
                 settings().plannerCallTimeoutMs(), settings().plannerCooldownMs(),
                 settings().cardRagPath(), settings().judgeMaxTokens(), true, true);
-        ChatClient slow = slowChat(600, planJson("summon", TestDuels.HORNET));
-        PlannerSession planner = new PlannerSession(slow, new ContextPackBuilder(TestDuels.facts(),
+        AgentChatServices services = stack(trace, new SlowModel(600, planJson("summon", TestDuels.HORNET)));
+        PlannerSession planner = new PlannerSession(services, new ContextPackBuilder(TestDuels.facts(),
                 new DuelMathService()), TestDuels.facts(), longer, trace);
         DecisionEngine delegate = (point, deadline) -> {
             throw new AssertionError("不该落到 ⑤ 兜底");
         };
         var port = new DecisionPipeline(new ReflexPolicyImpl(),
                 planner, new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
-                slow, longer, TestDuels.facts(), delegate,
+                services, longer, TestDuels.facts(), delegate,
                 DecisionTraceWriter.NOOP, trace);
 
         DecisionPoint point = mainPoint();
@@ -560,25 +578,14 @@ class DecisionPipelineTest {
                 settings().model(), 150, 1_000, 20_000, 6, 0.80, 5_000,
                 settings().plannerCallTimeoutMs(), settings().plannerCooldownMs(),
                 settings().cardRagPath(), settings().judgeMaxTokens(), true, true);
-        AtomicInteger calls =
-                new AtomicInteger();
-        ChatClient chat = (messages, options) -> {
-            if (calls.getAndIncrement() == 0) {
-                return "{\"keep\": true}"; // 锚点：不产出计划（模拟规划还没就绪）
-            }
-            try {
-                Thread.sleep(700); // 直答 本身要花 700ms
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-            return "{\"choice\":\"C1\",\"rationale\":\"断检索\",\"confidence\":0.8}";
-        };
-        PlannerSession planner = new PlannerSession(chat, new ContextPackBuilder(TestDuels.facts(),
+        ChatModel chat = new LateAnswerModel();
+        AgentChatServices services = stack(trace, chat);
+        PlannerSession planner = new PlannerSession(services, new ContextPackBuilder(TestDuels.facts(),
                 new DuelMathService()), TestDuels.facts(), cfg, trace);
         var port = new DecisionPipeline(
                 new ReflexPolicyImpl(), planner,
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
-                chat, cfg, TestDuels.facts(), (p, d) -> {
+                services, cfg, TestDuels.facts(), (p, d) -> {
                     throw new AssertionError("等待不该吃光预算，本应走 直答");
                 }, DecisionTraceWriter.NOOP, trace);
 
@@ -610,13 +617,13 @@ class DecisionPipelineTest {
         String plan = "{\"thinking\": \"断检索\", \"goal\": \"保留资源\", \"main_line\": {\"steps\": ["
                 + "{\"when\": \"CHAIN\", \"verb\": \"activate\", \"passcode\": " + TestDuels.ENGAGE
                 + ", \"why\": \"这一环在赚卡\"}]}}";
-        ChatClient slow = slowChat(500, plan);
-        PlannerSession planner = new PlannerSession(slow, new ContextPackBuilder(TestDuels.facts(),
+        AgentChatServices services = stack(trace, new SlowModel(500, plan));
+        PlannerSession planner = new PlannerSession(services, new ContextPackBuilder(TestDuels.facts(),
                 new DuelMathService()), TestDuels.facts(), cfg, trace);
         var port = new DecisionPipeline(
                 new ReflexPolicyImpl(), planner,
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
-                slow, cfg, TestDuels.facts(), (p, d) -> {
+                services, cfg, TestDuels.facts(), (p, d) -> {
                     throw new AssertionError("不该落到 ⑤ 兜底");
                 }, DecisionTraceWriter.NOOP, trace);
 
@@ -662,8 +669,9 @@ class DecisionPipelineTest {
                 true, settings().baseUrl(), settings().apiKey(), settings().model(),
                 0, 0, 20_000, 6, 0.80, 300, settings().plannerCallTimeoutMs(),
                 settings().plannerCooldownMs(), settings().cardRagPath(), settings().judgeMaxTokens(), true, true);
-        FakeChat chat = new FakeChat(planJson("activate", 123456789L)); // 计划不可接地
-        PlannerSession planner = new PlannerSession(chat, new ContextPackBuilder(TestDuels.facts(),
+        FakeChatModel chat = new FakeChatModel(planJson("activate", 123456789L)); // 计划不可接地
+        AgentChatServices services = stack(trace, chat);
+        PlannerSession planner = new PlannerSession(services, new ContextPackBuilder(TestDuels.facts(),
                 new DuelMathService()), TestDuels.facts(), tight, trace);
         AtomicInteger delegateCalls = new AtomicInteger();
         DecisionEngine delegate = (point, deadline) -> {
@@ -674,7 +682,7 @@ class DecisionPipelineTest {
         };
         var port = new DecisionPipeline(point -> Optional.empty(), planner,
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
-                chat, tight, TestDuels.facts(), delegate,
+                services, tight, TestDuels.facts(), delegate,
                 DecisionTraceWriter.NOOP, trace);
         DecisionPoint point = mainPoint();
         planner.observePoint(point);
@@ -688,8 +696,9 @@ class DecisionPipelineTest {
 
     @Test
     void plannerDegradesAfterChatFailure() {
-        FakeChat chat = new FakeChat();
-        PlannerSession planner = new PlannerSession(chat, new ContextPackBuilder(TestDuels.facts(),
+        FakeChatModel chat = new FakeChatModel();
+        AgentChatServices services = stack(trace, chat);
+        PlannerSession planner = new PlannerSession(services, new ContextPackBuilder(TestDuels.facts(),
                 new DuelMathService()), TestDuels.facts(), settings(), trace);
         DecisionPoint point = mainPoint();
         chat.fail = true;
@@ -701,8 +710,9 @@ class DecisionPipelineTest {
 
     @Test
     void turnChangeRotatesSegment() {
-        FakeChat chat = new FakeChat(planJson("activate", TestDuels.ENGAGE));
-        PlannerSession planner = new PlannerSession(chat, new ContextPackBuilder(TestDuels.facts(),
+        FakeChatModel chat = new FakeChatModel(planJson("activate", TestDuels.ENGAGE));
+        AgentChatServices services = stack(trace, chat);
+        PlannerSession planner = new PlannerSession(services, new ContextPackBuilder(TestDuels.facts(),
                 new DuelMathService()), TestDuels.facts(), settings(), trace);
         DecisionPoint point = mainPoint();
         planner.observePoint(point);
@@ -717,7 +727,8 @@ class DecisionPipelineTest {
                 RequestKind.CHAIN);
         planner.observePoint(oppPoint);
         planner.drainForTests();
-        assertTrue(chat.calls.size() >= 2, "换段应触发新锚点 checkpoint");
-        assertTrue(VerboseLog.messageText(chat.calls.get(1).getFirst()).contains("回合规划器"));
+        assertTrue(chat.requests.size() >= 2, "换段应触发新锚点 checkpoint");
+        assertTrue(VerboseLog.messageText(chat.requests.get(1).messages().getFirst()).contains("回合规划器"),
+                "段轮换后 system 提示仍在消息首位");
     }
 }

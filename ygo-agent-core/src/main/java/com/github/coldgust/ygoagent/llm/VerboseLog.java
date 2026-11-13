@@ -51,7 +51,7 @@ public final class VerboseLog {
         return seq.incrementAndGet();
     }
 
-    public void request(long id, String model, ChatClient.ChatOptions options, List<ChatMessage> messages) {
+    public void request(long id, String model, ChatOptions options, List<ChatMessage> messages) {
         if (!enabled) {
             return;
         }
@@ -91,22 +91,6 @@ public final class VerboseLog {
             return t.text();
         }
         return "";
-    }
-
-    /**
-     * 工具轮标记：这一轮的完整请求内容由 {@link #request} 记录，这里只记轮次上下文。
-     * 工具轮与普通请求分开标，因为它的请求去掉了 {@code response_format}、多带了 {@code tools}。
-     */
-    public void toolRound(long id, String model, ChatClient.ChatOptions options,
-                          int round, int maxRounds, List<String> toolNames) {
-        if (!enabled) {
-            return;
-        }
-        log.info("[LLM→] #{} {}工具轮 {}/{} model={} temp={} max_tokens={} tools={}",
-                id, label(), round, maxRounds, model,
-                options == null ? "-" : options.temperature(),
-                options == null ? "-" : options.maxTokens(),
-                toolNames == null || toolNames.isEmpty() ? "（已收掉）" : toolNames);
     }
 
     /** 响应：耗时 + 正文（含"空正文"这种要命的情况）。 */

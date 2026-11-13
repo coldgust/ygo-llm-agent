@@ -8,15 +8,7 @@ import tools.jackson.databind.json.JsonMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import com.github.coldgust.ygoagent.knowledge.SourceDomain;
 
 /**
@@ -29,28 +21,12 @@ public final class RulebookTool {
     private static final Logger log = LoggerFactory.getLogger(RulebookTool.class);
     private static final int MAX_RESULT_CHARS = 3_000;
 
-    private final HttpClient http;
-    private final JsonMapper mapper = JsonMapper.builder().build();
-    private final String endpoint;
-    private final String apiKey;
-    private final Duration timeout;
-    private final String mode;
+    private final LightRagClient client;
     private final int defaultTopK;
 
     public RulebookTool(LightRagSettings lightRag, String mode, int defaultTopK) {
-        String base = lightRag.url() == null || lightRag.url().isBlank() ? "http://localhost:9621" : lightRag.url().trim();
-        if (base.endsWith("/")) {
-            base = base.substring(0, base.length() - 1);
-        }
-        this.endpoint = base + "/query/data";
-        this.apiKey = lightRag.apiKey();
-        this.timeout = Duration.ofMillis(lightRag.timeoutMillis() <= 0 ? 8_000 : lightRag.timeoutMillis());
-        this.mode = mode == null || mode.isBlank() ? "mix" : mode;
+        this.client = new LightRagClient(lightRag, mode);
         this.defaultTopK = defaultTopK <= 0 ? 6 : defaultTopK;
-        this.http = HttpClient.newBuilder()
-                .version(HttpClient.Version.HTTP_1_1)
-                .connectTimeout(Duration.ofSeconds(3))
-                .build();
     }
 
     /**
@@ -77,41 +53,9 @@ public final class RulebookTool {
             return "（查询为空：请提供要查阅的规则问题或关键词）";
         }
         int effectiveTopK = topK == null ? defaultTopK : Math.max(1, Math.min(12, topK));
-
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("query", query);
-        payload.put("mode", mode);
-        payload.put("top_k", effectiveTopK);
-        payload.put("chunk_top_k", effectiveTopK);
-        payload.put("include_chunk_content", true);
-
-        String text = render(post(payload));
+        String text = render(client.query(query, effectiveTopK));
         log.info("规则检索 query='{}' topK={} → {} 字", Texts.flattenClip(query, 40), effectiveTopK, text.length());
         return text;
-    }
-
-    private JsonNode post(Map<String, Object> payload) {
-        try {
-            HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(endpoint))
-                    .header("Content-Type", "application/json")
-                    .timeout(timeout)
-                    .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(payload)));
-            if (apiKey != null && !apiKey.isBlank()) {
-                builder.header("X-API-Key", apiKey);
-            }
-            HttpResponse<String> response = http.send(builder.build(),
-                    HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() != 200) {
-                throw new IllegalStateException("LightRAG HTTP " + response.statusCode() + ": "
-                        + Texts.flattenClip(response.body(), 200));
-            }
-            return mapper.readTree(response.body());
-        } catch (IOException e) {
-            throw new IllegalStateException("规则检索 IO 失败: " + e.getMessage(), e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("规则检索被中断", e);
-        }
     }
 
     private String render(JsonNode root) {

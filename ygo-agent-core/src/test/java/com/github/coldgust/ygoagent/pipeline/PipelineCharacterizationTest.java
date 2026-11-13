@@ -2,9 +2,12 @@ package com.github.coldgust.ygoagent.pipeline;
 
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
 import com.github.coldgust.ygoagent.context.DuelMathService;
-import com.github.coldgust.ygoagent.llm.ChatClient;
+import com.github.coldgust.ygoagent.llm.AgentChatFactory;
+import com.github.coldgust.ygoagent.llm.FakeChatModel;
+import com.github.coldgust.ygoagent.llm.LlmEndpoint;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
+import com.github.coldgust.ygoagent.llm.service.AgentChatServices;
 import com.github.coldgust.ygoagent.model.ChoiceIntent;
 import com.github.coldgust.ygoagent.model.DecisionDeadline;
 import com.github.coldgust.ygoagent.model.DecisionExplanation;
@@ -16,8 +19,6 @@ import com.github.coldgust.ygoagent.pipeline.reflex.ReflexPolicyImpl;
 import com.github.coldgust.ygoagent.planner.PlannerSession;
 import com.github.coldgust.ygoagent.trace.DecisionTraceWriter;
 import com.github.coldgust.ygoagent.pipeline.TestDuels;
-import com.github.coldgust.ygodomain.decision.ChoiceRequest;
-import com.github.coldgust.ygodomain.duel.PlayerSide;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -27,17 +28,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 特征测试（重构守护网）：钉住当前行为的<b>外部可观察形态</b>——EXEC_DECISION 的 payload
- * 键集合（前端/trace 依赖）、TurnMemory 的 ×N 折叠语义。深度重构（R1–R4）期间这些不变式
+ * 键集合（前端/trace 依赖）、TurnMemory 的 ×N 折叠语义。深度重构期间这些不变式
  * 不得改变；文本与键集合视为对外契约。
  */
 class PipelineCharacterizationTest {
+
+    private static final LlmEndpoint ENDPOINT =
+            new LlmEndpoint("http://localhost:9", "k", "deepseek-chat");
 
     private final VerboseLog trace = new VerboseLog(VerboseLogSettings.off());
 
@@ -82,13 +84,14 @@ class PipelineCharacterizationTest {
     @Test
     void execDecisionPayloadKeysAndPlanStepAreStable() {
         EventCatcher catcher = new EventCatcher();
-        var chat = (ChatClient) fakeChat(planJson("activate", TestDuels.ENGAGE), "{\"keep\": true}");
-        PlannerSession planner = new PlannerSession(chat,
+        FakeChatModel chat = new FakeChatModel(planJson("activate", TestDuels.ENGAGE), "{\"keep\": true}");
+        AgentChatServices services = new AgentChatServices(AgentChatFactory.withSource((t, tier, w) -> chat), trace);
+        PlannerSession planner = new PlannerSession(services,
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
                 TestDuels.facts(), cfg(), trace);
         DecisionPipeline port = new DecisionPipeline(point -> Optional.empty(), planner,
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
-                chat, cfg(), TestDuels.facts(),
+                services, cfg(), TestDuels.facts(),
                 (p, d) -> new DuelDecision(new ChoiceIntent.EndTurn(), PathKind.TACTICAL, 0.5,
                         DecisionExplanation.of("delegate"), Timing.ZERO),
                 catcher, trace);
@@ -112,13 +115,14 @@ class PipelineCharacterizationTest {
     @Test
     void judgePayloadOmitsPlanFieldsWhenNoPlan() {
         EventCatcher catcher = new EventCatcher();
-        var chat = (ChatClient) fakeChat("{\"choice\": \"C1\", \"rationale\": \"r\", \"confidence\": 0.5}");
-        PlannerSession planner = new PlannerSession(chat,
+        FakeChatModel chat = new FakeChatModel("{\"choice\": \"C1\", \"rationale\": \"r\", \"confidence\": 0.5}");
+        AgentChatServices services = new AgentChatServices(AgentChatFactory.withSource((t, tier, w) -> chat), trace);
+        PlannerSession planner = new PlannerSession(services,
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
                 TestDuels.facts(), cfg(), trace);
         DecisionPipeline port = new DecisionPipeline(point -> Optional.empty(), planner,
                 new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
-                chat, cfg(), TestDuels.facts(),
+                services, cfg(), TestDuels.facts(),
                 (p, d) -> new DuelDecision(new ChoiceIntent.EndTurn(), PathKind.TACTICAL, 0.5,
                         DecisionExplanation.of("delegate"), Timing.ZERO),
                 catcher, trace);
@@ -153,12 +157,5 @@ class PipelineCharacterizationTest {
         assertEquals("动作2", memory.turnActions().getFirst(), "超限丢最旧的");
         memory.recordTurnAction(4, "新回合", "动作4-1");
         assertEquals(List.of("动作4-1"), memory.turnActions(), "换回合清空重来");
-    }
-
-
-    private static ChatClient fakeChat(String... replies) {
-        AtomicInteger index = new AtomicInteger();
-        List<String> list = List.of(replies);
-        return (messages, options) -> list.get(Math.min(index.getAndIncrement(), list.size() - 1));
     }
 }

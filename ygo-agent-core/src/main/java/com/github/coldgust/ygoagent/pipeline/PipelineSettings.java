@@ -1,6 +1,6 @@
 package com.github.coldgust.ygoagent.pipeline;
 
-import com.github.coldgust.ygoagent.llm.ChatClient;
+import com.github.coldgust.ygoagent.llm.ChatOptions;
 import com.github.coldgust.ygoagent.llm.LlmEndpoint;
 
 import java.nio.file.Path;
@@ -111,15 +111,15 @@ public record PipelineSettings(
         return new LlmEndpoint(baseUrl, apiKey, model);
     }
 
-    public ChatClient.ChatOptions checkpointOptions() {
+    public ChatOptions checkpointOptions() {
         String effectiveLevel = reasoningPlanner;
         if ("off".equals(effectiveLevel)) {
             // 顾问模式四段 + 方案比较合计约 900–1100 字，额度给足避免截成半截 JSON；路径模式 JSON 更紧凑
-            return ChatClient.ChatOptions.fastPlan(pathPlanning ? 1_200 : 2_600,
+            return ChatOptions.fastPlan(pathPlanning ? 1_200 : 2_600,
                     Duration.ofMillis(plannerCallTimeoutMs));
         }
         long budget = Math.min(plannerCallTimeoutMs, 20_000);
-        ChatClient.ChatOptions options = ChatClient.ChatOptions.deepPlan(8_000, Duration.ofMillis(budget));
+        ChatOptions options = ChatOptions.deepPlan(8_000, Duration.ofMillis(budget));
         // low 与推理档默认相同（no-op）；medium/high 在这里生效
         return effectiveLevel == null ? options : options.withReasoning(effectiveLevel);
     }

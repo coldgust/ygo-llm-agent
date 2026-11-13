@@ -2,9 +2,12 @@ package com.github.coldgust.ygoagent.pipeline.judge;
 
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
 import com.github.coldgust.ygoagent.context.DecisionMemory;
-import com.github.coldgust.ygoagent.llm.ChatClient;
+import com.github.coldgust.ygoagent.llm.ChatOptions;
 import com.github.coldgust.ygoagent.llm.DecisionTools;
+import com.github.coldgust.ygoagent.llm.LlmChatException;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
+import com.github.coldgust.ygoagent.llm.service.AgentChatServices;
+import com.github.coldgust.ygoagent.llm.service.JudgeAi;
 import com.github.coldgust.ygoagent.model.Candidate;
 import com.github.coldgust.ygoagent.model.CandidateId;
 import com.github.coldgust.ygoagent.model.ChoiceIntent;
@@ -21,24 +24,20 @@ import com.github.coldgust.ygoagent.pipeline.plan.TurnPlan;
 import com.github.coldgust.ygoagent.planner.PlannerSession;
 import com.github.coldgust.ygodomain.decision.ChoiceRequest;
 import com.github.coldgust.ygodomain.zone.ZoneRef;
-import dev.langchain4j.data.message.ChatMessage;
-import dev.langchain4j.data.message.SystemMessage;
-import dev.langchain4j.data.message.UserMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.stream.Collectors;
 
 /**
@@ -46,34 +45,43 @@ import java.util.stream.Collectors;
  * 先到先得；planner 信息全则优先（§2.2.5）。
  * <p>两路都在别的线程里跑，失败原因收集进 {@code missReasons} 再并回主线程；
  * 拿到草案后只做"能不能执行"的校验（候选必须真实存在于请求内），不做"该不该这么打"的改判。
+ * <p>调用失败（{@link LlmChatException}）与输出不可解析分开记因：前者可能是端点故障，
+ * 后者只是模型行为问题。
  */
 public final class LlmJudge implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(LlmJudge.class);
 
-    private final ChatClient chat;
+    private final AgentChatServices services;
     private final ContextPackBuilder packer;
     private final DecisionTools tools;
     private final PipelineSettings settings;
     private final PlannerSession planner;
     private final TurnMemory memory;
     private final VerboseLog trace;
+    /** 工具集合只物化一次：AiService 代理按实例缓存，键里用同一 List 实例。 */
+    private final List<Object> toolProviders;
+    /** 决策档（本轮局内恒定）：温度/tokens/思考强度 bake 在按超时分桶的模型上。 */
+    private final ChatOptions decisionTier;
     private final ExecutorService judgePool = Executors.newFixedThreadPool(2, r -> {
         Thread t = new Thread(r, "ygo-judge");
         t.setDaemon(true);
         return t;
     });
 
-    public LlmJudge(ChatClient chat, ContextPackBuilder packer, DecisionTools tools,
+    public LlmJudge(AgentChatServices services, ContextPackBuilder packer, DecisionTools tools,
                     PipelineSettings settings, PlannerSession planner, TurnMemory memory,
                     VerboseLog trace) {
-        this.chat = chat;
+        this.services = services;
         this.packer = packer;
         this.tools = tools == null ? DecisionTools.NONE : tools;
         this.settings = settings;
         this.planner = planner;
         this.memory = memory;
         this.trace = trace;
+        this.toolProviders = this.tools.providers();
+        this.decisionTier = ChatOptions.decision(settings.judgeMaxTokens(), Duration.ZERO)
+                .withReasoning(settings.reasoningDecision());
     }
 
     private record Drafted(DuelDecision decision, ZoneRef zone) {
@@ -116,65 +124,41 @@ public final class LlmJudge implements AutoCloseable {
                     String pack = packer.decisionPack(point, planForJudge, memoryPack);
                     // 缓存分层前缀：SYSTEM（局级）→ 静态资料（局级）→ 决斗记录·已结算回合（回合级）
                     // 三段在本回合内逐字节一致，deepseek 自动前缀缓存按缓存价吃掉大头；
-                    // 决策包只带每次变化的动态内容。空段跳过，保持前缀最短。
-                    List<ChatMessage> messages = new ArrayList<>();
-                    messages.add(SystemMessage.from(JudgePrompts.SYSTEM));
+                    // 决策包只带每次变化的动态内容。
                     String material = packer.judgeStaticMaterial();
-                    if (!material.isBlank()) {
-                        messages.add(UserMessage.from(material));
-                    }
                     String record = packer.recordOfClosedTurns(point.turn());
-                    if (!record.isBlank()) {
-                        messages.add(UserMessage.from(record));
-                    }
-                    messages.add(UserMessage.from(pack));
-                    ChatClient.ChatOptions options = ChatClient.ChatOptions.decision(
-                                    settings.judgeMaxTokens(),
-                                    Duration.ofMillis(Math.min(settings.judgeTimeoutMs(), deadlineMs)))
-                            // 思考强度走配置（LLM_REASONING_DECISION）；留空 = 沿用决策档默认（关思考）
-                            .withReasoning(settings.reasoningDecision());
+                    long decideTimeoutMs = Math.min(settings.judgeTimeoutMs(), deadlineMs);
                     // 工具按需注册：规则 / 连招 / 查卡 / 历史对局，模型自己决定要不要调用（工具轮对上层透明）
-                    List<Object> toolList = tools.providers();
-                    String raw;
+                    JudgeAnswer answer;
                     try (var ignored = trace.scope("决策器判断 T" + point.turn() + " " + point.kind())) {
-                        raw = toolList.isEmpty() ? chat.complete(messages, options)
-                                : chat.completeWithTools(messages, options, toolList);
-                    }
-                    Optional<ChoiceDraft> draft = ChoiceDraft.parse(raw);
-                    if (draft.isEmpty()) {
-                        notes.add("直答输出不可解析：" + snippet(raw));
+                        answer = judgeAiFor(Duration.ofMillis(decideTimeoutMs))
+                                .decide(material, record, pack);
+                    } catch (RuntimeException e) {
+                        notes.add(callFailure(e) ? "直答调用失败：" + rootCause(e)
+                                : "直答输出不可解析：" + rootCause(e));
                         return Optional.<Drafted>empty();
                     }
-                    Optional<Drafted> built = buildFromDraft(point, draft.get(), "直答", null);
-                    if (built.isPresent() || draft.get().choice() == null
-                            || point.candidate(draft.get().choice()).isPresent()) {
+                    Optional<Drafted> built = buildFromDraft(point, answer, "直答", null);
+                    if (built.isPresent() || isNoneAnswer(answer)
+                            || (answer.candidateId() != null
+                                && point.candidate(answer.candidateId()).isPresent())) {
                         return built.or(() -> {
-                            notes.add("直答无法映射成意图：" + draft.get().choice().value());
+                            notes.add("直答无法映射成意图：" + answer.choice());
                             return Optional.<Drafted>empty();
                         });
                     }
-                    notes.add("直答选择越界：" + draft.get().choice().value()
+                    notes.add("直答选择越界：" + answer.choice()
                             + "（候选 " + point.candidates().size() + " 个），已要求重答");
-                    List<ChatMessage> retryMessages = new ArrayList<>(messages);
-                    retryMessages.add(UserMessage.from(
-                            "你的 choice=" + draft.get().choice().value() + " 不在候选集内。"
-                                    + "本决策点可选编号：" + candidateCodes(point)
-                                    + "（本请求没有 C0）。请只输出 JSON，choice 必须是其中之一。"));
-                    ChatClient.ChatOptions retryOptions = ChatClient.ChatOptions.decision(
-                                    settings.judgeMaxTokens(),
-                                    Duration.ofMillis(Math.max(600, options.timeout().toMillis() / 2)))
-                            .withReasoning(settings.reasoningDecision());
-                    String retried;
+                    JudgeAnswer second;
                     try (var ignored = trace.scope("决策器判断重答 T" + point.turn() + " " + point.kind())) {
-                        retried = toolList.isEmpty() ? chat.complete(retryMessages, retryOptions)
-                                : chat.completeWithTools(retryMessages, retryOptions, toolList);
-                    }
-                    Optional<ChoiceDraft> second = ChoiceDraft.parse(retried);
-                    if (second.isEmpty()) {
-                        notes.add("重答仍不可解析：" + snippet(retried));
+                        second = judgeAiFor(Duration.ofMillis(Math.max(600, decideTimeoutMs / 2)))
+                                .retry(pack, answer.choice(), candidateCodes(point));
+                    } catch (RuntimeException e) {
+                        notes.add(callFailure(e) ? "重答调用失败：" + rootCause(e)
+                                : "重答仍不可解析：" + rootCause(e));
                         return Optional.<Drafted>empty();
                     }
-                    return buildFromDraft(point, second.get(), "直答·重答", notes);
+                    return buildFromDraft(point, second, "直答·重答", notes);
                 }, judgePool)
                         .exceptionally(ex -> {
                             log.info("决策器判断调用失败: {}", String.valueOf(ex));
@@ -230,6 +214,10 @@ public final class LlmJudge implements AutoCloseable {
         }
     }
 
+    private JudgeAi judgeAiFor(Duration timeout) {
+        return services.judge(timeout, toolProviders, decisionTier);
+    }
+
     private DuelDecision accept(Drafted drafted) {
         memory.recordDecisionZone(drafted.zone());
         return drafted.decision();
@@ -253,6 +241,17 @@ public final class LlmJudge implements AutoCloseable {
         return t.getClass().getSimpleName() + (msg == null ? "" : ": " + snippet(msg));
     }
 
+    private static boolean callFailure(Throwable e) {
+        Throwable t = e;
+        while (t != null) {
+            if (t instanceof LlmChatException) {
+                return true;
+            }
+            t = t.getCause() == t ? null : t.getCause();
+        }
+        return false;
+    }
+
     private static Optional<Drafted> joinQuietly(CompletableFuture<Optional<Drafted>> future) {
         try {
             return future.getNow(Optional.empty());
@@ -265,11 +264,14 @@ public final class LlmJudge implements AutoCloseable {
      * @param notes 失败原因收集器（可为 null）；"选择越界/无法映射成意图"这类静默失败必须留下痕迹，
      *              否则上层只会看到一句笼统的"校验失败"。
      */
-    private Optional<Drafted> buildFromDraft(DecisionPoint point, ChoiceDraft draft,
+    private Optional<Drafted> buildFromDraft(DecisionPoint point, JudgeAnswer answer,
                                              String source, Queue<String> notes) {
-        CandidateId id = draft.choice();
-        // 兼容：模型偶尔仍会写 C0（旧提示词的习惯）。此时把它当成本请求的弃权候选，
+        CandidateId id = answer.candidateId();
+        // 兼容：模型偶尔仍会写 C0/NONE/PASS（旧提示词的习惯）。此时把它当成本请求的弃权候选，
         // 而不是判越界——弃权本身是合法动作，不该因为编号写法不同就丢掉整条决策。
+        if (id == null && isNoneAnswer(answer)) {
+            id = CandidateId.of(0);
+        }
         if (isNoneChoice(id)) {
             Optional<ChoiceIntent> none = point.candidatesOf(Candidate.DeclineC.class).stream()
                     .findFirst()
@@ -279,30 +281,47 @@ public final class LlmJudge implements AutoCloseable {
             }
             if (none.isPresent()) {
                 return Optional.of(new Drafted(new DuelDecision(none.get(), PathKind.LLM_CALL,
-                        Math.max(0.3, draft.confidence()),
-                        DecisionExplanation.of(withRationale(source, draft.rationale())),
-                        Timing.ZERO), null));
+                        answer.confidenceOr(0.3),
+                        DecisionExplanation.of(withRationale(source, answer.rationale())),
+                        Timing.ZERO), answer.zoneRef()));
             }
         }
-        Optional<Candidate> candidate = point.candidate(id);
+        Optional<Candidate> candidate = id == null ? Optional.empty() : point.candidate(id);
         if (candidate.isEmpty()) {
-            log.info("{} 选择越界: {}（候选 {} 个）", source, id.value(), point.candidates().size());
+            log.info("{} 选择越界/不可解析: {}（候选 {} 个）", source, answer.choice(),
+                    point.candidates().size());
             if (notes != null) {
-                notes.add(source + " 选择越界：" + id.value() + "（候选 " + point.candidates().size() + " 个）");
+                notes.add(source + " 选择越界：" + answer.choice()
+                        + "（候选 " + point.candidates().size() + " 个）");
             }
             return Optional.empty();
         }
         Optional<ChoiceIntent> intent = CandidateIntents.toIntent(point, candidate.get());
         if (intent.isEmpty()) {
             if (notes != null) {
-                notes.add(source + " 无法映射成意图：" + id.value() + "（" + candidate.get().getClass().getSimpleName() + "）");
+                notes.add(source + " 无法映射成意图：" + id.value()
+                        + "（" + candidate.get().getClass().getSimpleName() + "）");
             }
             return Optional.empty();
         }
-        String rationale = draft.rationale() == null ? "" : draft.rationale();
+        String rationale = answer.rationale() == null ? "" : answer.rationale();
         return Optional.of(new Drafted(new DuelDecision(intent.get(), PathKind.LLM_CALL,
-                Math.max(0.3, draft.confidence()),
-                DecisionExplanation.of(withRationale(source, rationale)), Timing.ZERO), draft.zone()));
+                answer.confidenceOr(0.3),
+                DecisionExplanation.of(withRationale(source, rationale)), Timing.ZERO),
+                answer.zoneRef()));
+    }
+
+    /** 选择字段没有合法编号时的弃权写法（C0/NONE/PASS/弃权…）。 */
+    private static boolean isNoneAnswer(JudgeAnswer answer) {
+        String v = answer.choice() == null ? "" : answer.choice().trim().toUpperCase(Locale.ROOT);
+        return "C0".equals(v) || "0".equals(v) || "NONE".equals(v) || "PASS".equals(v)
+                || "不响应".equals(v) || "弃权".equals(v) || "取消".equals(v);
+    }
+
+    private static boolean isNoneChoice(CandidateId id) {
+        String v = id == null ? "" : id.value().trim().toUpperCase(Locale.ROOT);
+        return "C0".equals(v) || "0".equals(v) || "NONE".equals(v) || "PASS".equals(v)
+                || "不响应".equals(v) || "弃权".equals(v) || "取消".equals(v);
     }
 
     /** 来源 + 模型理由 → 一句解释；理由为空时只留来源，不留悬空的分隔符。 */
@@ -316,12 +335,6 @@ public final class LlmJudge implements AutoCloseable {
                 .map(c -> c.id().value())
                 .distinct()
                 .collect(Collectors.joining("、"));
-    }
-
-    private static boolean isNoneChoice(CandidateId id) {
-        String v = id == null ? "" : id.value().trim().toUpperCase(Locale.ROOT);
-        return "C0".equals(v) || "0".equals(v) || "NONE".equals(v) || "PASS".equals(v)
-                || "不响应".equals(v) || "弃权".equals(v) || "取消".equals(v);
     }
 
     private static Optional<ChoiceIntent> noneIntent(DecisionPoint point) {
