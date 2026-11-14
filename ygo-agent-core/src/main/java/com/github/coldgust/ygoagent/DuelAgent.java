@@ -1,6 +1,7 @@
 package com.github.coldgust.ygoagent;
 
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
+import com.github.coldgust.ygoagent.context.DuelRecordFeed;
 import com.github.coldgust.ygoagent.context.RuleDigest;
 import com.github.coldgust.ygoagent.context.DuelTimeline;
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
@@ -16,11 +17,10 @@ import com.github.coldgust.ygoagent.llm.MathTool;
 import com.github.coldgust.ygoagent.llm.RulebookTool;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoagent.llm.ChatOptions;
-import com.github.coldgust.ygoagent.llm.memory.PlannerChatMemory;
+import com.github.coldgust.ygoagent.llm.memory.DuelChatMemory;
 import com.github.coldgust.ygoagent.llm.AgentModels;
 import com.github.coldgust.ygoagent.llm.service.JudgeAgent;
 import com.github.coldgust.ygoagent.llm.service.PlannerAgent;
-import com.github.coldgust.ygoagent.llm.service.PlannerUrgentAgent;
 import com.github.coldgust.ygoagent.model.DecisionDeadline;
 import com.github.coldgust.ygoagent.model.DecisionPoint;
 import com.github.coldgust.ygoagent.model.DuelDecision;
@@ -30,10 +30,13 @@ import com.github.coldgust.ygoagent.pipeline.PipelineSettings;
 import com.github.coldgust.ygoagent.pipeline.fallback.RuleBasedEngine;
 import com.github.coldgust.ygoagent.pipeline.fallback.SimpleArbiter;
 import com.github.coldgust.ygoagent.pipeline.fallback.TacticalPlannerImpl;
+import com.github.coldgust.ygoagent.pipeline.judge.JudgePrompts;
 import com.github.coldgust.ygoagent.pipeline.reflex.ReflexPolicyImpl;
 import com.github.coldgust.ygoagent.planner.PlannerPrompts;
 import com.github.coldgust.ygoagent.planner.PlannerSession;
 import com.github.coldgust.ygoagent.trace.DecisionTraceWriter;
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.UserMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -95,11 +98,9 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
                 .deckStrategy(config.deckStrategy())
                 .ruleDigest(RuleDigest.TEXT)
                 .archetype(config.archetype())
-                .advisory(!settings.pathPlanning())
-                // 己方卡组全清单：规划器据此判断能检索/特召什么，不必现查
+                // 己方卡组全清单：幕僚据此判断能检索/特召什么，不必现查
                 .deckPasscodes(config.deckPasscodes())
                 .comboReference(comboReference)
-                .timeline(config.timeline())
                 .build();
         if (packer.hasDeckStrategy()) {
             log.info("已注入卡组思路（{} 字），将作为规划器与决策器判断（④）的重点参考",
@@ -132,31 +133,33 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
         DecisionTools plannerTools = new DecisionTools(rulebook, comboTool, cardTool, null, mathTool);
         DuelRecallTool duelRecall = knowledge ? new DuelRecallTool(config.lightRag(), "mix", 4) : null;
         DecisionTools decisionTools = new DecisionTools(rulebook, comboTool, cardTool, duelRecall, mathTool);
-        // 四个固定 agent：档位与超时在构造期固定（决策侧调用方另有 deadline 预算兜底）
-        String plannerSystem = settings.pathPlanning() ? PlannerPrompts.PLANNER_SYSTEM
-                : PlannerPrompts.ADVISOR_SYSTEM;
-        var plannerMemory = new PlannerChatMemory("ygo-planner");
+        // 两个固定 agent：档位与超时在构造期固定（决策侧调用方另有 deadline 预算兜底）。
+        // 幕僚与决策器各自的 DuelChatMemory（pinned [system, 静态资料] 构造期种入），
+        // 决斗记录流由 feed 追加，局面快照由调用方 stage（不入 memory）。
+        String plannerStatic = packer.plannerStaticMaterial();
+        var plannerMemory = DuelChatMemory.forPlanner("ygo-planner",
+                SystemMessage.from(PlannerPrompts.ADVISOR_SYSTEM),
+                plannerStatic.isBlank() ? null : UserMessage.from(plannerStatic));
+        String judgeStatic = packer.judgeStaticMaterial();
+        var judgeMemory = DuelChatMemory.forJudge("ygo-judge",
+                SystemMessage.from(JudgePrompts.SYSTEM),
+                judgeStatic.isBlank() ? null : UserMessage.from(judgeStatic));
+        DuelRecordFeed feed = new DuelRecordFeed(config.timeline(), facts);
+        feed.attach(plannerMemory);
+        feed.attach(judgeMemory);
         PlannerAgent plannerAgent = new PlannerAgent(
                 AgentModels.openAi(settings.endpoint(), settings.checkpointOptions(),
                         settings.checkpointTimeout(), true, log0),
-                plannerSystem, plannerMemory, plannerTools.providers(),
-                packer.plannerStaticMaterial(), log0);
-        PlannerUrgentAgent urgentAgent = new PlannerUrgentAgent(
-                AgentModels.openAi(settings.endpoint(),
-                        ChatOptions.decision(settings.judgeMaxTokens())
-                                .withReasoning(settings.reasoningDecision()),
-                        Duration.ofMillis(settings.waitPerDecisionMs()), true, log0),
-                plannerSystem, plannerMemory, plannerTools.providers(), log0);
+                plannerMemory, plannerTools.providers(), log0);
         JudgeAgent judgeAgent = new JudgeAgent(
                 AgentModels.openAi(settings.endpoint(),
                         ChatOptions.decision(settings.judgeMaxTokens())
                                 .withReasoning(settings.reasoningDecision()),
                         Duration.ofMillis(settings.judgeTimeoutMs()), true, log0),
-                decisionTools.providers(), log0);
-        PlannerSession planner = PlannerSession.builder(
-                plannerAgent, urgentAgent, packer, facts, settings)
+                judgeMemory, decisionTools.providers(), log0);
+        PlannerSession planner = PlannerSession.builder(plannerAgent, packer, settings, plannerMemory)
                 .traceWriter(traceWriter)
-                .timeline(config.timeline())
+                .feed(feed)
                 .trace(log0)
                 .build();
         DecisionPipeline pipeline = DecisionPipeline.builder(
@@ -164,9 +167,11 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
                 .delegate(baseEngine)
                 .traceWriter(traceWriter)
                 .trace(log0)
+                .judgeMemory(judgeMemory)
+                .feed(feed)
                 .build();
-        log.info("五级流水已启用（model={} wait-decision={}ms wait-turn={}ms 卡库 {}）",
-                settings.model(), settings.waitPerDecisionMs(),
+        log.info("三级流水已启用（model={} advice-wait={}ms wait-turn={}ms 卡库 {}）",
+                settings.model(), settings.firstAdviceWaitMs(),
                 settings.waitPerTurnMs(), facts.knownCount());
         return new DuelAgent(pipeline, facts, mathTool);
     }

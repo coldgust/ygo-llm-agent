@@ -68,10 +68,13 @@ public final class ZoneMapper {
                 if (sequence <= 4) {
                     yield ZoneRef.spellTrap(owner, sequence);
                 }
+                if (sequence == 5) {
+                    yield ZoneRef.field(owner);
+                }
                 if (sequence == 6 || sequence == 7) {
                     yield ZoneRef.pendulum(owner, sequence - 6);
                 }
-                yield null; // szone seq 5：引擎保留
+                yield null;
             }
             default -> null;
         };
@@ -90,7 +93,8 @@ public final class ZoneMapper {
             case GRAVEYARD -> new Slot(LOC_GRAVE, 0);
             case BANISHED -> new Slot(LOC_REMOVED, 0);
             case EXTRA_DECK -> new Slot(LOC_EXTRA, 0);
-            case FIELD_ZONE -> new Slot(LOC_FZONE, 0);
+            // 位置字只有一个字节给 location：场地魔法必须用 SZONE#5，不能用 0x100
+            case FIELD_ZONE -> new Slot(LOC_SZONE, 5);
             case MAIN_MONSTER_ZONE -> new Slot(LOC_MZONE, zone.sequence());
             case EXTRA_MONSTER_ZONE -> new Slot(LOC_MZONE, 5 + zone.sequence());
             case SPELL_TRAP_ZONE -> new Slot(LOC_SZONE, zone.sequence());

@@ -127,7 +127,7 @@ class DuelSessionRunnerTest {
 
         assertEquals(2, summaries.size(), "每次提交都要有一条摘要: " + summaries);
         assertTrue(summaries.get(0).startsWith("通常召唤"), summaries.get(0));
-        assertEquals("放到 我方主怪兽区#3", summaries.get(1));
+        assertEquals("放到 我方主怪兽区3", summaries.get(1));
     }
 
     @Test

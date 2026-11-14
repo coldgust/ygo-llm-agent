@@ -10,7 +10,13 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 区域格子的"人机共同语"：<b>一个稳定编码</b>，给模型看、也让模型写回来。
+ * 区域格子的"人机共同语"：**中文区域名 + 序号**（{@code 我方主怪兽区3}），与 [规则速查]/卡面
+ * 里"自己的主要怪兽区域"同一套说法。
+ *
+ * <p>2026-11-14 修订：给模型看的旧写法是 {@code MMZ-3} 这类代号。资料库里全用中文区域名，
+ * 模型对不上（"EMZ 是哪？"），于是位置决策常被它跳过或写错；渲染层改说人话，
+ * {@code MMZ-3} 之类只在解析端作兼容保留（模型旧习惯/人工输入仍能读回）。
+ *
  * <p>编号从 <b>1</b> 起（对应玩家看到的"第 3 格"），与协议 sequence（0 起）差一。
  */
 public final class ZoneCodes {
@@ -23,7 +29,10 @@ public final class ZoneCodes {
     }
 
 
-    /** 区域 → 编码（{@code MMZ-3}）。非场上区域给 {@code HAND/GY/BAN/DECK/EXD}。 */
+    /**
+     * 区域 → 旧代号（{@code MMZ-3}）。<b>只给解析/内部对齐用，不要渲染给模型</b>——
+     * 模型侧一律用 {@link #label}（中文区域名）。
+     */
     public static String code(ZoneRef zone) {
         if (zone == null) {
             return "?";
@@ -42,16 +51,17 @@ public final class ZoneCodes {
         };
     }
 
+    /** 区域 → 人话（{@code 我方主怪兽区3}）：模型侧的唯一写法，也是 zone 字段的推荐格式。 */
     public static String label(ZoneRef zone) {
         if (zone == null) {
             return "?";
         }
         String owner = zone.owner() == PlayerSide.SELF ? "我方" : "对方";
         return switch (zone.kind()) {
-            case MAIN_MONSTER_ZONE -> owner + "主怪兽区#" + (zone.sequence() + 1);
-            case EXTRA_MONSTER_ZONE -> owner + "额外怪兽区#" + (zone.sequence() + 1);
-            case SPELL_TRAP_ZONE -> owner + "魔陷区#" + (zone.sequence() + 1);
-            case PENDULUM_ZONE -> owner + "灵摆区#" + (zone.sequence() + 1);
+            case MAIN_MONSTER_ZONE -> owner + "主怪兽区" + (zone.sequence() + 1);
+            case EXTRA_MONSTER_ZONE -> owner + "额外怪兽区" + (zone.sequence() + 1);
+            case SPELL_TRAP_ZONE -> owner + "魔陷区" + (zone.sequence() + 1);
+            case PENDULUM_ZONE -> owner + "灵摆区" + (zone.sequence() + 1);
             case FIELD_ZONE -> owner + "场地魔法区";
             case HAND -> owner + "手牌";
             case GRAVEYARD -> owner + "墓地";
@@ -61,8 +71,9 @@ public final class ZoneCodes {
         };
     }
 
+    /** 区域 → 人话（与 {@link #label} 同一口径；保留此名给"叙述里点位置"的调用方）。 */
     public static String describe(ZoneRef zone) {
-        return code(zone) + "（" + label(zone) + "）";
+        return label(zone);
     }
 
 

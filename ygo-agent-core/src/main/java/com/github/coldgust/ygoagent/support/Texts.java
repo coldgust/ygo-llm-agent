@@ -10,8 +10,16 @@ public final class Texts {
         if (text == null) {
             return "";
         }
-        String flat = text.replaceAll("\\s+", " ").trim();
+        String flat = flatten(text);
         return flat.length() <= limit ? flat : flat.substring(0, limit) + "…";
+    }
+
+    /**
+     * 只压平空白（换行 → 空格），<b>不截断</b>：卡上的效果文本是判断依据，
+     * 截成半句会让模型把"直到回合结束时…"后面的条件丢掉（2026-11-14 实测反馈）。
+     */
+    public static String flatten(String text) {
+        return text == null ? "" : text.replaceAll("\\s+", " ").trim();
     }
 
     public static boolean isBlank(String text) {

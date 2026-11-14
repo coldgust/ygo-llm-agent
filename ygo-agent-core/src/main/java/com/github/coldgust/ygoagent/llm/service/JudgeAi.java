@@ -7,26 +7,21 @@ import dev.langchain4j.service.UserMessage;
 import dev.langchain4j.service.V;
 
 /**
- * 决策器判断（④）的 AiService：无状态单轮调用（无 memory，每次决策独立）。
- * 声明式模板：system 固定走 {@code @SystemMessage}，动态三段（静态资料/已结算回合/决策包）
- * 经 {@code @V} 注入同一条 user 消息——静态段+记录在本回合内逐字节一致，
- * deepseek 服务端前缀缓存覆盖到记录段为止。
+ * 决策器判断（④）的 AiService：带记忆的持续对话（docs/planner-judge-memory-redesign.md §7）。
+ * 静态资料与决斗记录已在 memory（pinned + 追加流），每手只发一条薄请求行——
+ * 厚内容（局面/规划器情报/当前效果/候选）由调用方 stage 进快照槽（不入 memory，
+ * 框架每轮重读 messages() 时可见，快照永远跟随最新请求行）。
  * <p>档位参数 bake 在模型 defaultRequestParameters 里（plain 带 json、tools 变体不带），
- * 方法不带 wire 参数。
+ * 方法不带 wire 参数。重答共用同一 memory：坏回复已入史（框架行为，见 AgentServicesSpikeTest
+ * 钉子），更正行只需引用 badChoice 与候选编号。
  */
 interface JudgeAi {
 
     @SystemMessage(JudgePrompts.SYSTEM)
-    @UserMessage("{{staticMaterial}}\n\n{{closedTurns}}\n\n{{decisionPack}}")
-    JudgeAnswer decide(@V("staticMaterial") String staticMaterial,
-                       @V("closedTurns") String closedTurns,
-                       @V("decisionPack") String decisionPack);
+    @UserMessage("{{requestLine}}")
+    JudgeAnswer decide(@V("requestLine") String requestLine);
 
-    /** 越界重答：与 decide 相同的上下文 + 更正段（不含上一轮 assistant 回复，与旧行为一致）。 */
     @SystemMessage(JudgePrompts.SYSTEM)
-    @UserMessage("{{decisionPack}}\n\n你的 choice={{badChoice}} 不在候选集内。"
-            + "本决策点可选编号：{{candidates}}（本请求没有 C0）。请只输出 JSON，choice 必须是其中之一。")
-    JudgeAnswer retry(@V("decisionPack") String decisionPack,
-                      @V("badChoice") String badChoice,
-                      @V("candidates") String candidates);
+    @UserMessage("{{correctionLine}}")
+    JudgeAnswer retry(@V("correctionLine") String correctionLine);
 }

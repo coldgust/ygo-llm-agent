@@ -16,6 +16,7 @@ import java.util.List;
         @JsonSubTypes.Type(value = DuelEventPayload.ChainWindowOpened.class, name = "CHAIN_WINDOW_OPENED"),
         @JsonSubTypes.Type(value = DuelEventPayload.ChainWindowClosed.class, name = "CHAIN_WINDOW_CLOSED"),
         @JsonSubTypes.Type(value = DuelEventPayload.ChainResolved.class, name = "CHAIN_RESOLVED"),
+        @JsonSubTypes.Type(value = DuelEventPayload.ChainNegated.class, name = "CHAIN_NEGATED"),
         @JsonSubTypes.Type(value = DuelEventPayload.DecisionRequested.class, name = "DECISION_REQUESTED"),
         @JsonSubTypes.Type(value = DuelEventPayload.DecisionContext.class, name = "DECISION_CONTEXT"),
         @JsonSubTypes.Type(value = DuelEventPayload.DecisionMade.class, name = "DECISION_MADE"),
@@ -24,6 +25,7 @@ import java.util.List;
         @JsonSubTypes.Type(value = DuelEventPayload.CardMoved.class, name = "CARD_MOVED"),
         @JsonSubTypes.Type(value = DuelEventPayload.LpChanged.class, name = "LP_CHANGED"),
         @JsonSubTypes.Type(value = DuelEventPayload.CounterChanged.class, name = "COUNTER_CHANGED"),
+        @JsonSubTypes.Type(value = DuelEventPayload.CardRevealed.class, name = "CARD_REVEALED"),
         @JsonSubTypes.Type(value = DuelEventPayload.EffectActivated.class, name = "EFFECT_ACTIVATED"),
         @JsonSubTypes.Type(value = DuelEventPayload.AttackDeclared.class, name = "ATTACK_DECLARED"),
         @JsonSubTypes.Type(value = DuelEventPayload.StateSnapshot.class, name = "STATE_SNAPSHOT"),
@@ -37,6 +39,7 @@ public sealed interface DuelEventPayload permits
         DuelEventPayload.ChainWindowOpened,
         DuelEventPayload.ChainWindowClosed,
         DuelEventPayload.ChainResolved,
+        DuelEventPayload.ChainNegated,
         DuelEventPayload.DecisionRequested,
         DuelEventPayload.DecisionContext,
         DuelEventPayload.DecisionMade,
@@ -45,6 +48,7 @@ public sealed interface DuelEventPayload permits
         DuelEventPayload.CardMoved,
         DuelEventPayload.LpChanged,
         DuelEventPayload.CounterChanged,
+        DuelEventPayload.CardRevealed,
         DuelEventPayload.EffectActivated,
         DuelEventPayload.AttackDeclared,
         DuelEventPayload.StateSnapshot,
@@ -85,11 +89,21 @@ public sealed interface DuelEventPayload permits
             implements DuelEventPayload {
     }
 
-    /** 连锁封口，开始逆序结算。 */
+    /** 整条连锁处理完毕（MSG_CHAIN_END）：记录里对应一行"处理结束"。 */
     record ChainWindowClosed(int chainLength) implements DuelEventPayload {
     }
 
+    /** 连锁第 chainIndex 环开始处理（MSG_CHAIN_SOLVING）；card 为该环的卡（可 0 = 未知）。 */
     record ChainResolved(int chainIndex, long card, long desc) implements DuelEventPayload {
+    }
+
+    /**
+     * 连锁第 chainIndex 环被无效（MSG_CHAIN_NEGATED / MSG_CHAIN_DISABLED）。
+     *
+     * <p>灰流丽、无限泡影这类"效果无效"就靠它：记录里对应一行"效果无效"，
+     * 模型据此知道对方那个效果没结算（用狼/泡影骗灰流丽的判断也依赖这条）。
+     */
+    record ChainNegated(int chainIndex, long card) implements DuelEventPayload {
     }
 
 
@@ -165,8 +179,25 @@ public sealed interface DuelEventPayload permits
     record CounterChanged(String card, String counterType, int delta) implements DuelEventPayload {
     }
 
-    /** 效果发动（入链）。 */
-    record EffectActivated(String player, long passcode, long desc) implements DuelEventPayload {
+    /**
+     * 一张卡被公开（MSG_CONFIRM_CARDS / MSG_CARD_SELECTED 带来的卡号）。
+     *
+     * <p>检索就是靠这条才能认出"加入了什么"：进手牌的那条 MSG_MOVE 卡号被服务端抹零，
+     * 亮牌消息晚一两帧才到，所以它单列一条事件，渲染层再与"未知进手"合并。
+     */
+    record CardRevealed(String player, long passcode, String zone) implements DuelEventPayload {
+    }
+
+    /**
+     * 效果发动（入链）。chainIndex = 这次发动是连锁的第几环；null/0 表示协议未给出。
+     * zone = 发动来源区域（{@link DuelLogBridge#zoneOf} 格式；null = 协议未给出）——
+     * 多条款卡解不出条款时，靠它 + 全部条款全文让模型判断发动了哪一条。
+     */
+    record EffectActivated(String player, long passcode, long desc, Integer chainIndex, String zone)
+            implements DuelEventPayload {
+        public EffectActivated(String player, long passcode, long desc, Integer chainIndex) {
+            this(player, passcode, desc, chainIndex, null);
+        }
     }
 
     /** 攻击宣言：target 为 "P0"/"P1" 的怪兽描述，"direct" = 直击。 */

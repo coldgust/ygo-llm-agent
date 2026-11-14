@@ -309,13 +309,51 @@ final class DuelLogBridge implements DuelListener {
     }
 
     @Override
-    public void onEffectActivated(int controllerSeat, long passcode, long description) {
+    public void onEffectActivated(int controllerSeat, long passcode, long description,
+                                  Integer chainIndex, ZoneRef sourceZone) {
         if (!startedEmitted) {
             return;
         }
         String player = "P" + controllerSeat;
         log.append(player, DuelEventKind.EFFECT_ACTIVATED,
-                new DuelEventPayload.EffectActivated(player, passcode, description));
+                new DuelEventPayload.EffectActivated(player, passcode, description, chainIndex,
+                        zoneOf(sourceZone)));
+    }
+
+    @Override
+    public void onCardRevealed(int controllerSeat, long passcode) {
+        if (!startedEmitted) {
+            return;
+        }
+        log.append("P" + controllerSeat, DuelEventKind.CARD_REVEALED,
+                new DuelEventPayload.CardRevealed("P" + controllerSeat, passcode, null));
+    }
+
+    @Override
+    public void onChainSolving(int chainIndex, long passcode) {
+        if (!startedEmitted) {
+            return;
+        }
+        log.append("SYSTEM", DuelEventKind.CHAIN_RESOLVED,
+                new DuelEventPayload.ChainResolved(chainIndex, passcode, 0));
+    }
+
+    @Override
+    public void onChainNegated(int chainIndex, long passcode) {
+        if (!startedEmitted) {
+            return;
+        }
+        log.append("SYSTEM", DuelEventKind.CHAIN_NEGATED,
+                new DuelEventPayload.ChainNegated(chainIndex, passcode));
+    }
+
+    @Override
+    public void onChainEnd(int chainLength) {
+        if (!startedEmitted) {
+            return;
+        }
+        log.append("SYSTEM", DuelEventKind.CHAIN_WINDOW_CLOSED,
+                new DuelEventPayload.ChainWindowClosed(chainLength));
     }
 
     private String actorSelf() {

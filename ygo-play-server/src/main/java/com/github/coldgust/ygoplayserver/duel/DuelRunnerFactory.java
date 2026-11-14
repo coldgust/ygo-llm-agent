@@ -69,8 +69,13 @@ public class DuelRunnerFactory {
         CardFacts cardFacts = resolveCardFacts(planExec == null ? null : planExec.cardRagPath());
         ComboRecordService recordService = comboRecords == null ? null : comboRecords.getIfAvailable();
         DuelWebHooks hooks = new DuelWebHooks(
-                new CallbackTraceWriter(
-                        event -> eventHub.publish(duelId, String.valueOf(event.get("kind")), event)),
+                new CallbackTraceWriter(event -> {
+                    // ① 唯一合法不上前端（轨迹文件与日志照旧，见 WebDecisionFeed）
+                    if (!WebDecisionFeed.visible(event)) {
+                        return;
+                    }
+                    eventHub.publish(duelId, String.valueOf(event.get("kind")), event);
+                }),
                 spec.comboRecord() && recordService != null
                         ? recording -> recordService.record(recording, cardFacts)
                         : null,

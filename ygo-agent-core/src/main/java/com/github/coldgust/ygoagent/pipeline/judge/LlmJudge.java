@@ -1,10 +1,10 @@
 package com.github.coldgust.ygoagent.pipeline.judge;
 
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
-import com.github.coldgust.ygoagent.context.DecisionMemory;
-import com.github.coldgust.ygoagent.llm.ChatOptions;
+import com.github.coldgust.ygoagent.context.DuelRecordFeed;
 import com.github.coldgust.ygoagent.llm.LlmChatException;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
+import com.github.coldgust.ygoagent.llm.memory.DuelChatMemory;
 import com.github.coldgust.ygoagent.llm.service.JudgeAgent;
 import com.github.coldgust.ygoagent.model.Candidate;
 import com.github.coldgust.ygoagent.model.CandidateId;
@@ -17,15 +17,15 @@ import com.github.coldgust.ygoagent.model.PathKind;
 import com.github.coldgust.ygoagent.model.Timing;
 import com.github.coldgust.ygoagent.pipeline.PipelineSettings;
 import com.github.coldgust.ygoagent.pipeline.TurnMemory;
+import com.github.coldgust.ygoagent.pipeline.advisor.AdvisorKeeper;
 import com.github.coldgust.ygoagent.pipeline.plan.CandidateIntents;
-import com.github.coldgust.ygoagent.pipeline.plan.TurnPlan;
 import com.github.coldgust.ygoagent.planner.PlannerSession;
 import com.github.coldgust.ygodomain.decision.ChoiceRequest;
 import com.github.coldgust.ygodomain.zone.ZoneRef;
+import dev.langchain4j.data.message.UserMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -39,10 +39,10 @@ import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 
 /**
- * ④ 决策器判断：投机双路——直答（单轮 LLM 带候选白名单，可调工具）与规划器抢答竞速，
- * 先到先得；planner 信息全则优先（§2.2.5）。
- * <p>两路都在别的线程里跑，失败原因收集进 {@code missReasons} 再并回主线程；
+ * ② 决策器判断：带记忆的持续对话（docs/planner-judge-memory-redesign.md §7）——
+ * 记录流拉取（入史）→ 快照 stage（不入史）→ 薄请求行 → （越界时）更正行 → finally drop 快照。
  * 拿到草案后只做"能不能执行"的校验（候选必须真实存在于请求内），不做"该不该这么打"的改判。
+ * 抢答双路竞速已随顾问定位定稿删除：④ 失败直接落 ③ 兜底。
  * <p>调用失败（{@link LlmChatException}）与输出不可解析分开记因：前者可能是端点故障，
  * 后者只是模型行为问题。
  */
@@ -52,9 +52,10 @@ public final class LlmJudge implements AutoCloseable {
 
     private final JudgeAgent judgeAgent;
     private final ContextPackBuilder packer;
-    private final PipelineSettings settings;
     private final PlannerSession planner;
     private final TurnMemory memory;
+    private final DuelChatMemory judgeMemory;
+    private final DuelRecordFeed feed;
     private final VerboseLog trace;
     private final ExecutorService judgePool = Executors.newFixedThreadPool(2, r -> {
         Thread t = new Thread(r, "ygo-judge");
@@ -62,21 +63,22 @@ public final class LlmJudge implements AutoCloseable {
         return t;
     });
 
-    public LlmJudge(JudgeAgent judgeAgent, ContextPackBuilder packer,
-                    PipelineSettings settings, PlannerSession planner, TurnMemory memory,
-                    VerboseLog trace) {
+    public LlmJudge(JudgeAgent judgeAgent, ContextPackBuilder packer, PipelineSettings settings,
+                    PlannerSession planner, TurnMemory memory,
+                    DuelChatMemory judgeMemory, DuelRecordFeed feed, VerboseLog trace) {
         this.judgeAgent = judgeAgent;
         this.packer = packer;
-        this.settings = settings;
         this.planner = planner;
         this.memory = memory;
+        this.judgeMemory = judgeMemory;
+        this.feed = feed;
         this.trace = trace;
     }
 
     private record Drafted(DuelDecision decision, ZoneRef zone) {
     }
 
-    /** ④ 主入口：跑双路竞速；拿到结果即采纳（记录位置线索）。空 = 本级失败，落 ⑤。 */
+    /** ② 主入口：记录流入史 + 快照一次性注入，单路调用；空 = 本级失败，落 ③。 */
     public Optional<DuelDecision> judge(DecisionPoint point, DecisionDeadline deadline,
                                         List<String> missReasons) {
         long deadlineMs = Math.max(0, deadline.remainingMillis() - deadline.safetyMillis());
@@ -84,114 +86,68 @@ public final class LlmJudge implements AutoCloseable {
             missReasons.add("升级跳过：预算只剩 " + deadlineMs + "ms（<500ms）");
             return Optional.empty();
         }
-        long start = System.currentTimeMillis();
-        // ④ 的两路都在别的线程里跑，失败原因必须先收集再并回主线程（ArrayList 不是线程安全的）。
-        // 细分成"调用失败 / 输出不可解析 / 选择越界 / 超时"，否则只剩一句"超时/校验失败"根本查不出原因。
+        // 失败原因收集（ArrayList 不是线程安全的，先收集再并回主线程）；细分成
+        // "调用失败 / 输出不可解析 / 选择越界 / 超时"，否则查不出原因。
         Queue<String> notes = new ConcurrentLinkedQueue<>();
-
-        CompletableFuture<Optional<Drafted>> plannerFuture =
-                settings.waitPerDecisionMs() > 0 && settings.plannerRushAnswer() && planner.healthy()
-                        ? planner.urgentChoice(point, missReasons)
-                              .thenApply(draft -> {
-                                  if (draft.isEmpty()) {
-                                      notes.add("规划器紧急决策无输出");
-                                      return Optional.<Drafted>empty();
-                                  }
-                                  return buildFromDraft(point, draft.get(), "规划器抢答", notes);
-                              })
-                        : CompletableFuture.completedFuture(Optional.empty());
-        TurnPlan planForJudge = planner.currentPlan().orElse(null);
+        AdvisorKeeper.Snapshot advice = planner.currentAdvice().orElse(null);
         // 这一手是在执行哪个效果的哪一步：从属决策点（选卡/选位置/选表示形式）全靠它才有语义
         String effectScope = memory.effectScopeFor(point.turn())
                 .map(scope -> packer.describeEffect(scope.card(), scope.description()))
                 .orElse("");
-        // 这个决策点之前"已经做过什么 + 上一手怎么想的"（单轮调用没有对话历史，必须显式给）
-        DecisionMemory memoryPack =
-                DecisionMemory.of(effectScope, memory.turnActions(), memory.lastIntent());
-                CompletableFuture<Optional<Drafted>> judgeFuture =
-                CompletableFuture.supplyAsync(() -> {
-                    String pack = packer.decisionPack(point, planForJudge, memoryPack);
-                    // 缓存分层前缀：SYSTEM（局级）→ 静态资料（局级）→ 决斗记录·已结算回合（回合级）
-                    // 三段在本回合内逐字节一致，deepseek 自动前缀缓存按缓存价吃掉大头；
-                    // 决策包只带每次变化的动态内容。
-                    String material = packer.judgeStaticMaterial();
-                    String record = packer.recordOfClosedTurns(point.turn());
-                    // 工具按需注册：规则 / 连招 / 查卡 / 历史对局，模型自己决定要不要调用（工具轮对上层透明）
-                    JudgeAnswer answer;
-                    try (var ignored = trace.scope("决策器判断 T" + point.turn() + " " + point.kind())) {
-                        answer = judgeAgent.decide(material, record, pack);
-                    } catch (RuntimeException e) {
-                        notes.add(callFailure(e) ? "直答调用失败：" + rootCause(e)
-                                : "直答输出不可解析：" + rootCause(e));
-                        return Optional.<Drafted>empty();
-                    }
-                    Optional<Drafted> built = buildFromDraft(point, answer, "直答", null);
-                    if (built.isPresent() || isNoneAnswer(answer)
-                            || (answer.candidateId() != null
-                                && point.candidate(answer.candidateId()).isPresent())) {
-                        return built.or(() -> {
-                            notes.add("直答无法映射成意图：" + answer.choice());
-                            return Optional.<Drafted>empty();
-                        });
-                    }
-                    notes.add("直答选择越界：" + answer.choice()
-                            + "（候选 " + point.candidates().size() + " 个），已要求重答");
-                    JudgeAnswer second;
-                    try (var ignored = trace.scope("决策器判断重答 T" + point.turn() + " " + point.kind())) {
-                        second = judgeAgent
-                                .retry(pack, answer.choice(), candidateCodes(point));
-                    } catch (RuntimeException e) {
-                        notes.add(callFailure(e) ? "重答调用失败：" + rootCause(e)
-                                : "重答仍不可解析：" + rootCause(e));
-                        return Optional.<Drafted>empty();
-                    }
-                    return buildFromDraft(point, second, "直答·重答", notes);
-                }, judgePool)
-                        .exceptionally(ex -> {
-                            log.info("决策器判断调用失败: {}", String.valueOf(ex));
-                            notes.add("直答调用失败：" + rootCause(ex));
-                            return Optional.empty();
-                        });
-
-        long waitPlanner = Math.min(settings.waitPerDecisionMs(),
-                Math.min(planner.remainingTurnBudget(), deadlineMs));
-        long phase1End = start + Math.max(0, waitPlanner);
-        while (System.currentTimeMillis() < phase1End) {
-            if (plannerFuture.isDone()) {
-                Optional<Drafted> d = joinQuietly(plannerFuture);
-                if (d.isPresent()) {
-                    return Optional.of(accept(d.get()));
-                }
-                break; // planner 明确无结果 → 只等 直答
-            }
-            if (judgeFuture.isDone()) {
-                Optional<Drafted> d = joinQuietly(judgeFuture);
-                if (d.isPresent()) {
-                    return Optional.of(accept(d.get()));
-                }
-                break;
-            }
+        CompletableFuture<Optional<Drafted>> judgeFuture = CompletableFuture.supplyAsync(() -> {
+            // 记录流先入史（回合收尾摘要 + 对手/系统增量，入 memory），快照随后 stage——
+            // 静态资料与记录已在 memory（pinned + 追加流），每手只发薄请求行
+            feed.fillBeforeCall(judgeMemory, point.turn());
             try {
-                Thread.sleep(25);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return Optional.empty();
+                judgeMemory.stageOnce(UserMessage.from(
+                        packer.judgeSnapshot(point, advice, effectScope)));
+                // 工具按需注册：规则 / 连招 / 查卡 / 历史对局，模型自己决定要不要调用（工具轮对上层透明）
+                JudgeAnswer answer;
+                try (var ignored = trace.scope("决策器判断 T" + point.turn() + " " + point.kind())) {
+                    answer = judgeAgent.decide(requestLine(point));
+                } catch (RuntimeException e) {
+                    notes.add(callFailure(e) ? "直答调用失败：" + rootCause(e)
+                            : "直答输出不可解析：" + rootCause(e));
+                    return Optional.<Drafted>empty();
+                }
+                Optional<Drafted> built = buildFromDraft(point, answer, "直答", null);
+                if (built.isPresent() || isNoneAnswer(answer)
+                        || (answer.candidateId() != null
+                            && point.candidate(answer.candidateId()).isPresent())) {
+                    return built.or(() -> {
+                        notes.add("直答无法映射成意图：" + answer.choice());
+                        return Optional.<Drafted>empty();
+                    });
+                }
+                notes.add("直答选择越界：" + answer.choice()
+                        + "（候选 " + point.candidates().size() + " 个），已要求重答");
+                JudgeAnswer second;
+                try (var ignored = trace.scope("决策器判断重答 T" + point.turn() + " " + point.kind())) {
+                    second = judgeAgent.retry(correctionLine(point, answer));
+                } catch (RuntimeException e) {
+                    notes.add(callFailure(e) ? "重答调用失败：" + rootCause(e)
+                            : "重答仍不可解析：" + rootCause(e));
+                    return Optional.<Drafted>empty();
+                }
+                return buildFromDraft(point, second, "直答·重答", notes);
+            } finally {
+                // 快照只用一次（含重答）；入史的只有请求行/更正行/回复/工具对
+                judgeMemory.dropEphemeral();
             }
-        }
-        long remaining = Math.max(0, deadlineMs - (System.currentTimeMillis() - start));
-        if (remaining <= 0) {
-            judgeFuture.cancel(true);
-            notes.add("直答超时：等待阶段已耗尽 " + deadlineMs + "ms");
-            missReasons.addAll(notes);
-            return Optional.empty();
-        }
+        }, judgePool)
+                .exceptionally(ex -> {
+                    log.info("决策器判断调用失败: {}", String.valueOf(ex));
+                    notes.add("直答调用失败：" + rootCause(ex));
+                    return Optional.empty();
+                });
+
         try {
-            Optional<DuelDecision> decided = judgeFuture.get(remaining, TimeUnit.MILLISECONDS).map(this::accept);
+            Optional<DuelDecision> decided = judgeFuture.get(deadlineMs, TimeUnit.MILLISECONDS).map(this::accept);
             missReasons.addAll(notes);
             return decided;
         } catch (TimeoutException e) {
             judgeFuture.cancel(true);
-            notes.add("直答超时：" + (System.currentTimeMillis() - start) + "ms 内未返回");
+            notes.add("直答超时：" + deadlineMs + "ms 内未返回");
             missReasons.addAll(notes);
             return Optional.empty();
         } catch (Exception e) {
@@ -204,6 +160,49 @@ public final class LlmJudge implements AutoCloseable {
     private DuelDecision accept(Drafted drafted) {
         memory.recordDecisionZone(drafted.zone());
         return drafted.decision();
+    }
+
+    /**
+     * 请求行（入 memory）：局面与卡面在快照里，但<b>这一手在判什么</b>必须随请求入史——
+     * 抬头给回合/阶段/性质，连锁链（谁在第几环发动了什么效果）与候选的条款正文都写进来。
+     *
+     * <p>2026-11-14 实测三条：① 只写"连锁响应"时，记忆里看不出当时在响应对手的什么效果，
+     * 模型复盘时只能靠猜；② 候选只有卡名（"C1 发动 连刀、C2 发动 连刀"）时，
+     * 同一张多效果卡的两个选项长得一模一样，连"发动的是哪一条"都判断不了；
+     * ③ 链上没东西时曾写成"连锁：空"——游戏王里没有这种说法，那是"此时可发动效果"的
+     * 优先权窗口，抬头按玩家的话写（{@link ContextPackBuilder#requestHeadline}）。
+     */
+    private String requestLine(DecisionPoint point) {
+        String chain = packer.compactChain(point);
+        String candidates = packer.compactCandidates(point);
+        String effects = packer.compactEffectDigest(point);
+        StringBuilder sb = new StringBuilder("===决策请求=== ")
+                .append(packer.requestHeadline(point)).append("\n");
+        if (!chain.isEmpty()) {
+            sb.append(chain).append("\n");
+        }
+        if (!candidates.isEmpty()) {
+            sb.append("候选 ").append(point.candidates().size()).append(" 项：")
+                    .append(candidates).append("\n");
+        }
+        if (!effects.isEmpty()) {
+            sb.append("候选效果：").append(effects).append("\n");
+        }
+        return sb.append("请读上方 [决策快照] 的完整卡面与对象信息，输出单个选择 JSON。").toString();
+    }
+
+    /** 更正行（入 memory）：坏 choice 与候选编号清单；快照仍在槽内可见。 */
+    private static String correctionLine(DecisionPoint point, JudgeAnswer bad) {
+        return "===更正=== 你上一答 choice=" + bad.choice() + " 不在候选集内。本请求可选编号："
+                + candidateCodes(point) + "。请重读上方 [决策快照]，只输出 JSON，"
+                + "choice 必须是其中之一。";
+    }
+
+    private static String candidateCodes(DecisionPoint point) {
+        return point.candidates().stream()
+                .map(c -> c.id().value())
+                .distinct()
+                .collect(Collectors.joining("、"));
     }
 
     /** 原始输出截断（日志/trace 里看得到模型到底吐了什么）。 */
@@ -233,14 +232,6 @@ public final class LlmJudge implements AutoCloseable {
             t = t.getCause() == t ? null : t.getCause();
         }
         return false;
-    }
-
-    private static Optional<Drafted> joinQuietly(CompletableFuture<Optional<Drafted>> future) {
-        try {
-            return future.getNow(Optional.empty());
-        } catch (RuntimeException e) {
-            return Optional.empty();
-        }
     }
 
     /**
@@ -298,7 +289,8 @@ public final class LlmJudge implements AutoCloseable {
     private static boolean isNoneAnswer(JudgeAnswer answer) {
         String v = answer.choice() == null ? "" : answer.choice().trim().toUpperCase(Locale.ROOT);
         return "C0".equals(v) || "0".equals(v) || "NONE".equals(v) || "PASS".equals(v)
-                || "不响应".equals(v) || "弃权".equals(v) || "取消".equals(v);
+                || "不响应".equals(v) || "弃权".equals(v) || "放弃优先权".equals(v)
+                || "取消".equals(v);
     }
 
     /** CandidateId.of 生成的值只有 "C<n>" 形态，弃权候选即 C0。 */
@@ -310,13 +302,6 @@ public final class LlmJudge implements AutoCloseable {
     private static String withRationale(String source, String rationale) {
         String clean = rationale == null ? "" : rationale.trim();
         return clean.isEmpty() ? source : source + "：" + clean;
-    }
-
-    private static String candidateCodes(DecisionPoint point) {
-        return point.candidates().stream()
-                .map(c -> c.id().value())
-                .distinct()
-                .collect(Collectors.joining("、"));
     }
 
     private static Optional<ChoiceIntent> noneIntent(DecisionPoint point) {

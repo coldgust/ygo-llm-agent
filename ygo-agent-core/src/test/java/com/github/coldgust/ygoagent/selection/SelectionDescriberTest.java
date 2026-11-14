@@ -38,7 +38,7 @@ class SelectionDescriberTest {
         var selection = new ChoiceSelection.PlaceSelection(
                 List.of(ZoneRef.mainMonster(PlayerSide.SELF, 2)));
 
-        assertEquals("放到 我方主怪兽区#3", describer.describe(request, selection));
+        assertEquals("放到 我方主怪兽区3", describer.describe(request, selection));
     }
 
     @Test
@@ -64,7 +64,7 @@ class SelectionDescriberTest {
                 new ChoiceRequest.EffectChoice(card, 42), false);
         var request = new ChoiceRequest.ChainRequest(List.of(option));
 
-        assertEquals("不响应", describer.describe(request,
+        assertEquals("放弃优先权（不发动）", describer.describe(request,
                 new ChoiceSelection.ChainSelection(new ChoiceSelection.ChainAnswer.Decline())));
         assertTrue(describer.describe(request,
                 new ChoiceSelection.ChainSelection(

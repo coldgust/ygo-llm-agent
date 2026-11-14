@@ -26,18 +26,23 @@ public final class AgentModels {
     private AgentModels() {
     }
 
-    /** OpenAI 兼容模型 + 重试降级装饰器；档位参数 bake 进模型。 */
+    /** OpenAI 兼容模型 + 重试降级装饰器；档位参数 bake 进模型。
+     *  verbose 开启时同时打开 langchain4j 自带的 logRequests/logResponses——HTTP 层
+     *  原始请求/响应原文（经 slf4j，`dev.langchain4j` logger 需 DEBUG 级别，见 server yaml）。 */
     public static ChatModel openAi(LlmEndpoint endpoint, ChatOptions tier, Duration timeout,
                                    boolean withTools, VerboseLog trace) {
-        return new ResilientChatModel(OpenAiChatModel.builder()
+        boolean wireLog = trace.enabled();
+        return new ResilientChatModel(new JsonReplyNormalizer(OpenAiChatModel.builder()
                 .baseUrl(endpoint.baseUrl())
                 .apiKey(endpoint.apiKey())
                 .modelName(endpoint.model())
                 .timeout(timeout)
                 .maxRetries(0)
+                .logRequests(wireLog)
+                .logResponses(wireLog)
                 .defaultRequestParameters(TierParameters.of(tier, endpoint.model(), withTools))
                 .listeners(traceListener(trace))
-                .build());
+                .build()));
     }
 
     /** 工具埋点与错误回填（框架钩子）；带工具变体注册工具并限轮次。 */

@@ -98,7 +98,9 @@ public final class SelectionDescriber {
                     + card(r.option().effect().card())
                     + (r.option().effect().description() != 0
                     ? "（效果#" + r.option().effect().description() + "）" : "");
-            case ChoiceSelection.ChainAnswer.Decline ignored -> "不响应";
+            // "不响应"会让人问"响应什么"——这一手本来就可能没有可响应的对象（优先权窗口）。
+            // 描述器拿不到连锁栈，所以用两个场合都成立的说法：放弃优先权。
+            case ChoiceSelection.ChainAnswer.Decline ignored -> "放弃优先权（不发动）";
         };
     }
 

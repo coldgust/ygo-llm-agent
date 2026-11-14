@@ -98,6 +98,9 @@ class MathToolTest {
         math.bind(state);
         String byZone = math.battleCalc(null, "MMZ-1", "MMZ-1");
         assertTrue(byZone.contains("破坏并造成 1000 伤害"), byZone);
+        // 渲染层改用中文区域名，模型照抄回来必须同样解得开
+        String byChineseZone = math.battleCalc(null, "我方主怪兽区1", "对方主怪兽区1");
+        assertTrue(byChineseZone.contains("破坏并造成 1000 伤害"), byChineseZone);
         String byName = math.battleCalc("self", "圣夜降临的骑士", "大黄蜂");
         assertTrue(byName.contains("破坏并造成 1000 伤害"), byName);
         String byPartialName = math.battleCalc("self", "骑士", "蜂");
@@ -148,7 +151,8 @@ class MathToolTest {
         math.bind(state);
         String out = math.battleCalc("self", "MMZ-1", "大黄蜂");
         assertTrue(out.contains("匹配到 2 张"), out);
-        assertTrue(out.contains("MMZ-1") && out.contains("MMZ-2"), out);
+        assertTrue(out.contains("对方主怪兽区1") && out.contains("对方主怪兽区2"),
+                "可用句柄要写中文区域名（旧代号模型对不上资料库）: " + out);
     }
 
     // ---------------------------------------------------------------- battle_table

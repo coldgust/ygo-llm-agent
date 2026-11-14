@@ -75,6 +75,20 @@ public final class DuelSession implements AutoCloseable {
     /** -Dygo.debug.raw=true 时逐条打印内层 MSG 的十六进制转储（协议对账用）。 */
     private static final boolean RAW_DEBUG = Boolean.getBoolean("ygo.debug.raw");
 
+    /**
+     * 每种内层 MSG "首次出现"打一条十六进制摘要（-Dygo.debug.raw 的全量版太吵，这个是它的索引）。
+     *
+     * <p>用途：当某条信息（例如对手检索的卡号）"界面看得见、我们收不到"时，先确认到底有没有
+     * 这种消息到达——看得到类型与报文头，才知道该去解哪一条。诊断完可把默认值改回 false。
+     */
+    private static final boolean FRAME_DIGEST =
+            !"false".equalsIgnoreCase(System.getProperty("ygo.debug.frames", "true"));
+    private final java.util.Set<Integer> seenMsgTypes = new java.util.HashSet<>();
+    /** 最近若干条内层消息原文：一旦出现"对手手牌抹零进手"，整段打出来对账。 */
+    private final java.util.Deque<String> recentFrames = new java.util.ArrayDeque<>();
+    private long lastAnonymousHandAdds;
+    private static final int RECENT_FRAME_LIMIT = 64;
+
     public enum Stage { CONNECTING, LOBBY, DUEL, ENDED, CLOSED }
 
     private final SessionConfig config;
@@ -396,6 +410,8 @@ public final class DuelSession implements AutoCloseable {
                                     HexFormat.of().formatHex(frame.payload())));
                 }
                 handleGameMsg(frame.payload());
+                dumpFramesAroundHiddenAdd();
+                dispatchReveals();
             }
             case ProtocolIds.STOC_JOIN_GAME -> onJoinGame(frame.payload());
             case ProtocolIds.STOC_TYPE_CHANGE -> onTypeChange(frame.payload());
@@ -415,6 +431,45 @@ public final class DuelSession implements AutoCloseable {
         }
     }
 
+    /**
+     * 亮牌（学到卡号）→ 通知监听器。
+     *
+     * <p>只看对手的：我方检索本来就能从 MSG_MOVE 拿到卡号，再报一次是噪音。
+     */
+    private void dispatchReveals() {
+        long[] reveal;
+        while ((reveal = projector.pollReveal()) != null) {
+            int seat = (int) reveal[0];
+            long code = reveal[1];
+            if (seat == mySeat || code <= 0) {
+                continue;       // 我方检索本来就有卡号，再报一次是噪音
+            }
+            for (DuelListener l : listeners) {
+                try {
+                    l.onCardRevealed(seat, code);
+                } catch (Exception e) {
+                    log.warn("监听器 onCardRevealed 异常", e);
+                }
+            }
+        }
+    }
+
+    /**
+     * 把"对手手牌抹零进手"前后的一小段原始帧整段打出来。
+     *
+     * <p>目的：检索亮牌"界面看得见、我们收不到"时，不再靠猜是哪条消息——直接把原始字节摊开，
+     * 有没有带卡号的消息一目了然（有就修解码，没有就是服务端没发）。
+     */
+    private void dumpFramesAroundHiddenAdd() {
+        long adds = projector.anonymousHandAddCount();
+        if (adds == lastAnonymousHandAdds) {
+            return;
+        }
+        lastAnonymousHandAdds = adds;
+        log.info("【原始帧】检测到身份未知的卡进手（累计 {} 次），最近 {} 条内层消息原文：\n{}",
+                adds, recentFrames.size(), String.join("\n", recentFrames));
+    }
+
     private void handleGameMsg(byte[] payload) {
         List<MsgFraming.Msg> msgs = MsgFraming.split(payload);
         for (MsgFraming.Msg msg : msgs) {
@@ -426,6 +481,21 @@ public final class DuelSession implements AutoCloseable {
                 log.info("RAW MSG type=0x{} size={} body={}", Integer.toHexString(type),
                         msg.size(), HexFormat.of().formatHex(body));
             }
+
+            if (FRAME_DIGEST) {
+                recentFrames.addLast("0x" + Integer.toHexString(type) + " (" + body.length + "B) "
+                        + HexFormat.of().formatHex(body));
+                while (recentFrames.size() > RECENT_FRAME_LIMIT) {
+                    recentFrames.removeFirst();
+                }
+            }
+
+            if (FRAME_DIGEST && seenMsgTypes.add(type)) {
+                String hex = HexFormat.of().formatHex(body);
+                log.info("[帧] type=0x{} size={} body={}{}", Integer.toHexString(type), msg.size(),
+                        hex.length() <= 96 ? hex : hex.substring(0, 96) + "…",
+                        hex.length() <= 96 ? "" : "（截断，全长 " + hex.length() / 2 + " 字节）");
+            }
             if (config.duelLogRawFrames()) {
                 duelLog.append("SYSTEM", DuelEventKind.RAW_FRAME,
                         new DuelEventPayload.RawFrame(
@@ -434,6 +504,9 @@ public final class DuelSession implements AutoCloseable {
 
             if (type == ProtocolIds.MSG_START) {
                 projector.apply(type, new ByteReader(body));
+                seenMsgTypes.clear();
+                recentFrames.clear();
+                lastAnonymousHandAdds = 0;
                 mySeat = projector.selfSeat();
                 choiceQueue.clear();
                 retryCount = 0;
@@ -480,6 +553,22 @@ public final class DuelSession implements AutoCloseable {
                 // 效果发动在状态 diff 里不可见（卡不动），单独解码后通知监听器：
                 // 对局日志据此记 EFFECT_ACTIVATED，combo 录入据此知道"用户发动了什么"。
                 notifyEffectActivated(new ByteReader(body));
+            }
+
+            if (type == ProtocolIds.MSG_CHAIN_SOLVING) {
+                // 第 N 环开始处理：记录里的"连锁 N 效果处理"分界，之后的卡移动算在这一环名下
+                notifyChainSolving(body);
+            }
+
+            if (type == ProtocolIds.MSG_CHAIN_NEGATED || type == ProtocolIds.MSG_CHAIN_DISABLED) {
+                // 第 N 环被无效（灰流丽/无限泡影/天霆号…）：记录里的"效果无效"行。
+                // 链要到 CHAIN_END 才清空，这里取得到该环的卡。
+                notifyChainNegated(body);
+            }
+
+            if (type == ProtocolIds.MSG_CHAIN_END) {
+                // 整条连锁处理完毕 → "处理结束"。必须在 projector.apply 清空链之前取到长度
+                notifyChainEnd();
             }
 
             if (type == ProtocolIds.MSG_WIN) {
@@ -726,20 +815,70 @@ public final class DuelSession implements AutoCloseable {
     private void notifyEffectActivated(ByteReader r) {
         try {
             long code = r.u32();
-            r.u32(); // loc
+            r.u32(); // 当前位置（打包 GPS）
             int controller = r.u8();
-            r.u8();
-            r.u8();
+            int trigLoc = r.u8();
+            int trigSeq = r.u8();
             long desc = r.u32();
+            // 尾字节是这一发动的连锁序号（1 起）；缺失/解码不完整时为 null
+            Integer chainIndex = r.remaining() >= 1 ? Integer.valueOf(r.u8()) : null;
+            // 发动来源区域（协议 triggering 字段）：墓地区分多条款卡的 ①/② 就靠它
+            ZoneRef sourceZone = projector.zoneRef(controller, trigLoc, trigSeq);
             for (DuelListener l : listeners) {
                 try {
-                    l.onEffectActivated(controller, code, desc);
+                    l.onEffectActivated(controller, code, desc, chainIndex, sourceZone);
                 } catch (Exception e) {
                     log.warn("监听器 onEffectActivated 异常", e);
                 }
             }
         } catch (Exception e) {
             log.warn("MSG_CHAINING 解码失败（忽略）：{}", e.toString());
+        }
+    }
+
+    /** MSG_CHAIN_SOLVING：body 只有一个字节（连锁序号，1 起）；卡名从镜像的链上取。 */
+    private void notifyChainSolving(byte[] body) {
+        if (body.length < 1) {
+            return;
+        }
+        int index = body[0] & 0xFF;
+        long passcode = projector.chainPasscode(index);
+        for (DuelListener l : listeners) {
+            try {
+                l.onChainSolving(index, passcode);
+            } catch (Exception e) {
+                log.warn("监听器 onChainSolving 异常", e);
+            }
+        }
+    }
+
+    /** MSG_CHAIN_NEGATED / MSG_CHAIN_DISABLED：body 只有一个字节（连锁序号，1 起）。 */
+    private void notifyChainNegated(byte[] body) {
+        if (body.length < 1) {
+            return;
+        }
+        int index = body[0] & 0xFF;
+        long passcode = projector.chainPasscode(index);
+        for (DuelListener l : listeners) {
+            try {
+                l.onChainNegated(index, passcode);
+            } catch (Exception e) {
+                log.warn("监听器 onChainNegated 异常", e);
+            }
+        }
+    }
+
+    private void notifyChainEnd() {
+        int length = projector.chainLength();
+        if (length <= 0) {
+            return;
+        }
+        for (DuelListener l : listeners) {
+            try {
+                l.onChainEnd(length);
+            } catch (Exception e) {
+                log.warn("监听器 onChainEnd 异常", e);
+            }
         }
     }
 
@@ -828,8 +967,10 @@ public final class DuelSession implements AutoCloseable {
                     slots = 5;
                 }
                 case FIELD_ZONE -> {
-                    location = ZoneMapper.LOC_FZONE;
-                    slots = 1;
+                    // 场地魔法区 = SZONE 第 5 格；只查这一格，不能混进普通魔陷位
+                    return projector.instanceIdAt(mySeat, ZoneMapper.LOC_SZONE, 5) == 0
+                            ? ZoneRef.field(PlayerSide.SELF)
+                            : null;
                 }
                 default -> {
                     return null;

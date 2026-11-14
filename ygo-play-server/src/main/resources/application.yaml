@@ -92,28 +92,22 @@ ygo:
     reasoning-planner: ${LLM_REASONING_PLANNER:}
     # 决策器思考强度；留空 = off（开思考会把 max_tokens 花在思维链上，吃满决策超时）
     reasoning-decision: ${LLM_REASONING_DECISION:}
-    # 决策一次最多等待规划器 ms（紧急重规划回复；留空/未设 = 代码默认 4000，与 PipelineSettings.defaults 同值）
+    # 决策一次最多等待规划器 ms（本回合首次决策等锚点建议；留空/未设 = 代码默认 4000，与 PipelineSettings.defaults 同值）
     wait-decision-ms: ${PLANNER_WAIT_DECISION_MS:}
-    # 本回合首次决策器判断（④）前等计划的上限 ms（推理档下经常等不到，首动作退回决策器判断；留空 = 代码默认 7000）
+    # 本回合首次决策器判断（②）前等建议的上限 ms（留空 = 代码默认 7000）
     first-wait-ms: ${PLANNER_FIRST_WAIT_MS:}
     # 一回合内「为等规划器」的累计上限 ms（留空 = 代码默认 30000）
     wait-turn-ms: ${PLANNER_WAIT_TURN_MS:}
-    # 每回合后台 checkpoint 次数上限（成本闸；留空 = 代码默认 6）
+    # 每回合修订 checkpoint 次数上限（成本闸；留空 = 代码默认 6）
     max-checkpoints: ${PLANNER_MAX_CHECKPOINTS:}
-    # 执行器相似分支匹配阈值 0–1，防假相似（留空 = 代码默认 0.80）
-    similarity-threshold: ${PLANNER_SIMILARITY_THRESHOLD:}
-    # 决策器判断（④）硬超时 ms（留空 = 代码默认 10000）
+    # 决策器判断（②）硬超时 ms（留空 = 代码默认 10000）
     judge-timeout-ms: ${JUDGE_TIMEOUT_MS:}
     # 规划器后台 checkpoint 单次调用超时 ms（留空 = 代码默认 45000）
     planner-call-timeout-ms: ${PLANNER_CALL_TIMEOUT_MS:}
     # 规划器连续失败后的降级冷却 ms（留空 = 代码默认 60000）
     planner-cooldown-ms: ${PLANNER_COOLDOWN_MS:}
-    # 直答输出上限 tokens（留空 = 代码默认 3000）
+    # 决策器输出上限 tokens（留空 = 代码默认 3000）
     judge-max-tokens: ${JUDGE_MAX_TOKENS:}
-    # true = 规划器产出可执行路径；留空/false = 顾问模式（只给场面分析/战术/combo）
-    path-planning: ${PLANNER_PATH_PLANNING:}
-    # ④升级竞速里规划器抢答；false/0 = 升级只跑直答（留空 = 代码默认开）
-    rush-answer: ${PLANNER_RUSH_ANSWER:}
 
 management:
   endpoints:
@@ -124,3 +118,5 @@ management:
 logging:
   level:
     com.github.coldgust: INFO
+    # langchain4j HTTP 层原始请求/响应（YGO_VERBOSE_LOG 开启时在 server 端设 YGO_L4J_LOG=DEBUG 看线上原文）
+    dev.langchain4j: ${YGO_L4J_LOG:INFO}

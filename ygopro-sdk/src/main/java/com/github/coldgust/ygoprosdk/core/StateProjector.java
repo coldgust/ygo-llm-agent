@@ -13,8 +13,13 @@ import com.github.coldgust.ygodomain.zone.ZoneRef;
 import com.github.coldgust.ygoprosdk.protocol.ByteReader;
 import com.github.coldgust.ygoprosdk.protocol.ProtocolIds;
 import com.github.coldgust.ygoprosdk.spi.CardInfoResolver;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +35,8 @@ import java.util.TreeMap;
  * 座位以 {@code MSG_START} 首字节为唯一权威（§7.3.2）。
  */
 public final class StateProjector {
+
+    private static final Logger log = LoggerFactory.getLogger(StateProjector.class);
 
     private static final class Card {
         long id;                 // 镜像内实例标识（0 = 未注册）
@@ -70,12 +77,64 @@ public final class StateProjector {
     private final List<ZoneRef> pendingTargets = new ArrayList<>();
     private long nextInstanceId = 1;
 
+    /**
+     * 效果亮出的卡（{@code MSG_CARD_SELECTED} 的卡号，按座位分）：检索是把卡给对手看过
+     * 才加入手牌的（大师规则"检索必须把卡交给对方确认"），引擎会用这条消息把卡号发出来，
+     * 但随后的 {@code MSG_MOVE} 到**手牌**时卡号会被服务端抹零——两条消息单独看都不完整。
+     */
+    private final Map<Integer, Deque<Long>> revealedCodes = new HashMap<>();
+    /** 已进手牌、身份还未知的实例（亮牌消息晚到时按序回填）。 */
+    private final Map<Integer, Deque<Long>> anonymousHandAdds = new HashMap<>();
+    /** 待匹配的亮牌/未知手牌条数上限：防止没人来领的旧条目一直挂着配错卡。 */
+    private static final int REVEAL_QUEUE_LIMIT = 8;
+    /** 只报一次的类型（协议的"没在处理的消息"清单，排查隐藏信息到底走哪条消息）。 */
+    private final java.util.Set<Integer> unreportedTypes = new java.util.HashSet<>();
+    /** "身份未知的卡进了手牌"的次数：会话据此把最近若干条原始帧打出来（排查亮牌走哪条消息）。 */
+    private long hiddenHandAddCount;
+    /**
+     * 亮牌（学到卡号）的待发队列：{@code [seat, passcode]}。
+     * 会话每轮取空，转发成 {@code CARD_REVEALED}——记录层需要这条独立事件，
+     * 才能把"未知进手"补成"XX 加入手牌"。用队列而不是"最后一次"，是因为
+     * 一次批量消息里可能连亮好几张。
+     */
+    private final Deque<long[]> pendingReveals = new ArrayDeque<>();
+
     public StateProjector(CardInfoResolver resolver) {
         this.resolver = resolver;
     }
 
     public int selfSeat() {
         return selfSeat;
+    }
+
+    /** 取一条待转发的亮牌（{@code [seat, passcode]}）；没有返回 null。 */
+    public synchronized long[] pollReveal() {
+        return pendingReveals.pollFirst();
+    }
+
+    /** 学到一张卡的卡号（公开信息）：入队，供会话转发。 */
+    private void noteReveal(int seat, long passcode) {
+        pendingReveals.addLast(new long[]{seat, passcode});
+    }
+
+    /** 身份未知的卡进手牌（= 服务器抹零了卡号）的累计次数。 */
+    public synchronized long anonymousHandAddCount() {
+        return hiddenHandAddCount;
+    }
+
+    /** 当前链的长度（记录里的"处理结束"要在清空前取）。 */
+    public synchronized int chainLength() {
+        return chain.size();
+    }
+
+    /** 链上第 index 环的卡号（1 起）；取不到给 0，绝不猜。 */
+    public synchronized long chainPasscode(int index) {
+        for (ChainNode node : chain) {
+            if (node.index() == index) {
+                return node.identity() == null ? 0 : node.identity().passcode();
+            }
+        }
+        return 0;
     }
 
 
@@ -89,6 +148,7 @@ public final class StateProjector {
             case ProtocolIds.MSG_NEW_TURN -> onNewTurn(r);
             case ProtocolIds.MSG_NEW_PHASE -> onNewPhase(r);
             case ProtocolIds.MSG_DRAW -> onDraw(r);
+            case ProtocolIds.MSG_CARD_SELECTED -> onCardSelected(r);
             case ProtocolIds.MSG_MOVE -> onMove(r);
             case ProtocolIds.MSG_SET -> onSet(r);
             case ProtocolIds.MSG_POS_CHANGE -> onPosChange(r);
@@ -115,7 +175,12 @@ public final class StateProjector {
             case ProtocolIds.MSG_UPDATE_DATA -> onUpdateData(r);
             case ProtocolIds.MSG_SELECT_PLACE -> { /* 纯请求，状态不变 */ }
             default -> {
-                // 未参与状态投影的消息：RETRY / HINT / WAITING / BATTLE / ATTACK / TOSS_* 等
+                // 未参与状态投影的消息：RETRY / HINT / WAITING / BATTLE / ATTACK / TOSS_* 等。
+                // 每种类型只报一次：对手的隐藏信息如果走的是我们没接的消息，这条日志能指出来。
+                if (unreportedTypes.add(msgType)) {
+                    log.info("[未处理消息] type=0x{} 首次出现（同类型不再打印）",
+                            Integer.toHexString(msgType));
+                }
             }
         }
     }
@@ -172,6 +237,9 @@ public final class StateProjector {
     private void onNewTurn(ByteReader r) {
         turnSeat = r.u8();
         turnNumber++;
+        // 亮牌/待回填只对"刚发生的这次检索"有意义，跨回合留着只会配错卡
+        revealedCodes.clear();
+        anonymousHandAdds.clear();
     }
 
     private void onNewPhase(ByteReader r) {
@@ -216,6 +284,74 @@ public final class StateProjector {
         p.mainDeckCount = Math.max(0, p.mainDeckCount - count);
     }
 
+    /**
+     * 效果亮出的卡（检索/确认后公开的那张）：{@code player, count, code×count}。
+     *
+     * <p>为什么必须收：检索是**公开**动作——玩家得把要加的卡给对手看过再洗牌，
+     * 引擎也正是用这条消息把卡号发出来；而随后那条进手牌的 {@code MSG_MOVE} 里卡号被抹零。
+     * 只认 {@code MSG_MOVE} 就会把"对手检索了什么"记成"内容不可见"（2026-11-14 实测）。
+     * 两条消息先后顺序不固定，所以两头都留了队列。
+     */
+    private void onCardSelected(ByteReader r) {
+        int seat = r.u8();
+        int count = r.u8();
+        for (int i = 0; i < count; i++) {
+            long code = r.u32();
+            if (code == 0) {
+                continue;
+            }
+            Long waiting = poll(anonymousHandAdds, seat);
+            Card card = waiting == null ? null : cards.get(waiting);
+            if (card != null && card.identity.isUnknown()) {
+                card.identity = identityOf(code);
+                noteReveal(seat, code);
+                continue;
+            }
+            reveal(seat, code);
+            noteReveal(seat, code);
+        }
+    }
+
+    /** 记下"这张卡被公开过"：下次它进手牌（卡号被抹零）时按序回填。 */
+    private void reveal(int seat, long code) {
+        log.info("[亮牌] seat={} code={}（暂存，等它进手牌）", seat, code);
+        Deque<Long> queue = revealedCodes.computeIfAbsent(seat, k -> new ArrayDeque<>());
+        queue.addLast(code);
+        while (queue.size() > REVEAL_QUEUE_LIMIT) {
+            queue.removeFirst();
+        }
+    }
+
+    /**
+     * 进手牌时卡号为 0（服务端抹零）：有亮牌记录就用它回填，否则先记下实例等亮牌消息。
+     * <p>只听 {@code MSG_MOVE} 的话，对手检索永远显示"内容不可见"，而它是明牌动作。
+     */
+    private void fillRevealedHandCard(Card card, int seat, long code) {
+        if (code != 0) {
+            return;     // 自己的手牌，卡号本来就随消息来了
+        }
+        Long revealed = poll(revealedCodes, seat);
+        if (revealed != null) {
+            log.info("[亮牌] 手牌身份抹零 seat={} → 用 code={} 回填实例 {}", seat, revealed, card.id);
+            card.identity = identityOf(revealed);
+            noteReveal(seat, revealed);
+            return;
+        }
+        log.info("[亮牌] 手牌身份抹零 seat={} → 没有待用亮牌，实例 {} 排队等 CARD_SELECTED（待用 {} 条）",
+                seat, card.id, revealedCodes.getOrDefault(seat, new ArrayDeque<>()).size());
+        hiddenHandAddCount++;
+        Deque<Long> pending = anonymousHandAdds.computeIfAbsent(seat, k -> new ArrayDeque<>());
+        pending.addLast(card.id);
+        while (pending.size() > REVEAL_QUEUE_LIMIT) {
+            pending.removeFirst();
+        }
+    }
+
+    private static Long poll(Map<Integer, Deque<Long>> queues, int seat) {
+        Deque<Long> queue = queues.get(seat);
+        return queue == null || queue.isEmpty() ? null : queue.pollFirst();
+    }
+
     private void onMove(ByteReader r) {
         long code = r.u32();
         ZoneMapper.Packed from = ZoneMapper.unpack(r.u32());
@@ -240,6 +376,9 @@ public final class StateProjector {
         card.position = to.position();
         place(card);
         adjustZoneLists(from, to, card);
+        if (to.location() == ZoneMapper.LOC_HAND) {
+            fillRevealedHandCard(card, to.controller(), code);
+        }
     }
 
     /**
@@ -390,6 +529,12 @@ public final class StateProjector {
         }
     }
 
+    /**
+     * 公开/确认的卡（{@code MSG_CONFIRM_CARDS}）：效果亮牌、确认手牌、公开卡组顶都走这条。
+     *
+     * <p><b>手牌必须按"手牌序号"找实例</b>：手牌不占 {@code zoneIndex}，用 {@link #findAt}
+     * 永远落空——旧实现就是在这里把手牌亮牌整条丢掉的（对手检索因此一直"内容不可见"）。
+     */
     private void onConfirmCards(ByteReader r) {
         r.u8();  // player
         r.u8();  // skipPanel
@@ -399,11 +544,45 @@ public final class StateProjector {
             int c = r.u8();
             int l = r.u8();
             int s = r.u8();
-            Card card = findAt(c, l, s);
-            if (card != null && code != 0) {
+            if (code == 0) {
+                continue;
+            }
+            Card card = l == ZoneMapper.LOC_HAND ? handCardAt(c, s, code) : findAt(c, l, s);
+            if (card == null) {
+                // 手牌顺序漂移等：退而填"刚进手但身份未知、正在排队"的那个实例。
+                // 实机顺序就是"先进手（卡号抹零）→ 晚一两帧才来这条亮牌"，正走这一支。
+                Long waiting = poll(anonymousHandAdds, c);
+                card = waiting == null ? null : cards.get(waiting);
+            }
+            if (card != null) {
                 card.identity = identityOf(code);
+                noteReveal(c, code);
+                continue;
+            }
+            // 实在没有实例可填：记进亮牌队列，等它下次进手时回填
+            reveal(c, code);
+            noteReveal(c, code);
+        }
+    }
+
+    /**
+     * 手牌里的某张：优先按卡号匹配（手牌顺序常与协议序号漂移），退而按序号取。
+     */
+    private Card handCardAt(int seat, int sequence, long code) {
+        Player p = players.get(seat);
+        if (p == null) {
+            return null;
+        }
+        for (Long id : p.hand) {
+            Card card = cards.get(id);
+            if (card != null && card.identity.passcode() == code) {
+                return card;
             }
         }
+        if (sequence >= 0 && sequence < p.hand.size()) {
+            return cards.get(p.hand.get(sequence));
+        }
+        return null;
     }
 
     /**
@@ -888,7 +1067,8 @@ public final class StateProjector {
         return seat == selfSeat ? PlayerSide.SELF : PlayerSide.OPPONENT;
     }
 
-    private ZoneRef zoneRef(int controller, int location, int sequence) {
+    /** 协议三元组 → 区域；解不出退回卡组（绝不留 null 让调用方崩）。 */
+    public synchronized ZoneRef zoneRef(int controller, int location, int sequence) {
         ZoneRef zone = ZoneMapper.toZone(controller, location, sequence, sideOf(controller));
         return zone != null ? zone : ZoneRef.deck(sideOf(controller));
     }

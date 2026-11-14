@@ -5,9 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 种子式 Builder 语义：未设置的字段继承种子（默认值唯一定义在 defaults）；
@@ -29,32 +27,19 @@ class PipelineSettingsBuilderTest {
         assertEquals("https://api.deepseek.com", s.baseUrl());
         assertEquals("test-key", s.apiKey());
         assertEquals("deepseek-chat", s.model());
-        assertEquals(7_000, s.firstJudgeWaitMs());
+        assertEquals(7_000, s.firstAdviceWaitMs());
         assertEquals(30_000, s.waitPerTurnMs());
         assertEquals(6, s.maxCheckpointsPerTurn());
-        assertEquals(0.80, s.similarityThreshold());
         assertEquals(10_000, s.judgeTimeoutMs());
     }
 
     @Test
-    void overridesWinOverTheSeed() {
-        PipelineSettings s = PipelineSettings.builder(seed())
-                .waitPerDecisionMs(0)
-                .plannerRushAnswer(false)
-                .pathPlanning(true)
-                .build();
-        assertEquals(0, s.waitPerDecisionMs());
-        assertFalse(s.plannerRushAnswer());
-        assertTrue(s.pathPlanning());
-    }
-
-    @Test
     void normalizationAndCrossFieldCouplingStillApplyAfterBuild() {
-        // waitPerDecisionMs=0 视为"完全不等待"：firstJudgeWaitMs 强制归零，即使种子是 7_000
+        // waitPerDecisionMs=0 视为"完全不等待"：firstAdviceWaitMs 强制归零，即使种子是 7_000
         PipelineSettings s = PipelineSettings.builder(seed())
                 .waitPerDecisionMs(0)
                 .build();
-        assertEquals(0, s.firstJudgeWaitMs());
+        assertEquals(0, s.firstAdviceWaitMs());
         // waitPerTurnMs 不低于 waitPerDecisionMs
         PipelineSettings t = PipelineSettings.builder(seed())
                 .waitPerDecisionMs(40_000)

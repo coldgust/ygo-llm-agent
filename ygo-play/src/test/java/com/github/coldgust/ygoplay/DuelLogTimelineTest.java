@@ -29,7 +29,7 @@ class DuelLogTimelineTest {
         log.updateContext(3, "MAIN_PHASE_1", System.currentTimeMillis());
         log.append("SYSTEM", DuelEventKind.TURN_STARTED, new DuelEventPayload.TurnStarted("P0", 3));
         log.append("P1", DuelEventKind.EFFECT_ACTIVATED,
-                new DuelEventPayload.EffectActivated("P1", ENGAGE, ENGAGE * 16));
+                new DuelEventPayload.EffectActivated("P1", ENGAGE, ENGAGE * 16, 1));
         log.append("P0", DuelEventKind.LP_CHANGED,
                 new DuelEventPayload.LpChanged("P0", -2300, 5700, null));
         // 快照与原始帧对上下文无信息量：必须被映射丢弃

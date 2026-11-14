@@ -23,21 +23,21 @@ public final class DuelTraceReader {
             .disable(SerializationFeature.FAIL_ON_EMPTY_BEANS)
             .build();
 
-    public record TurnPlanView(int turn, String goal, String thinking) {
+    public record TurnAdviceView(int turn, String goal, String strategy) {
     }
 
     public record Action(int turn, String level, String request, String submitted,
                          String rationale, boolean fallback) {
     }
 
-    public record TraceView(Map<Integer, TurnPlanView> plans, List<Action> actions) {
+    public record TraceView(Map<Integer, TurnAdviceView> advice, List<Action> actions) {
 
         public static TraceView empty() {
             return new TraceView(Map.of(), List.of());
         }
 
-        public TurnPlanView planFor(int turn) {
-            return plans.get(turn);
+        public TurnAdviceView adviceFor(int turn) {
+            return advice.get(turn);
         }
     }
 
@@ -54,7 +54,7 @@ public final class DuelTraceReader {
     }
 
     public static TraceView read(List<String> lines) {
-        Map<Integer, TurnPlanView> plans = new LinkedHashMap<>();
+        Map<Integer, TurnAdviceView> advice = new LinkedHashMap<>();
         Map<Long, String> rationaleBySeq = new LinkedHashMap<>();
         List<Action> actions = new ArrayList<>();
         // SUBMITTED 的 seq 与 EXEC_DECISION 的 seq 不同源：EXEC_DECISION 带 explanation 但没有可读提交，
@@ -74,13 +74,17 @@ public final class DuelTraceReader {
             String kind = root.path("kind").asText("");
             int turn = root.path("turn").asInt(0);
             switch (kind) {
-                case "PLAN_EVENT" -> {
+                case "ADVICE_EVENT" -> {
+                    // 只有 ADVICE_PUBLISHED 带 goal/strategy（复盘按回合取规划器建议）
+                    if (!"ADVICE_PUBLISHED".equals(root.path("adviceKind").asText(""))) {
+                        continue;
+                    }
                     String goal = root.path("goal").asText("");
                     if (goal.isBlank()) {
-                        continue; // 只有 PLAN_PUBLISHED 带 goal/thinking
+                        continue;
                     }
-                    plans.putIfAbsent(turn, new TurnPlanView(turn, goal,
-                            root.path("thinking").asText("")));
+                    advice.putIfAbsent(turn, new TurnAdviceView(turn, goal,
+                            root.path("strategy").asText("")));
                 }
                 case "EXEC_DECISION" -> {
                     String explanation = root.path("explanation").asText("");
@@ -109,7 +113,7 @@ public final class DuelTraceReader {
                 }
             }
         }
-        return new TraceView(Map.copyOf(plans), List.copyOf(actions));
+        return new TraceView(Map.copyOf(advice), List.copyOf(actions));
     }
 
     private static String key(int turn, String request) {

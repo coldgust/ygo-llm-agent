@@ -15,14 +15,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** ygo.plan-exec 绑定（键用全限定名）：非 String 组件的空串绑定为 null = 继承 core 代码默认；
- * 环境相关项缺失/留空 → toSettings 抛异常点名。 */
+ * 环境相关项缺失/留空 → toSettings 抛异常点名。
+ * （docs/planner-judge-memory-redesign.md：path-planning/rush-answer/similarity-threshold 已删除。） */
 class PlanExecPropertiesTest {
 
     /** 基础配置（镜像 application.yaml 的 plan-exec 桥接；调优旋钮 null = 继承 core 默认）。 */
     private static PlanExecProperties props(Boolean enabled, String apiKey) {
         return new PlanExecProperties(enabled, apiKey, "https://api.deepseek.com", null, "deepseek-chat",
                 null, null, "data/card_rag/cards.jsonl",
-                null, null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null);
     }
 
     @Test
@@ -47,18 +48,14 @@ class PlanExecPropertiesTest {
         assertEquals(45_000, settings.plannerCallTimeoutMs());
         assertEquals(60_000, settings.plannerCooldownMs());
         assertEquals(3_000, settings.judgeMaxTokens());
-        assertFalse(settings.pathPlanning());
-        assertTrue(settings.plannerRushAnswer());
     }
 
     @Test
     void toSettingsOverridesTuningKnobsWhenConfigured() {
         var settings = new PlanExecProperties(null, "k", "https://api.deepseek.com", null, "deepseek-chat",
                 "HIGH", "off", "data/card_rag/cards.jsonl",
-                3_000, null, null, null, 0.9, null, null, null, null, true, null).toSettings();
+                3_000, null, null, null, null, null, null, null).toSettings();
         assertEquals(3_000, settings.waitPerDecisionMs(), "配置了的调优旋钮覆盖默认");
-        assertEquals(0.9, settings.similarityThreshold(), 1e-9);
-        assertTrue(settings.pathPlanning());
         assertEquals("high", settings.reasoningPlanner(), "归一化大小写");
         assertEquals("off", settings.reasoningDecision());
     }
@@ -67,7 +64,7 @@ class PlanExecPropertiesTest {
     void missingRequiredEnvKnobThrowsNamingKey() {
         var props = new PlanExecProperties(null, "k", "", "deepseek-chat", null,
                 null, null, "data/card_rag/cards.jsonl",
-                null, null, null, null, null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null, null);
         Exception e = assertThrows(IllegalStateException.class, props::toSettings);
         assertTrue(e.getMessage().contains("base-url"), e.getMessage());
     }
@@ -86,17 +83,11 @@ class PlanExecPropertiesTest {
         values.put("ygo.plan-exec.reasoning-planner", "");
         values.put("ygo.plan-exec.reasoning-decision", "");
         values.put("ygo.plan-exec.wait-decision-ms", "");
-        values.put("ygo.plan-exec.path-planning", "");
-        values.put("ygo.plan-exec.rush-answer", "");
         PlanExecProperties props = new Binder(new MapConfigurationPropertySource(values))
                 .bind("ygo.plan-exec", Bindable.of(PlanExecProperties.class)).get();
         assertNull(props.waitDecisionMs(), "Integer 空串绑定为 null");
-        assertNull(props.pathPlanning());
-        assertNull(props.rushAnswer());
         var settings = props.toSettings();
         assertEquals(4_000, settings.waitPerDecisionMs(), "继承 core 调优默认");
-        assertFalse(settings.pathPlanning());
-        assertTrue(settings.plannerRushAnswer());
     }
 
     @Test

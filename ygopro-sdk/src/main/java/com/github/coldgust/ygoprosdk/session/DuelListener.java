@@ -4,6 +4,7 @@ import com.github.coldgust.ygodomain.decision.ChoiceRequest;
 import com.github.coldgust.ygodomain.decision.ChoiceSelection;
 import com.github.coldgust.ygodomain.duel.DuelState;
 import com.github.coldgust.ygodomain.duel.DuelResult;
+import com.github.coldgust.ygodomain.zone.ZoneRef;
 
 /**
  * 会话事件监听（异步观察；不参与决策——决策走 {@link DuelSession#awaitChoice}）。
@@ -33,7 +34,37 @@ public interface DuelListener {
      * <p>状态 diff 看不到"怪兽发动了效果"（卡不动），combo 录入等场景靠它补齐
      * "用户发动了哪张卡的哪个效果"。controllerSeat 为发动方的绝对座位号。
      */
-    default void onEffectActivated(int controllerSeat, long passcode, long description) {
+    default void onEffectActivated(int controllerSeat, long passcode, long description,
+                                   Integer chainIndex, ZoneRef sourceZone) {
+    }
+
+    /**
+     * 连锁第 chainIndex 环开始处理（MSG_CHAIN_SOLVING）。
+     *
+     * <p>记录里这一行就是"谁的效果处理了"的分界：它之后的卡移动/效果结果都属于这一环。
+     */
+    default void onChainSolving(int chainIndex, long passcode) {
+    }
+
+    /**
+     * 连锁第 chainIndex 环被无效（MSG_CHAIN_NEGATED / MSG_CHAIN_DISABLED）。
+     *
+     * <p>"效果无效"是记录里的关键事实：模型要知道对方那个效果没结算。
+     * passcode 从镜像的链上取（0 = 未知）。
+     */
+    default void onChainNegated(int chainIndex, long passcode) {
+    }
+
+    /**
+     * 一张卡被公开（MSG_CONFIRM_CARDS / MSG_CARD_SELECTED）。
+     *
+     * <p>检索的卡号只能从这里拿到：进手牌的 MSG_MOVE 被服务端抹零，亮牌消息才是公开信息。
+     */
+    default void onCardRevealed(int controllerSeat, long passcode) {
+    }
+
+    /** 整条连锁处理完毕（MSG_CHAIN_END）。 */
+    default void onChainEnd(int chainLength) {
     }
 
     default void onDuelEnd(DuelResult result) {

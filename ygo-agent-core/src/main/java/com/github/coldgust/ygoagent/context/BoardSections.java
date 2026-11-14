@@ -79,24 +79,28 @@ final class BoardSections {
     }
 
     /**
-     * [场地槽位]：逐格列出双方怪兽区/魔陷区/场地/额外怪兽区的占用，编码与位置决策里的编号一致。
+     * [场地槽位]：逐格列出双方怪兽区/魔陷区/场地/额外怪兽区的占用。
      *
      * <p>没有这一块，"位置"就没法成为决策：模型只知道"有 5 个空格"，
      * 不知道哪格空着、自己场上的卡在第几格、额外怪兽区占没占——它只能瞎写或干脆不写。
      * 列的是**格子**而不是"一堆卡名"，因为位置决策问的就是格子。
+     *
+     * <p>区域名用中文（{@code 我方主怪兽区3}），与 [规则速查]/卡面里"主要怪兽区域"同一套说法；
+     * 旧写法 {@code MMZ-3} 之类的代号模型对不上资料库，已在 2026-11-14 全量撤出渲染层。
      */
     String boardSlotsSection(DuelState state) {
         StringBuilder sb = new StringBuilder();
-        sb.append("[场地槽位] 编码即位置（序号从 1 起；空 = 可放置）。写计划 zone 或选位置时用编码，如 MMZ-3：\n");
+        sb.append("[场地槽位] 用「谁的 + 区域名 + 序号」说位置（序号从 1 起；空 = 可放置）。")
+                .append("写 zone 或说位置时照这里的写法，如「我方主怪兽区3」「我方额外怪兽区1」：\n");
         for (PlayerSide side : List.of(PlayerSide.SELF, PlayerSide.OPPONENT)) {
             String who = side == PlayerSide.SELF ? "我方" : "对方";
             sb.append("  ").append(who)
-                    .append(" MMZ: ").append(slots(state, side, ZoneKind.MAIN_MONSTER_ZONE, 5))
-                    .append(" ｜ EMZ: ").append(slots(state, side, ZoneKind.EXTRA_MONSTER_ZONE, 2))
-                    .append(" ｜ FZ: ").append(slotName(state, new ZoneRef(ZoneKind.FIELD_ZONE, side, 0)))
+                    .append(" 主怪兽区: ").append(slots(state, side, ZoneKind.MAIN_MONSTER_ZONE, 5))
+                    .append(" ｜ 额外怪兽区: ").append(slots(state, side, ZoneKind.EXTRA_MONSTER_ZONE, 2))
+                    .append(" ｜ 场地魔法区: ").append(slotName(state, new ZoneRef(ZoneKind.FIELD_ZONE, side, 0)))
                     .append("\n");
-            sb.append("       STZ: ").append(slots(state, side, ZoneKind.SPELL_TRAP_ZONE, 5))
-                    .append(" ｜ PZ: ").append(slots(state, side, ZoneKind.PENDULUM_ZONE, 2))
+            sb.append("      魔陷区: ").append(slots(state, side, ZoneKind.SPELL_TRAP_ZONE, 5))
+                    .append(" ｜ 灵摆区: ").append(slots(state, side, ZoneKind.PENDULUM_ZONE, 2))
                     .append("\n");
         }
         return sb.toString();
@@ -171,8 +175,9 @@ final class BoardSections {
                 base = "卡(" + c.passcode() + ")[" + pos + "]";
             } else {
                 String stats = fact.atk() == null ? "?" : String.valueOf(fact.atk());
-                String def = fact.defense() == null ? "?" : String.valueOf(fact.defense());
-                base = fact.name() + "[" + pos + " ATK" + stats + "/DEF" + def + "]";
+                // 连接怪兽没有守备力：不显示 DEF?（问号会让模型以为守备力未知、去算战破）
+                base = fact.name() + "[" + pos + " ATK" + stats
+                        + (fact.defense() == null ? "" : "/DEF" + fact.defense()) + "]";
             }
         }
         return base + extras(state, c);

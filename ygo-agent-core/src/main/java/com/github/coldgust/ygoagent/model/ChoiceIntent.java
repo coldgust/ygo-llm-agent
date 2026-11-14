@@ -16,7 +16,7 @@ public sealed interface ChoiceIntent {
 
     /**
      * 意图的中文短标签（决策流直接显示用）。
-     * 类名（ChainDecline 等）是实现词汇，不该甩给使用者；措辞与 {@code IntentSummary} 保持一致。
+     * 类名（ChainDecline 等）是实现词汇，不该甩给使用者；措辞与对局记录的玩家用语保持一致。
      */
     static String label(ChoiceIntent intent) {
         return switch (intent) {

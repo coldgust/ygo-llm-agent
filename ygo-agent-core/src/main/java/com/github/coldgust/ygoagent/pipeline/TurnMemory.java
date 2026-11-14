@@ -5,24 +5,22 @@ import com.github.coldgust.ygoagent.model.ChoiceIntent;
 import com.github.coldgust.ygoagent.model.DecisionPoint;
 import com.github.coldgust.ygoagent.model.DuelDecision;
 import com.github.coldgust.ygoagent.model.RequestKind;
-import com.github.coldgust.ygoagent.support.FoldedLines;
 import com.github.coldgust.ygodomain.zone.ZoneRef;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 回合内跨级状态：五级流水各级共用的"这一手在干嘛"记忆。
+ * 回合内跨级状态：三级流水各级共用的"这一手在干嘛"机制状态。
  * <ul>
  *   <li>位置线索（⓪ 写入 / 兑现消费，带回合号防跨回合串格）；</li>
- *   <li>正在结算的效果（④ 给从属决策点补语义）；</li>
- *   <li>本回合已做动作 + 上一手判断（④ 单轮调用没有对话历史，靠它补）；</li>
- *   <li>本回合是否已为等计划花过一次等待（编排用）。</li>
+ *   <li>正在结算的效果（② 给从属决策点补语义）；</li>
+ *   <li>本回合是否已为等建议花过一次等待（编排用）。</li>
  * </ul>
- * 只由决策线程读写（除 turnsWaitedForPlan 外），不承担任何 IO 与日志。
+ * "本回合已做动作 + 上一手判断"已由决策器对话记忆承载（docs/planner-judge-memory-redesign.md
+ * §7.3），本类不再承担。只由决策线程读写（除 turnsWaitedForAdvice 外），不承担任何 IO 与日志。
  * <p>模块内部协作类型（宿主不应直接使用）。
  */
 public final class TurnMemory {
@@ -31,15 +29,8 @@ public final class TurnMemory {
     public record EffectScope(long card, long description) {
     }
 
-    /** 本回合动作记录上限：再多也只是噪声。 */
-    private static final int TURN_ACTION_LIMIT = 8;
-
     private volatile EffectScope pendingEffect;
     private volatile int pendingEffectTurn = -1;
-
-    private final List<String> turnActions = new ArrayList<>();
-    private volatile int turnActionsTurn = -1;
-    private volatile String lastIntent = "";
 
     /** 位置线索：带回合号——跨回合的旧线索必须作废，否则会把上回合想放的格子套到这回合的召唤上。 */
     private record ZoneHint(int turn, ZoneRef zone) {
@@ -49,7 +40,7 @@ public final class TurnMemory {
     /** 仅由决策线程（②③接地 / ④采纳草案）写入，供同一次 decide() 采集"这次选的动作要放哪"。 */
     private volatile ZoneRef lastDecisionZone;
 
-    private final Set<Integer> turnsWaitedForPlan = ConcurrentHashMap.newKeySet();
+    private final Set<Integer> turnsWaitedForAdvice = ConcurrentHashMap.newKeySet();
 
     /** 记下"这一手发动的是哪张卡的哪一条效果"，供随后的从属决策点（选卡/选位置/选表示形式）使用。 */
     public void rememberEffectScope(DecisionPoint point, DuelDecision decision) {
@@ -130,43 +121,12 @@ public final class TurnMemory {
         lastDecisionZone = zone;
     }
 
-    /**
-     * 记一笔"我刚做过什么、刚才是怎么想的"。
-     *
-     * @param intentPreview 上一手判断的摘要（调用方已截断）
-     * @param intentLine    本手动作的人话描述（IntentSummary 产出；空 = 不记动作行）
-     */
-    public void recordTurnAction(int turn, String intentPreview, String intentLine) {
-        if (turn != turnActionsTurn) {
-            turnActions.clear();
-            turnActionsTurn = turn;
-            lastIntent = "";
-        }
-        lastIntent = intentPreview;
-        if (intentLine == null || intentLine.isBlank()) {
-            return;
-        }
-        FoldedLines.add(turnActions, intentLine);
-        while (turnActions.size() > TURN_ACTION_LIMIT) {
-            turnActions.remove(0);
-        }
+    /** 编排用：本回合是否已经为等建议花过那次等待。 */
+    public boolean waitedForAdvice(int turn) {
+        return turnsWaitedForAdvice.contains(turn);
     }
 
-    /** ④ 用：本回合已做动作（有界）+ 上一手怎么想的。 */
-    public List<String> turnActions() {
-        return List.copyOf(turnActions);
-    }
-
-    public String lastIntent() {
-        return lastIntent;
-    }
-
-    /** 编排用：本回合是否已经为等计划花过那次等待。 */
-    public boolean waitedForPlan(int turn) {
-        return turnsWaitedForPlan.contains(turn);
-    }
-
-    public void markWaitedForPlan(int turn) {
-        turnsWaitedForPlan.add(turn);
+    public void markWaitedForAdvice(int turn) {
+        turnsWaitedForAdvice.add(turn);
     }
 }

@@ -51,15 +51,73 @@ public interface DuelTimeline {
 
         /**
          * 一次卡移动（含抽卡/上场/进墓/除外/表示形式变化）。
-         * passcode = 0 表示身份不可见（对手的手牌与盖放内容被协议抹零）；
+         * passcode = 0 表示身份不可见（对手的手牌与盖放内容被协议抹零；
+         * 例外是检索/亮牌——那由 MSG_CARD_SELECTED 回填，见 StateProjector）；
          * position 为协议 Position 枚举名，可空。
          */
         record CardMoved(long seq, int turn, Side side, long passcode,
                          ZoneRef fromZone, ZoneRef toZone, String position) implements Entry {
         }
 
-        /** 效果发动（入链，双方都有）。description 是效果描述码，渲染必须经 CardText 解条款。 */
-        record EffectActivated(long seq, int turn, Side side, long passcode, long description) implements Entry {
+        /**
+         * 效果发动（入链，双方都有）。description 是效果描述码，渲染必须经 CardText 解条款。
+         * chainIndex = 这次发动是连锁的第几环（1 起；null/0 = 协议未给出）。
+         * sourceZone = 发动来源区域（协议 triggering 字段；null = 未给出）——多条款卡
+         * 解不出条款时靠它 + 全文让模型判断是哪一条（如 创造① 场上/手卡、② 墓地）。
+         */
+        record EffectActivated(long seq, int turn, Side side, long passcode, long description,
+                               Integer chainIndex, ZoneRef sourceZone) implements Entry {
+            public EffectActivated(long seq, int turn, Side side, long passcode, long description,
+                                   Integer chainIndex) {
+                this(seq, turn, side, passcode, description, chainIndex, null);
+            }
+
+            public EffectActivated(long seq, int turn, Side side, long passcode, long description) {
+                this(seq, turn, side, passcode, description, null, null);
+            }
+        }
+
+        /**
+         * 连锁第 {@code chainIndex} 环开始处理（MSG_CHAIN_SOLVING）。
+         *
+         * <p>记录里它就是"谁的效果处理了"的分界：这一行之后到下一环之间发生的卡移动/结果，
+         * 都属于这一环（MDPRO3 的"N 效果处理"）。passcode 取不到时给 0。
+         */
+        record ChainSolving(long seq, int turn, int chainIndex, long passcode) implements Entry {
+            @Override
+            public Side side() {
+                return Side.SYSTEM;
+            }
+        }
+
+        /**
+         * 一张卡被公开（检索/确认时亮给对手看的那张）。
+         *
+         * <p>协议上"进手牌"的消息卡号被抹零，卡号只在这条亮牌消息里，
+         * 所以它必须单独存在——渲染层再把它并进那条"加入手牌"。
+         */
+        record CardRevealed(long seq, int turn, Side side, long passcode) implements Entry {
+        }
+
+        /**
+         * 连锁第 {@code chainIndex} 环被无效（MSG_CHAIN_NEGATED / MSG_CHAIN_DISABLED）。
+         *
+         * <p>"效果无效"是记录里的关键事实：它之后的效果结算没有发生——模型据此知道
+         * 对方的检索/破坏没有落地，也据此复盘"狼/泡影骗灰流丽"这类交互。
+         */
+        record ChainNegated(long seq, int turn, int chainIndex, long passcode) implements Entry {
+            @Override
+            public Side side() {
+                return Side.SYSTEM;
+            }
+        }
+
+        /** 整条连锁处理完毕（MSG_CHAIN_END）：记录里对应一行"处理结束"。 */
+        record ChainEnded(long seq, int turn, int chainLength) implements Entry {
+            @Override
+            public Side side() {
+                return Side.SYSTEM;
+            }
         }
 
         /** 攻击宣言（记录补齐前可能没有发射者）。 */

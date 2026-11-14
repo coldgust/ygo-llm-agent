@@ -1,12 +1,12 @@
 package com.github.coldgust.ygoagent.pipeline;
 
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
+import com.github.coldgust.ygoagent.context.DuelRecordFeed;
 import com.github.coldgust.ygoagent.llm.ChatOptions;
 import com.github.coldgust.ygoagent.llm.ResilientChatModel;
+import com.github.coldgust.ygoagent.llm.memory.DuelChatMemory;
 import com.github.coldgust.ygoagent.llm.service.JudgeAgent;
 import com.github.coldgust.ygoagent.llm.service.PlannerAgent;
-import com.github.coldgust.ygoagent.llm.service.PlannerUrgentAgent;
-import com.github.coldgust.ygoagent.llm.memory.PlannerChatMemory;
 import com.github.coldgust.ygoagent.llm.FakeChatModel;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
@@ -17,11 +17,13 @@ import com.github.coldgust.ygoagent.model.DecisionPoint;
 import com.github.coldgust.ygoagent.model.DuelDecision;
 import com.github.coldgust.ygoagent.model.PathKind;
 import com.github.coldgust.ygoagent.model.Timing;
+import com.github.coldgust.ygoagent.pipeline.judge.JudgePrompts;
 import com.github.coldgust.ygoagent.pipeline.reflex.ReflexPolicyImpl;
 import com.github.coldgust.ygoagent.planner.PlannerPrompts;
 import com.github.coldgust.ygoagent.planner.PlannerSession;
 import com.github.coldgust.ygoagent.trace.DecisionTraceWriter;
 import com.github.coldgust.ygoagent.pipeline.TestDuels;
+import dev.langchain4j.data.message.SystemMessage;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -36,8 +38,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * 特征测试（重构守护网）：钉住当前行为的<b>外部可观察形态</b>——EXEC_DECISION 的 payload
- * 键集合（前端/trace 依赖）、TurnMemory 的 ×N 折叠语义。深度重构期间这些不变式
- * 不得改变；文本与键集合视为对外契约。
+ * 键集合（前端/trace 依赖）。深度重构期间这些不变式不得改变；文本与键集合视为对外契约。
+ * （TurnMemory 的 ×N 折叠语义随 [本回合已做] 移除而删除：折叠现在由记录流渲染承担，
+ * 见 {@code DuelRecordSectionsTest}。）
  */
 class PipelineCharacterizationTest {
 
@@ -47,28 +50,35 @@ class PipelineCharacterizationTest {
         PipelineSettings d = PipelineSettings.defaults(Path.of("data/card_rag/cards.jsonl"),
                 "https://api.deepseek.com", "test-key", "deepseek-chat");
         return PipelineSettings.builder(d)
-                .waitPerDecisionMs(0).firstJudgeWaitMs(0)
+                .waitPerDecisionMs(0).firstAdviceWaitMs(0)
                 .waitPerTurnMs(20_000).judgeTimeoutMs(300)
-                .pathPlanning(true)
                 .build();
     }
 
-    private record Agents(PlannerAgent planner, PlannerUrgentAgent urgent, JudgeAgent judge) {
+    private record Agents(PlannerAgent planner, JudgeAgent judge,
+                          DuelChatMemory plannerMemory, DuelChatMemory judgeMemory) {
     }
 
     private Agents agents(FakeChatModel chat, PipelineSettings cfg) {
-        var memory = new PlannerChatMemory("test");
+        var plannerMemory = DuelChatMemory.forPlanner("test-planner",
+                SystemMessage.from(PlannerPrompts.ADVISOR_SYSTEM), null);
+        var judgeMemory = DuelChatMemory.forJudge("test-judge",
+                SystemMessage.from(JudgePrompts.SYSTEM), null);
         return new Agents(
                 new PlannerAgent(new ResilientChatModel(chat.baked(cfg.checkpointOptions(), true)),
-                        cfg.pathPlanning() ? PlannerPrompts.PLANNER_SYSTEM : PlannerPrompts.ADVISOR_SYSTEM,
-                        memory, List.of(), "", trace),
-                new PlannerUrgentAgent(new ResilientChatModel(chat.baked(
-                        ChatOptions.decision(cfg.judgeMaxTokens()).withReasoning(cfg.reasoningDecision()), true)),
-                        cfg.pathPlanning() ? PlannerPrompts.PLANNER_SYSTEM : PlannerPrompts.ADVISOR_SYSTEM,
-                        memory, List.of(), trace),
+                        plannerMemory, List.of(), trace),
                 new JudgeAgent(new ResilientChatModel(chat.baked(
                         ChatOptions.decision(cfg.judgeMaxTokens()).withReasoning(cfg.reasoningDecision()),
-                        false)), List.of(), trace));
+                        false)), judgeMemory, List.of(), trace),
+                plannerMemory, judgeMemory);
+    }
+
+    private static DuelRecordFeed feedFor(DuelChatMemory... memories) {
+        DuelRecordFeed feed = new DuelRecordFeed(null, TestDuels.facts());
+        for (DuelChatMemory memory : memories) {
+            feed.attach(memory);
+        }
+        return feed;
     }
 
     private static DecisionPoint mainPoint() {
@@ -78,10 +88,9 @@ class PipelineCharacterizationTest {
                 List.of(TestDuels.effectChoice(11, TestDuels.ENGAGE, 1001)));
     }
 
-    private static String planJson(String verb, long passcode) {
-        return "{\"thinking\": \"测试思路\", \"goal\": \"测试目标\", \"main_line\": {\"steps\": ["
-                + "{\"when\": \"MAIN1\", \"verb\": \"" + verb + "\", \"passcode\": " + passcode
-                + ", \"why\": \"测试\"}]}, \"confidence\": 0.8}";
+    private static String advisorJson(String goal) {
+        return "{\"strategy\": \"测试策略\", \"goal\": \"" + goal
+                + "\", \"tactics\": \"测试战术\", \"intel\": \"测试情报\", \"confidence\": 0.8}";
     }
 
     /** 捕获全部 EXEC_DECISION payload（键集合与数值都要钉住）。 */
@@ -101,55 +110,64 @@ class PipelineCharacterizationTest {
     }
 
     @Test
-    void execDecisionPayloadKeysAndPlanStepAreStable() {
+    void execDecisionPayloadKeysAndAdviceFieldsAreStable() {
         EventCatcher catcher = new EventCatcher();
-        FakeChatModel chat = new FakeChatModel(planJson("activate", TestDuels.ENGAGE), "{\"keep\": true}");
-        PlannerSession planner = PlannerSession.builder(agents(chat, cfg()).planner(), agents(chat, cfg()).urgent(),
+        FakeChatModel chat = new FakeChatModel(advisorJson("先展开再压制"),
+                "{\"choice\": \"C1\", \"rationale\": \"r\", \"confidence\": 0.5}");
+        Agents agents = agents(chat, cfg());
+        PlannerSession planner = PlannerSession.builder(agents.planner(),
                 new ContextPackBuilder(TestDuels.facts()),
-                TestDuels.facts(), cfg())
+                cfg(), agents.plannerMemory())
+                .feed(feedFor(agents.plannerMemory(), agents.judgeMemory()))
                 .trace(trace)
                 .build();
         DecisionPipeline port = DecisionPipeline.builder(point -> Optional.empty(), planner,
                 new ContextPackBuilder(TestDuels.facts()),
-                agents(chat, cfg()).judge(), cfg(), TestDuels.facts())
+                agents.judge(), cfg(), TestDuels.facts())
                 .delegate((p, d) -> new DuelDecision(new ChoiceIntent.EndTurn(), PathKind.TACTICAL, 0.5,
                         DecisionExplanation.of("delegate"), Timing.ZERO))
                 .traceWriter(catcher)
                 .trace(trace)
+                .judgeMemory(agents.judgeMemory())
+                .feed(feedFor(agents.plannerMemory(), agents.judgeMemory()))
                 .build();
 
         var point = mainPoint();
         planner.observePoint(point);
-        planner.drainForTests(); // 锚点发布计划
+        planner.drainForTests(); // 锚点发布建议
         port.decide(point, DecisionDeadline.of(3000));
 
         assertEquals(1, catcher.execEvents.size(), "一次决策一条 EXEC_DECISION");
         Map<String, Object> payload = catcher.execEvents.getFirst();
         assertEquals(Set.of("level", "levelLabel", "requestLabel", "intent", "intentLabel",
                         "confidence", "missReasons", "explanation",
-                        "planId", "planCursor", "planSteps", "planGoal", "planStep",
+                        "adviceId", "adviceTurn", "adviceStale", "adviceGoal",
                         "seq", "turn", "phase", "requestKind"),
                 payload.keySet(), "payload 键集合是对外契约:\n" + payload.keySet());
-        assertEquals("PLAN_STEP", payload.get("level"));
-        assertEquals(0, payload.get("planStep"), "命中计划步#0 → planStep=0");
+        assertEquals("LLM_CALL", payload.get("level"));
+        assertEquals(Boolean.FALSE, payload.get("adviceStale"), "本回合刚发布的建议不标 stale");
     }
 
     @Test
-    void judgePayloadOmitsPlanFieldsWhenNoPlan() {
+    void judgePayloadOmitsAdviceFieldsWhenNoAdvice() {
         EventCatcher catcher = new EventCatcher();
         FakeChatModel chat = new FakeChatModel("{\"choice\": \"C1\", \"rationale\": \"r\", \"confidence\": 0.5}");
-        PlannerSession planner = PlannerSession.builder(agents(chat, cfg()).planner(), agents(chat, cfg()).urgent(),
+        Agents agents = agents(chat, cfg());
+        PlannerSession planner = PlannerSession.builder(agents.planner(),
                 new ContextPackBuilder(TestDuels.facts()),
-                TestDuels.facts(), cfg())
+                cfg(), agents.plannerMemory())
+                .feed(feedFor(agents.plannerMemory(), agents.judgeMemory()))
                 .trace(trace)
                 .build();
         DecisionPipeline port = DecisionPipeline.builder(point -> Optional.empty(), planner,
                 new ContextPackBuilder(TestDuels.facts()),
-                agents(chat, cfg()).judge(), cfg(), TestDuels.facts())
+                agents.judge(), cfg(), TestDuels.facts())
                 .delegate((p, d) -> new DuelDecision(new ChoiceIntent.EndTurn(), PathKind.TACTICAL, 0.5,
                         DecisionExplanation.of("delegate"), Timing.ZERO))
                 .traceWriter(catcher)
                 .trace(trace)
+                .judgeMemory(agents.judgeMemory())
+                .feed(feedFor(agents.plannerMemory(), agents.judgeMemory()))
                 .build();
 
         port.decide(mainPoint(), DecisionDeadline.of(3000));
@@ -158,29 +176,7 @@ class PipelineCharacterizationTest {
         assertEquals(Set.of("level", "levelLabel", "requestLabel", "intent", "intentLabel",
                         "confidence", "missReasons", "explanation",
                         "seq", "turn", "phase", "requestKind"),
-                payload.keySet(), "无计划时 planId/planCursor/planSteps/planGoal/planStep 不出现");
+                payload.keySet(), "无建议时 adviceId/adviceTurn/adviceStale/adviceGoal 不出现");
         assertEquals("LLM_CALL", payload.get("level"));
-    }
-
-    @Test
-    void turnMemoryFoldsConsecutiveIdenticalActionLines() {
-        TurnMemory memory = new TurnMemory();
-        memory.recordTurnAction(3, "判断A", "通常召唤 大黄蜂浮游单元(75982077)");
-        memory.recordTurnAction(3, "判断A", "通常召唤 大黄蜂浮游单元(75982077)");
-        memory.recordTurnAction(3, "判断A", "通常召唤 大黄蜂浮游单元(75982077)");
-        assertEquals(List.of("通常召唤 大黄蜂浮游单元(75982077) ×3"), memory.turnActions(),
-                "连续同文动作折叠 ×N");
-    }
-
-    @Test
-    void turnMemoryKeepsAtMostEightLinesAndResetsOnTurnChange() {
-        TurnMemory memory = new TurnMemory();
-        for (int i = 0; i < 10; i++) {
-            memory.recordTurnAction(3, "判断" + i, "动作" + i);
-        }
-        assertEquals(8, memory.turnActions().size(), "动作列表有界");
-        assertEquals("动作2", memory.turnActions().getFirst(), "超限丢最旧的");
-        memory.recordTurnAction(4, "新回合", "动作4-1");
-        assertEquals(List.of("动作4-1"), memory.turnActions(), "换回合清空重来");
     }
 }

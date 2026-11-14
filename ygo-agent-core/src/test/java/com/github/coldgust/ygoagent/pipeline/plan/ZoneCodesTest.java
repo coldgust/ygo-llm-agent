@@ -21,12 +21,14 @@ class ZoneCodesTest {
     @Test
     void codesAreOneBasedAndRoundTrip() {
         ZoneRef zone = ZoneRef.mainMonster(PlayerSide.SELF, 2);
-        assertEquals("MMZ-3", ZoneCodes.code(zone));
+        assertEquals("MMZ-3", ZoneCodes.code(zone), "旧代号只留作解析兼容，不再渲染给模型");
         assertEquals(zone, ZoneCodes.parse("MMZ-3", PlayerSide.SELF).orElseThrow());
         assertEquals(zone, ZoneCodes.parse("mmz3", PlayerSide.SELF).orElseThrow());
         assertEquals(zone, ZoneCodes.parse("M3", PlayerSide.SELF).orElseThrow());
         assertEquals(zone, ZoneCodes.parse("我方主怪兽区#3", PlayerSide.SELF).orElseThrow());
         assertEquals(zone, ZoneCodes.parse("主怪兽区3", PlayerSide.SELF).orElseThrow());
+        assertEquals(zone, ZoneCodes.parse("我方主怪兽区3", PlayerSide.SELF).orElseThrow(),
+                "渲染出来的中文写法必须能原样读回");
     }
 
     @Test
@@ -35,6 +37,7 @@ class ZoneCodesTest {
         assertEquals(emz, ZoneCodes.parse("EMZ-1", PlayerSide.SELF).orElseThrow());
         assertEquals(emz, ZoneCodes.parse("额外怪兽区1", PlayerSide.SELF).orElseThrow(),
                 "中文'额外怪兽区'里也含'怪兽区'，不能被主怪兽区分支抢走");
+        assertEquals(emz, ZoneCodes.parse("我方额外怪兽区1", PlayerSide.SELF).orElseThrow());
     }
 
     @Test
@@ -43,17 +46,21 @@ class ZoneCodesTest {
         assertEquals("STZ-5", ZoneCodes.code(stz));
         assertEquals(stz, ZoneCodes.parse("STZ-5", PlayerSide.SELF).orElseThrow());
         assertEquals(stz, ZoneCodes.parse("魔陷区5", PlayerSide.SELF).orElseThrow());
+        assertEquals(stz, ZoneCodes.parse("我方魔陷区5", PlayerSide.SELF).orElseThrow());
 
         ZoneRef field = ZoneRef.field(PlayerSide.SELF);
         assertEquals("FZ", ZoneCodes.code(field));
         assertEquals(field, ZoneCodes.parse("FZ", PlayerSide.SELF).orElseThrow());
         assertEquals(field, ZoneCodes.parse("场地魔法区", PlayerSide.SELF).orElseThrow());
+        assertEquals(field, ZoneCodes.parse("我方场地魔法区", PlayerSide.SELF).orElseThrow());
     }
 
     @Test
     void ownerPrefixWins() {
         Optional<ZoneRef> opp = ZoneCodes.parse("对方主怪兽区#2", PlayerSide.SELF);
         assertEquals(PlayerSide.OPPONENT, opp.orElseThrow().owner());
+        assertEquals(PlayerSide.OPPONENT,
+                ZoneCodes.parse("对方主怪兽区2", PlayerSide.SELF).orElseThrow().owner());
     }
 
     @Test
@@ -70,10 +77,12 @@ class ZoneCodesTest {
     }
 
     @Test
-    void labelAndDescribeAreReadable() {
+    void labelAndDescribeArePlainChinese() {
         ZoneRef zone = ZoneRef.mainMonster(PlayerSide.SELF, 2);
-        assertEquals("我方主怪兽区#3", ZoneCodes.label(zone));
-        assertEquals("MMZ-3（我方主怪兽区#3）", ZoneCodes.describe(zone));
+        assertEquals("我方主怪兽区3", ZoneCodes.label(zone));
+        assertEquals("我方主怪兽区3", ZoneCodes.describe(zone),
+                "渲染层不再输出代号：资料库里全是中文区域名，代号模型对不上");
+        assertFalse(ZoneCodes.describe(zone).contains("MMZ"), ZoneCodes.describe(zone));
         assertTrue(ZoneCodes.isBoardSlot(zone));
         assertFalse(ZoneCodes.isBoardSlot(ZoneRef.hand(PlayerSide.SELF)));
     }

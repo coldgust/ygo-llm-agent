@@ -41,13 +41,44 @@ public final class CardText {
                 .orElse("卡(" + passcode + ")" + MISSING_CARD);
     }
 
+    /**
+     * 这次发动的是哪一条条款（全文）：描述码可用就精确取；解不出时，<b>只有单条款卡</b>按唯一那条给。
+     *
+     * <p>协议经常把描述码送成 0（尤其我方自己的发动），单条款卡（灰流丽、交闪）按唯一那条给全文。
+     * <b>多条款卡绝不猜</b>：曾按"唯一含『发动』的条款"兜底，结果魔女术的创造的 ① 不含"发动"、
+     * 只有墓地的 ② 含——被兜成 ②，记录里出现"发动…②：自己结束阶段…"的事实错误
+     * （2026-11-14 实测反馈）。原始帧也救不了：MDPro3 分叉的 CHAINING desc 是跨卡共享的
+     * 类别值（实测 28 帧无一匹配 卡号&lt;&lt;4|n，同一张卡两条效果同值），协议本身不带效果序号；
+     * 多条款卡只能留白，条款正文交给快照 [连锁]/[候选卡面]。
+     */
+    public Optional<String> firedClause(long passcode, long description) {
+        Optional<String> exact = clauseOf(passcode, description);
+        if (exact.isPresent()) {
+            return exact;
+        }
+        List<String> clauses = clauses(passcode);
+        return clauses.size() == 1 ? Optional.of(clauses.getFirst()) : Optional.empty();
+    }
+
+    /** 只要卡名（记录行里点名"响应的是谁"用）；卡库无资料时给卡号，绝不编名字。 */
+    public String name(long passcode) {
+        if (passcode <= 0) {
+            return "未知卡";
+        }
+        return facts.byPasscode(passcode)
+                .map(CardFact::name)
+                .orElse("卡(" + passcode + ")");
+    }
+
     private String cardLine(CardFact fact) {
         StringBuilder sb = new StringBuilder(fact.label());
         StringJoiner meta = new StringJoiner("｜");
         if (!isBlank(fact.cardType())) {
             meta.add(fact.cardType());
         }
-        if (fact.atk() != null) {
+        // 攻守只对怪兽有意义：卡片库里魔法/陷阱的 atk 字段是 0（不是空），
+        // 无条件拼会印出「〔通常魔法｜ATK0〕」这种既错又占位的字段（2026-11-14 实测反馈）。
+        if (fact.isMonster() && fact.atk() != null) {
             meta.add("ATK" + fact.atk() + (fact.defense() == null ? "" : "/DEF" + fact.defense()));
         }
         if (meta.length() > 0) {
@@ -180,6 +211,31 @@ public final class CardText {
 
     public static String brief(String clause) {
         return clip(clause, BRIEF_LIMIT);
+    }
+
+    /** 条款序号（{@code ①}～{@code ⑧}）；条款不是以标记开头时返回空串。 */
+    public static String markOf(String clause) {
+        if (clause == null || clause.isBlank()) {
+            return "";
+        }
+        char first = clause.strip().charAt(0);
+        return CLAUSE_MARKS.indexOf(first) >= 0 ? String.valueOf(first) : "";
+    }
+
+    /** 去掉开头的「①：」——编号已单独给出时（请求行），正文不必再带一遍。 */
+    public static String bodyOf(String clause) {
+        if (clause == null) {
+            return "";
+        }
+        String text = clause.strip();
+        if (markOf(text).isEmpty()) {
+            return text;
+        }
+        text = text.substring(1);
+        if (text.startsWith("：") || text.startsWith(":")) {
+            text = text.substring(1);
+        }
+        return text.strip();
     }
 
     public String firedSentence(long passcode, long effectCode) {

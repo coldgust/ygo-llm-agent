@@ -19,7 +19,7 @@ final class EventCheckpoints {
     private final AtomicLong sentThisTurn = new AtomicLong();
     /** 是否已有检查点在排队/执行：有则不再排新任务，事件攒到下一批一起发。 */
     private final AtomicBoolean queued = new AtomicBoolean();
-    /** 回合预算：本回合"为等规划器而推迟应答"的累计毫秒（waitForPlan 与 urgent 路径累计）。 */
+    /** 回合预算：本回合"为等规划器而推迟应答"的累计毫秒（waitForAdvice 累计）。 */
     private final AtomicLong turnBudgetUsedMs = new AtomicLong();
     /**
      * 事件批已拉取到的记录 seq（回合内）。只在 planner 单线程（worker）上读写。

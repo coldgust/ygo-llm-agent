@@ -28,7 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DuelSummaryServiceTest {
 
     private static final String TRACE = """
-            {"kind":"PLAN_EVENT","turn":1,"goal":"先手空过，盖双纽闪门留作资源","thinking":"无展开点，只能盖后场"}
+            {"kind":"ADVICE_EVENT","adviceKind":"ADVICE_PUBLISHED","turn":1,"goal":"先手空过，盖双纽闪门留作资源","strategy":"无展开点，只能盖后场"}
             {"kind":"EXEC_DECISION","seq":3,"turn":1,"requestLabel":"主要阶段","explanation":"没有能特召的怪，先盖后场"}
             {"kind":"SUBMITTED","seq":3,"turn":1,"requestLabel":"主要阶段","levelLabel":"照计划","submitted":"盖放魔陷 双纽闪门(34433770)我方手牌","fallback":false}
             {"kind":"SUBMITTED","seq":4,"turn":2,"requestLabel":"连锁响应","levelLabel":"决策器判断","submitted":"不响应","fallback":false}

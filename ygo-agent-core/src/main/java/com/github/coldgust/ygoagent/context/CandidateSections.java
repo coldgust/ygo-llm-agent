@@ -3,6 +3,7 @@ package com.github.coldgust.ygoagent.context;
 import com.github.coldgust.ygoagent.model.Candidate;
 import com.github.coldgust.ygoagent.model.CandidateId;
 import com.github.coldgust.ygoagent.model.DecisionPoint;
+import com.github.coldgust.ygoagent.model.RequestKind;
 import com.github.coldgust.ygoagent.pipeline.plan.ZoneCodes;
 import com.github.coldgust.ygoagent.context.CardText;
 import com.github.coldgust.ygodomain.card.CardIdentity;
@@ -31,6 +32,8 @@ final class CandidateSections {
 
     private static final int CANDIDATE_FACT_MAX_CARDS = 6;
     private static final int CANDIDATE_FACT_TOTAL_LIMIT = 1_200;
+    /** 请求行候选清单的上限：超出的只在快照里（选卡请求可能几十项，清单不能无限长）。 */
+    private static final int COMPACT_MAX = 12;
 
     private final CardFacts facts;
     private final CardText cardText;
@@ -148,7 +151,7 @@ final class CandidateSections {
             from += sizes[i];
         }
         if (total > 0) {
-            sj.add("（本步若会落场，可在同一次回答里加 \"zone\": \"MMZ-3\" 指明放到哪一格；"
+            sj.add("（本步若会落场，可在同一次回答里加 \"zone\": \"我方主怪兽区3\" 指明放到哪一格；"
                     + "见 [场地槽位]，只能写当前空格。省略则系统取第一个可放置区域）");
         }
     }
@@ -247,6 +250,228 @@ final class CandidateSections {
         sj.add("可连锁：" + items);
     }
 
+    /**
+     * 一行版候选清单（编号 + 动词 + 短卡名），挂在决策请求行上随请求一起入史。
+     *
+     * <p>为什么需要：完整候选只在一次性快照里，快照用完即弃 → 对话记录里只剩
+     * 「===决策请求=== … 请读上方 [决策快照]」，事后既看不出当时能选什么，
+     * 也看不懂历史回复里的裸编号（C6 指的是哪张？）。把清单压成一行后，
+     * 选择永远可解释；卡面与条款仍只在快照（token 大头不搬进记忆）。
+     */
+    String compactCandidates(DecisionPoint point) {
+        StringJoiner sj = new StringJoiner("、");
+        int shown = 0;
+        for (Candidate candidate : point.candidates()) {
+            if (shown >= COMPACT_MAX) {
+                sj.add("…（其余 " + (point.candidates().size() - COMPACT_MAX) + " 项见快照 [候选]）");
+                break;
+            }
+            sj.add(compactLabel(candidate, point));
+            shown++;
+        }
+        return sj.toString();
+    }
+
+    private String compactLabel(Candidate candidate, DecisionPoint point) {
+        String id = candidate.id().value() + " ";
+        return id + switch (candidate) {
+            case Candidate.CardC card -> verbOf(card.value(), point) + shortName(card.value());
+            // 带条款号：同一张多效果卡的两个选项（零衣① / 零衣②）否则长得一模一样
+            case Candidate.EffectC effect -> "发动 " + shortName(effect.value().card()) + markOf(effect);
+            case Candidate.AttackC attack -> "攻击 " + shortName(attack.value().card());
+            case Candidate.TributeC tribute -> "祭品 " + shortName(tribute.value().card());
+            case Candidate.ZoneC zone -> ZoneCodes.label(zone.value());
+            case Candidate.FlagC flag -> flag.flag().label();
+            case Candidate.DeclineC decline -> decline.kind().label();
+            case Candidate.CounterC ignored -> "指示物";
+        };
+    }
+
+    /**
+     * 请求行抬头：第 N 回合 + 谁的回合 + 阶段 + 这一手是什么。
+     *
+     * <p><b>没有"空连锁"这种说法</b>（2026-11-14 用户指出）：链上没有效果时的连锁请求，
+     * 玩家说的是"这个时点可以发动效果"——它是优先权确认窗口，不是一个空的连锁。
+     * 所以这类窗口不写"连锁响应"，抬头直接写成
+     * {@code 第 2 回合 对方回合，准备阶段，此时可发动效果。}，紧接着就是可选的效果清单。
+     * 真有连锁时才写"连锁响应"，链的内容由紧随的 {@link #compactChain} 列出。
+     *
+     * <p>阶段名已经说明了这一手是什么时不写两遍（{@code 主要阶段1} / {@code 主要阶段}、
+     * {@code 战斗阶段} / {@code 战斗阶段}）。
+     */
+    String requestHeadline(DecisionPoint point) {
+        String phase = PhaseText.label(point.phase());
+        boolean phaseKnown = !"未知阶段".equals(phase);
+        String kind = point.kind().label();
+        StringBuilder sb = new StringBuilder("第 ").append(point.turn()).append(" 回合 ")
+                .append(point.state() != null && point.state().isMyTurn() ? "我方回合" : "对方回合");
+        if (point.kind() == RequestKind.CHAIN && !hasChain(point)) {
+            if (phaseKnown) {
+                sb.append("，").append(phase);
+            }
+            sb.append("，此时可发动效果");
+        } else if (phaseKnown && (phase.contains(kind) || kind.contains(phase))) {
+            sb.append("，").append(phase);
+        } else {
+            if (phaseKnown) {
+                sb.append("，").append(phase);
+            }
+            sb.append("，").append(kind);
+        }
+        return sb.append("。").toString();
+    }
+
+    /**
+     * 请求行的"连锁上有什么"，按发动顺序逐环列出：
+     * {@code 连锁1 对方「卡名」（区域）②：完整效果 -> 连锁2 我方「卡名」…}。
+     *
+     * <p>写法照玩家念连锁的方式（连锁1 → 连锁2 → …），每环都要有**卡名 + 发动的效果全文**：
+     * 只给卡名时，"灰流丽"到底无效的是哪一类效果、对象是谁，模型只能猜；效果截成半句
+     * 更糟——后半段往往才是限制条件（2026-11-14 两轮实测反馈）。
+     *
+     * <p>快照里本来就有 [连锁] 段，但快照用完即弃 → 对话记录里只剩"连锁响应"三个字，
+     * 事后复盘的模型不知道当时到底在响应对手的什么效果。
+     *
+     * <p>链为空时<b>整段不出现</b>：那不是连锁，只是"此时可发动效果"的窗口，
+     * 阶段与性质由抬头 {@link #requestHeadline} 交代。
+     */
+    String compactChain(DecisionPoint point) {
+        if (!hasChain(point)) {
+            return "";
+        }
+        StringJoiner nodes = new StringJoiner(" -> ", "连锁：", "");
+        for (ChainNode node : point.state().currentChain()) {
+            nodes.add(chainNodeLabel(node, point));
+        }
+        return nodes.toString();
+    }
+
+    /** 这一手有没有真的连锁（链上空 = 优先权确认窗口，不是"空连锁"）。 */
+    private static boolean hasChain(DecisionPoint point) {
+        return point.state() != null && !point.state().currentChain().isEmpty();
+    }
+
+    private String chainNodeLabel(ChainNode node, DecisionPoint point) {
+        long passcode = node.identity().passcode();
+        StringBuilder sb = new StringBuilder("连锁").append(node.index()).append(' ')
+                .append(node.controller() == PlayerSide.SELF ? "我方" : "对方").append(' ')
+                .append("「").append(cardText.name(passcode)).append("」")
+                .append("（").append(ZoneCodes.label(node.source())).append("）");
+        if (node.negated()) {
+            sb.append("［已被无效］");
+        }
+        Optional<String> clause = firedClause(passcode, node.effectDescription());
+        if (clause.isPresent()) {
+            String mark = CardText.markOf(clause.get());
+            sb.append(mark.isEmpty() ? "" : " " + mark)
+                    .append("：").append(Texts.flatten(CardText.bodyOf(clause.get())));
+        } else {
+            sb.append("：（哪一条未标明，效果见快照 [连锁]）");
+        }
+        if (!node.targets().isEmpty() && point.state() != null) {
+            sb.append(" ／对象：").append(targetLabels(node.targets(), point.state()));
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 请求行的"每个候选到底发的是哪一条效果"（同名同条款只留一条）。
+     *
+     * <p>只有卡名的清单看不出"发动了会怎样"——连刀和抓锚都是速攻魔法，卡片名本身不含信息。
+     * 条款正文给**全文**：截断会切掉后半段的限制条件（"那之后…""这个效果在…不能发动"），
+     * 而那正是"该不该发"的关键（2026-11-14 实测反馈）。
+     */
+    String compactEffectDigest(DecisionPoint point) {
+        LinkedHashMap<String, String> byKey = new LinkedHashMap<>();
+        for (Candidate.EffectC effect : point.candidatesOf(Candidate.EffectC.class)) {
+            var identity = effect.value().card().identity();
+            long passcode = identity == null ? 0 : identity.passcode();
+            String key = shortName(effect.value().card()) + markOf(effect);
+            if (byKey.containsKey(key)) {
+                continue;
+            }
+            String body = firedClause(passcode, effect.value().description())
+                    .map(CardText::bodyOf)
+                    .map(Texts::flatten)
+                    .orElse("（哪一条未标明，效果见快照 [候选]）");
+            byKey.put(key, body);
+        }
+        StringJoiner sj = new StringJoiner("；");
+        byKey.forEach((key, body) -> sj.add(key + "：" + body));
+        return sj.toString();
+    }
+
+    /**
+     * 解出"这次发动的是哪一条"：描述码不可用时，单条款卡仍然唯一确定（协议常给 0，
+     * 直接放弃会把整张卡的效果说不清楚）；多条款卡才真的只能交给快照。
+     */
+    private Optional<String> firedClause(long passcode, long effectCode) {
+        Optional<String> exact = cardText.clauseOf(passcode, effectCode);
+        if (exact.isPresent()) {
+            return exact;
+        }
+        List<String> clauses = cardText.clauses(passcode);
+        List<String> activatable = clauses.stream().filter(c -> c.contains("发动")).toList();
+        List<String> pool = activatable.isEmpty() ? clauses : activatable;
+        return pool.size() == 1 ? Optional.of(pool.getFirst()) : Optional.empty();
+    }
+
+    /** 候选效果的条款号（①/②…）；解不出时给空串（快照里会列全部条款）。 */
+    private String markOf(Candidate.EffectC effect) {
+        var identity = effect.value().card().identity();
+        long passcode = identity == null ? 0 : identity.passcode();
+        if (passcode <= 0) {
+            return "";
+        }
+        return firedClause(passcode, effect.value().description())
+                .map(CardText::markOf)
+                .orElse("");
+    }
+
+    /** 同一张卡在主阶段能有"召唤/特召/盖放"几种走法：动词不写出来，清单就是一堆卡名。 */
+    private String verbOf(ChoiceRequest.CardChoice card, DecisionPoint point) {
+        if (!(point.request() instanceof ChoiceRequest.MainPhaseRequest m)) {
+            return "";
+        }
+        long instanceId = card.instanceId();
+        if (holds(m.normalSummonable(), instanceId)) {
+            return "召唤 ";
+        }
+        if (holds(m.specialSummonable(), instanceId)) {
+            return "特召 ";
+        }
+        if (holds(m.repositionable(), instanceId)) {
+            return "改形 ";
+        }
+        if (holds(m.monsterSettable(), instanceId) || holds(m.spellTrapSettable(), instanceId)) {
+            return "盖 ";
+        }
+        return "";
+    }
+
+    private static boolean holds(List<ChoiceRequest.CardChoice> cards, long instanceId) {
+        return cards != null && cards.stream().anyMatch(c -> c.instanceId() == instanceId);
+    }
+
+    private String shortName(ChoiceRequest.CardChoice card) {
+        long passcode = card == null || card.identity() == null ? 0 : card.identity().passcode();
+        return facts.byPasscode(passcode)
+                .map(fact -> shortNameOf(fact.name()))
+                .orElseGet(() -> passcode > 0 ? "卡(" + passcode + ")" : "未知卡");
+    }
+
+    /** 「闪刀机-黑寡妇抓锚」→「黑寡妇抓锚」：清单里同系列前缀只会重复，留后缀更省也更清楚。 */
+    static String shortNameOf(String name) {
+        if (name == null || name.isBlank()) {
+            return "未知卡";
+        }
+        int dash = name.lastIndexOf('-');
+        if (dash > 0 && name.length() - dash - 1 >= 2) {
+            return name.substring(dash + 1);
+        }
+        return name;
+    }
+
     private String effectCardLabel(ChoiceRequest.CardChoice card) {
         return CardLabels.labelOf(instanceOf(card), facts);
     }
@@ -262,7 +487,7 @@ final class CandidateSections {
         for (String clause : clauses) {
             sj.add("    " + CardText.brief(clause));
         }
-        sj.add("  定位方法：① 本回合已经发动过的效果（见 [本回合已做]）不可能是本次请求，先排除；"
+        sj.add("  定位方法：① 本回合已经发动过的效果（见记忆中的决斗记录）不可能是本次请求，先排除；"
                 + "② 再看哪一条的发动时点与当前时点吻合（刚召唤·特殊召唤成功 / 刚进墓地 / 刚被破坏·除外 / "
                 + "刚有卡加入手牌…）；③ 不要默认按 ① 的代价与收益来判断，按你定位到的那一条算净收益。");
     }
@@ -351,8 +576,7 @@ final class CandidateSections {
     }
 
     private String zoneLabel(Candidate.ZoneC zone) {
-        return zone.id().value() + " " + ZoneCodes.label(zone.value())
-                + "（" + ZoneCodes.code(zone.value()) + "）";
+        return zone.id().value() + " " + ZoneCodes.label(zone.value());
     }
 
     private <T extends Candidate> void appendGroup(StringJoiner sj, String title, List<T> candidates,

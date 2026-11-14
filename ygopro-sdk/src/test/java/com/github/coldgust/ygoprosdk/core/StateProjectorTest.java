@@ -125,6 +125,134 @@ class StateProjectorTest {
         assertTrue(backrow.getFirst().isUnknown(), "对方盖卡内容不可见");
     }
 
+    @Test
+    void searchedCardIsKnownEvenThoughTheHandMoveIsMasked() {
+        // 检索是明牌动作：玩家要把卡给对手看过再洗牌，引擎用 CARD_SELECTED 把卡号发出来；
+        // 随后那条进手牌的 MOVE 卡号被抹零。只听 MOVE 就会记成"内容不可见"。
+        StateProjector projector = startDuel(0);   // 观察者为座位 0，座位 1 是对手
+        projector.apply(ProtocolIds.MSG_CARD_SELECTED, reader(new ByteWriter()
+                .u8(1)              // player = 亮牌的座位
+                .u8(1)              // count
+                .u32(ASH_BLOSSOM)));
+        projector.apply(ProtocolIds.MSG_MOVE, reader(new ByteWriter()
+                .u32(0)             // 服务端抹零（注：实际协议这里可能是真值，两种都要吃得下）
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_DECK, 0, 0))
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_HAND, 0, 0))
+                .u32(0)));
+
+        CardInstance card = projector.snapshot().players().get(PlayerSide.OPPONENT)
+                .hand().getFirst();
+        assertEquals(ASH_BLOSSOM, card.passcode(), "对手检索的那张卡应该认得出来");
+    }
+
+    @Test
+    void revealArrivingAfterTheHandMoveStillFillsTheCard() {
+        // 两条消息顺序不保证：先 MOVE 后 CARD_SELECTED 也要能对上
+        StateProjector projector = startDuel(0);
+        projector.apply(ProtocolIds.MSG_MOVE, reader(new ByteWriter()
+                .u32(0)
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_DECK, 0, 0))
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_HAND, 0, 0))
+                .u32(0)));
+        projector.apply(ProtocolIds.MSG_CARD_SELECTED, reader(new ByteWriter()
+                .u8(1).u8(1).u32(ASH_BLOSSOM)));
+
+        CardInstance card = projector.snapshot().players().get(PlayerSide.OPPONENT)
+                .hand().getFirst();
+        assertEquals(ASH_BLOSSOM, card.passcode(), "后到的亮牌消息要能回填已经进手的实例");
+    }
+
+    @Test
+    void confirmCardsOnAHandCardIsApplied() {
+        // 效果亮牌/确认手牌走 MSG_CONFIRM_CARDS。手牌不占 zoneIndex，
+        // 旧实现用 findAt 定位 → 永远落空 → 整条亮牌被丢掉（检索因此"内容不可见"）
+        StateProjector projector = startDuel(0);
+        dealToHand(projector, 1, 0, 0);          // 对手手牌一张未知卡
+
+        projector.apply(ProtocolIds.MSG_CONFIRM_CARDS, reader(new ByteWriter()
+                .u8(1)                       // player
+                .u8(0)                       // skipPanel
+                .u8(1)                       // count
+                .u32(ASH_BLOSSOM)
+                .u8(1)                       // controller
+                .u8(ZoneMapper.LOC_HAND)
+                .u8(0)));                    // sequence
+
+        CardInstance card = projector.snapshot().players().get(PlayerSide.OPPONENT)
+                .hand().getFirst();
+        assertEquals(ASH_BLOSSOM, card.passcode(), "确认手牌必须落到实例上");
+    }
+
+    @Test
+    void confirmedCardThatArrivesLaterStillFills() {
+        // 亮牌先到、卡片随后才进手牌：记下来，等它进手时回填
+        StateProjector projector = startDuel(0);
+        projector.apply(ProtocolIds.MSG_CONFIRM_CARDS, reader(new ByteWriter()
+                .u8(1).u8(0).u8(1)
+                .u32(ASH_BLOSSOM)
+                .u8(1).u8(ZoneMapper.LOC_HAND).u8(0)));
+        projector.apply(ProtocolIds.MSG_MOVE, reader(new ByteWriter()
+                .u32(0)                      // 进手牌时卡号被抹零
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_DECK, 0, 0))
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_HAND, 0, 0))
+                .u32(0)));
+
+        CardInstance card = projector.snapshot().players().get(PlayerSide.OPPONENT)
+                .hand().getFirst();
+        assertEquals(ASH_BLOSSOM, card.passcode(), "亮牌要能补给后到的实例");
+    }
+
+    @Test
+    void fieldSpellLandsInTheFieldZoneNotTheDeck() {
+        // 实机：记录里出现"魔女的圣夜行 回到卡组"——圣夜行是场地魔法，它上场不是回卡组。
+        // 场地魔法在消息里是 SZONE 第 5 格（LOC_FZONE=0x100 塞不进一字节的位置字），
+        // 旧映射对 seq 5 返回 null，快照退回"卡组"。
+        StateProjector projector = startDuel(0);
+        projector.apply(ProtocolIds.MSG_MOVE, reader(new ByteWriter()
+                .u32(ASH_BLOSSOM)
+                .u32(ZoneMapper.pack(0, ZoneMapper.LOC_HAND, 0, 0))
+                .u32(ZoneMapper.pack(0, ZoneMapper.LOC_SZONE, 5, 0))
+                .u32(0)));
+
+        CardInstance card = projector.snapshot().cards().values().stream()
+                .filter(c -> c.passcode() == ASH_BLOSSOM).findFirst().orElseThrow();
+        assertEquals(ZoneKind.FIELD_ZONE, card.zone().kind(), "场地魔法必须落在场地魔法区");
+        assertEquals(PlayerSide.SELF, card.zone().owner());
+    }
+
+    @Test
+    void realConfirmCardsFrameNamesTheSearchedCard() {
+        // 实机抓到的原始帧（2026-11-14 21:33）：
+        //   MSG_CONFIRM_CARDS body = 01 00 01 a0 ca 4b 01 00 02 04
+        //   player=1 skipPanel=0 count=1 code=0x014BCAA0(LE)=21744288
+        //   controller=0 location=0x02(HAND) sequence=4  → 魔女术工匠·锻造女巫
+        // 座位关系照实机：我们坐 1 号位，对手坐 0 号位；player 字节 = 看到这些牌的玩家。
+        StateProjector projector = startDuel(1);
+        for (int seq = 0; seq < 5; seq++) {
+            dealToHand(projector, 0, 0, seq);
+        }
+
+        projector.apply(ProtocolIds.MSG_CONFIRM_CARDS, reader(new ByteWriter()
+                .u8(1).u8(0).u8(1)
+                .u32(21744288L)
+                .u8(0).u8(ZoneMapper.LOC_HAND).u8(4)));
+
+        CardInstance card = projector.snapshot().players().get(PlayerSide.OPPONENT).hand().get(4);
+        assertEquals(21744288L, card.passcode(), "按实机报文，对手手牌第 5 张应认出是锻造女巫");
+    }
+
+    @Test
+    void plainDrawStaysUnknown() {
+        // 抽卡不是亮牌：没有亮牌消息就不能凭空认出对手抽到什么
+        StateProjector projector = startDuel(0);
+        projector.apply(ProtocolIds.MSG_DRAW, reader(new ByteWriter()
+                .u8(1).u8(1).u32(0)));
+
+        CardInstance card = projector.snapshot().players().get(PlayerSide.OPPONENT)
+                .hand().getFirst();
+        assertTrue(card.isUnknown(), "抽到的卡仍然不可见");
+    }
+
     /** 单字段查询块（flags 只带 CODE）：[块长 12][flags=0x1][code]。 */
     private static ByteWriter codeBlock(long code) {
         return new ByteWriter().i32(12).i32(0x000001).u32(code);

@@ -1,6 +1,5 @@
 package com.github.coldgust.ygoagent.context;
 
-import com.github.coldgust.ygoagent.knowledge.CardFact;
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
 import com.github.coldgust.ygoagent.pipeline.plan.ZoneCodes;
 import com.github.coldgust.ygoagent.support.FoldedLines;
@@ -8,38 +7,31 @@ import com.github.coldgust.ygoagent.support.Texts;
 import com.github.coldgust.ygodomain.zone.ZoneKind;
 import com.github.coldgust.ygodomain.zone.ZoneRef;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
+import java.util.Optional;
+import java.util.Deque;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.TreeMap;
 
 /**
- * 决斗记录段的渲染：把 {@link DuelTimeline} 的条目流翻成给模型看的过程线。
+ * 决斗记录流的逐事件渲染：把 {@link DuelTimeline} 的条目翻成给模型看的过程行。
  *
- * <p>三条硬约定，结构上由本类保证：
+ * <p>四条硬约定，结构上由本类保证：
  * <ul>
  *   <li>「发动」只表示<b>已发动</b>、不表示已生效——协议不逐环推送结算结果，
  *       渲染层不替模型下"已生效"结论（实机事故：把"发动了灰流丽"当成"幕帘已被无效"）。</li>
  *   <li>效果描述码必须经 {@link CardText} 解条款，绝不输出裸效果码。</li>
  *   <li>身份不可见的卡渲染"内容不可见"，绝不猜。</li>
+ *   <li>**逐事件原文直推，不聚合**（2026-11-14 用户指令）：回合摘要与"等"式折叠是信息损失
+ *       ——渲染层不总结、不计数、不省略；回合边界由 {@code TurnStarted} 渲染成边界行。</li>
  * </ul>
  *
- * <p>两个出口，token 预算不同：决策包每手都发，只带本回合（已结算回合由
- * {@link #recordOfClosedTurns} 作为独立前缀承载，回合内不变、可吃上下文缓存）；
- * 规划器锚点每回合只发一两次，同样用 {@link #recordOfClosedTurns}。
- * 我方提交过的决策（{@link DuelTimeline.Entry.DecisionMade}）在两种出口里都过滤：
- * 我方动作已由决策记忆与规划器对话承担，重复反而会淹没"对方做了什么"。
+ * <p>唯一出口 {@link #lines}：供 {@code DuelRecordFeed} 拉取增量后逐行写进 memory 的
+ * RECORD 条目（永不修剪、只增不减）。我方提交过的决策
+ * （{@link DuelTimeline.Entry.DecisionMade}）不在这里渲染：我方动作由 feed 的应答行
+ * （带决策点语境）承载，重复反而会淹没"对方做了什么"。
  */
 public final class DuelRecordSections {
-
-    /** 决策包时间线的行数上限：超限丢最旧的（最近动作优先）。 */
-    private static final int TIMELINE_MAX_LINES = 30;
-    /** 回合记录里逐条展开的最近回合数；更早的回合各压成一行摘要。 */
-    private static final int FULL_RECORD_RECENT_TURNS = 3;
-    /** 摘要行里每类最多点名的卡数。 */
-    private static final int SUMMARY_NAME_LIMIT = 3;
 
     private final CardFacts facts;
     private final CardText cardText;
@@ -49,194 +41,110 @@ public final class DuelRecordSections {
         this.cardText = cardText;
     }
 
-    /**
-     * 决策包用：本回合时间线。上回合的摘要与"发动≠生效"声明由回合记录前缀
-     * （{@link #recordOfClosedTurns}）承载，这里只带本回合。timeline 为 null 或无内容时返回空串。
-     */
-    public String turnTimeline(int turn, boolean myTurn, DuelTimeline timeline) {
-        if (timeline == null) {
-            return "";
-        }
-        List<DuelTimeline.Entry> current = dropped(timeline.turn(turn));
-        if (current.isEmpty()) {
-            return "";
-        }
-        StringBuilder sb = new StringBuilder();
-        sb.append("[本回合时间线] T").append(turn)
-                .append(myTurn ? "（我方回合）" : "（对方回合）").append("，从回合开始到现在：\n");
-        List<String> lines = lines(current, false);
-        int from = Math.max(0, lines.size() - TIMELINE_MAX_LINES);
-        if (from > 0) {
-            sb.append("  …（本回合更早的动作略）\n");
-        }
-        for (int i = from; i < lines.size(); i++) {
-            sb.append("  - ").append(lines.get(i)).append('\n');
-        }
-        return sb.toString();
-    }
-
-    /**
-     * 回合记录前缀：**已结算回合**（turn &lt; currentTurn）的完整过程——最近
-     * {@value FULL_RECORD_RECENT_TURNS} 回合逐条展开，更早的回合各一行摘要。
-     *
-     * <p>在第 N 回合内，这份内容永不变化：规划器锚点与决策器的每手调用共用同一渲染，
-     * 以此作为跨调用一致的前缀（上下文缓存的第二个层级）。结算中的回合不在此列，
-     * 由决策包的 [本回合时间线] 承载。timeline 为 null 或无已结算内容时返回空串。
-     */
-    public String recordOfClosedTurns(int currentTurn, DuelTimeline timeline) {
-        if (timeline == null || currentTurn <= 1) {
-            return "";
-        }
-        List<DuelTimeline.Entry> closed = dropped(timeline.since(0)).stream()
-                .filter(e -> e.turn() > 0 && e.turn() < currentTurn)
-                .toList();
-        if (closed.isEmpty()) {
-            return "";
-        }
-        TreeMap<Integer, List<DuelTimeline.Entry>> byTurn = new TreeMap<>();
-        for (DuelTimeline.Entry entry : closed) {
-            byTurn.computeIfAbsent(entry.turn(), k -> new ArrayList<>()).add(entry);
-        }
-        StringBuilder sb = new StringBuilder(
-                "[决斗记录] 开局至今双方做过的事（旧回合只留摘要；「发动」不代表已生效，结果以 [局面] 为准）：\n");
-        int recentFrom = Math.max(1, byTurn.lastKey() - FULL_RECORD_RECENT_TURNS + 1);
-        for (Map.Entry<Integer, List<DuelTimeline.Entry>> group : byTurn.entrySet()) {
-            int turn = group.getKey();
-            if (turn < recentFrom) {
-                String summary = summarizeTurn(turn, group.getValue());
-                if (!summary.isEmpty()) {
-                    sb.append("  ").append(summary).append('\n');
-                }
-                continue;
-            }
-            List<String> lines = lines(group.getValue(), true);
-            int from = Math.max(0, lines.size() - TIMELINE_MAX_LINES);
-            sb.append("  T").append(turn).append(turnHeaderSuffix(group.getValue())).append("：\n");
-            if (from > 0) {
-                sb.append("    …（更早的动作略）\n");
-            }
-            for (int i = from; i < lines.size(); i++) {
-                sb.append("    - ").append(lines.get(i)).append('\n');
-            }
-        }
-        return sb.toString();
-    }
-
-    /**
-     * 事件批用的单条目行（过滤我方决策行、折叠连续同文行）；
-     * 条目由 PlannerSession 经端口增量拉取，本类只负责渲染。
-     */
+    /** 增量条目 → 逐事件行（回合边界行、阶段行、移动/发动/攻击/LP 行；连续同文行折叠 ×N）。 */
     public List<String> lines(List<DuelTimeline.Entry> entries) {
-        return lines(entries, true);
-    }
-
-
-    /** 一回合压成一行：双方发动了什么、上场/盖了几张、LP 怎么变的。 */
-    private String summarizeTurn(int turn, List<DuelTimeline.Entry> entries) {
-        List<String> parts = new ArrayList<>();
-        List<String> selfEffects = effectNames(entries, DuelTimeline.Side.SELF);
-        List<String> oppEffects = effectNames(entries, DuelTimeline.Side.OPPONENT);
-        if (!selfEffects.isEmpty()) {
-            parts.add("我方发动 " + clipNames(selfEffects));
-        }
-        if (!oppEffects.isEmpty()) {
-            parts.add("对方发动 " + clipNames(oppEffects));
-        }
-        long selfField = count(entries, DuelTimeline.Side.SELF, monsterZones());
-        long oppField = count(entries, DuelTimeline.Side.OPPONENT, monsterZones());
-        if (selfField > 0) {
-            parts.add("我方上场 " + selfField + " 张");
-        }
-        if (oppField > 0) {
-            parts.add("对方上场 " + oppField + " 张");
-        }
-        long selfSet = count(entries, DuelTimeline.Side.SELF, Set.of(ZoneKind.SPELL_TRAP_ZONE));
-        long oppSet = count(entries, DuelTimeline.Side.OPPONENT, Set.of(ZoneKind.SPELL_TRAP_ZONE));
-        if (selfSet > 0) {
-            parts.add("我方盖放魔陷 " + selfSet + " 张");
-        }
-        if (oppSet > 0) {
-            parts.add("对方盖放魔陷 " + oppSet + " 张");
-        }
-        lpParts(entries).forEach(parts::add);
-        if (parts.isEmpty()) {
-            return "";
-        }
-        return "T" + turn + turnHeaderSuffix(entries) + "摘要：" + String.join("；", parts);
-    }
-
-    /** 每侧一条 LP 净变化（有变动才给）。 */
-    private List<String> lpParts(List<DuelTimeline.Entry> entries) {
         List<String> out = new ArrayList<>();
-        for (DuelTimeline.Side side : List.of(DuelTimeline.Side.SELF, DuelTimeline.Side.OPPONENT)) {
-            int net = 0;
-            Integer lpAfter = null;
-            for (DuelTimeline.Entry entry : entries) {
-                if (entry instanceof DuelTimeline.Entry.LpChanged lp && lp.side() == side) {
-                    net += lp.delta();
-                    lpAfter = lp.lpAfter();
-                }
-            }
-            if (net != 0) {
-                out.add(sideText(side) + " LP " + (net > 0 ? "+" : "") + net
-                        + (lpAfter == null ? "" : "（→" + lpAfter + "）"));
-            }
-        }
-        return out;
-    }
-
-    private List<String> effectNames(List<DuelTimeline.Entry> entries, DuelTimeline.Side side) {
-        Set<String> names = new LinkedHashSet<>();
-        for (DuelTimeline.Entry entry : entries) {
-            if (entry instanceof DuelTimeline.Entry.EffectActivated e && e.side() == side) {
-                names.add(cardLabel(e.passcode()));
-            }
-        }
-        return List.copyOf(names);
-    }
-
-    private long count(List<DuelTimeline.Entry> entries, DuelTimeline.Side side, Set<ZoneKind> kinds) {
-        return entries.stream()
-                .filter(e -> e instanceof DuelTimeline.Entry.CardMoved m
-                        && m.side() == side && m.toZone() != null && kinds.contains(m.toZone().kind()))
-                .count();
-    }
-
-    private static Set<ZoneKind> monsterZones() {
-        return Set.of(ZoneKind.MAIN_MONSTER_ZONE, ZoneKind.EXTRA_MONSTER_ZONE);
-    }
-
-
-    private List<String> lines(List<DuelTimeline.Entry> entries, boolean withPhases) {
-        List<String> out = new ArrayList<>();
-        for (DuelTimeline.Entry entry : entries) {
-            String line = line(entry, withPhases);
+        for (DuelTimeline.Entry entry : resolveReveals(entries)) {
+            String line = line(entry);
             if (line == null) {
                 continue;
             }
-            // 连续同文行折叠 ×N：对手一次抽 3 张是 3 条同文事件，逐条只会刷屏
+            // 连续同文行折叠 ×N：对手一次抽 3 张是 3 条同文事件，逐条只会刷屏（同文折叠不损失语义）
             FoldedLines.add(out, line);
         }
         return out;
     }
 
-    /** 单条目 → 一行；null 表示该条目不出现在行里（回合头/我方决策由别处承担）。 */
-    private String line(DuelTimeline.Entry entry, boolean withPhases) {
-        if (entry instanceof DuelTimeline.Entry.DecisionMade
-                || entry instanceof DuelTimeline.Entry.TurnStarted) {
+    /**
+     * 把"亮牌"并进它前面那条"未知进手"。
+     *
+     * <p>协议顺序是：进手牌的 {@code MSG_MOVE}（卡号被抹零）→ 晚一两帧才到的
+     * {@code MSG_CONFIRM_CARDS}（真实卡号）。事件是追加的，前者写下去时还不知道是什么卡，
+     * 所以在这里做一次回填：未知进手 + 随后同侧的公开 = 一条「X 加入手牌」，
+     * 亮牌条目本身不再单列（没配上的才单列，比如"确认手牌"这类）。
+     */
+    private static List<DuelTimeline.Entry> resolveReveals(List<DuelTimeline.Entry> entries) {
+        List<DuelTimeline.Entry> out = new ArrayList<>(entries.size());
+        Deque<Integer> pending = new ArrayDeque<>();
+        for (DuelTimeline.Entry entry : entries) {
+            if (entry instanceof DuelTimeline.Entry.CardMoved m && isUnknownHandAdd(m)) {
+                pending.addLast(out.size());
+                out.add(entry);
+                continue;
+            }
+            if (entry instanceof DuelTimeline.Entry.CardRevealed r) {
+                Integer index = pending.pollFirst();
+                if (index != null && out.get(index).side() == r.side()) {
+                    DuelTimeline.Entry.CardMoved m = (DuelTimeline.Entry.CardMoved) out.get(index);
+                    out.set(index, new DuelTimeline.Entry.CardMoved(m.seq(), m.turn(), m.side(),
+                            r.passcode(), m.fromZone(), m.toZone(), m.position()));
+                    continue;
+                }
+                if (index != null) {
+                    pending.addFirst(index);
+                }
+            }
+            out.add(entry);
+        }
+        return out;
+    }
+
+    private static boolean isUnknownHandAdd(DuelTimeline.Entry.CardMoved m) {
+        return m.toZone() != null && m.toZone().kind() == ZoneKind.HAND
+                && m.passcode() == 0 && m.fromZone() == null;
+    }
+
+    /** 单条目 → 一行；null 表示该条目不出现在行里（我方决策由 feed 应答行承载）。 */
+    private String line(DuelTimeline.Entry entry) {
+        if (entry instanceof DuelTimeline.Entry.DecisionMade) {
             return null;
         }
+        if (entry instanceof DuelTimeline.Entry.TurnStarted t) {
+            // 回合边界行：记录流的分界（直推全文后这是唯一的回合结构标记）
+            return "〔第 " + t.turn() + " 回合 · " + sideText(t.side()) + "回合〕";
+        }
         if (entry instanceof DuelTimeline.Entry.PhaseEntered p) {
-            return withPhases ? "〔进入" + phaseText(p.phase()) + "〕" : null;
+            return "〔进入" + phaseText(p.phase()) + "〕";
         }
         if (entry instanceof DuelTimeline.Entry.CardMoved m) {
             return cardMovedLine(m);
         }
         if (entry instanceof DuelTimeline.Entry.EffectActivated e) {
-            String clause = cardText.clauseOf(e.passcode(), e.description())
-                    .map(CardText::brief).orElse(null);
-            return sideText(e.side()) + "：发动 " + cardLabel(e.passcode())
-                    + (clause == null ? "" : "：" + clause);
+            String head = linkPrefix(e.chainIndex()) + sideText(e.side()) + "：发动 "
+                    + cardLabel(e.passcode());
+            Optional<String> clause = cardText.firedClause(e.passcode(), e.description());
+            if (clause.isPresent()) {
+                // 描述码可解析（或单条款卡）：给那一条正文，就是准确答案
+                return head + "：" + CardText.brief(clause.get());
+            }
+            // 多条款卡解不出条款（MDPro3 分叉的 CHAINING desc 是类别值，不带效果序号）：
+            // 给 来源区域 + 全部条款全文，让模型/复盘自己判断发动了哪条——
+            // 创造的 ① 场上·手卡发动、② 墓地发动，区域就能分开；绝不猜一条冒充定位
+            List<String> clauses = cardText.clauses(e.passcode());
+            if (clauses.isEmpty()) {
+                return head;
+            }
+            String where = e.sourceZone() == null ? ""
+                    : "（" + ZoneCodes.label(e.sourceZone()) + "）";
+            return head + where + "：" + cardText.all(clauses);
+        }
+        if (entry instanceof DuelTimeline.Entry.CardRevealed r) {
+            // 没配上"加入手牌"的公开（例如确认墓地/手牌）：单列一行，仍然是事实
+            return sideText(r.side()) + "：公开 " + cardLabel(r.passcode());
+        }
+        if (entry instanceof DuelTimeline.Entry.ChainSolving c) {
+            // "谁的效果处理了"：这一行之后到下一环之前的事实都属于这一环（MDPRO3 的"N 效果处理"）
+            String who = c.passcode() > 0 ? cardLabel(c.passcode()) : "";
+            return "〔连锁 " + c.chainIndex() + " 效果处理〕" + who;
+        }
+        if (entry instanceof DuelTimeline.Entry.ChainNegated n) {
+            // MDPRO3 的"N 效果处理 → 效果无效"：被无效的那一环没有结算，
+            // 这一行之后不该有任何"它生效了"的事实（检索没入手、破坏没发生）
+            String who = n.passcode() > 0 ? cardLabel(n.passcode()) : "";
+            return "〔连锁 " + n.chainIndex() + " 效果无效〕" + who;
+        }
+        if (entry instanceof DuelTimeline.Entry.ChainEnded) {
+            return "〔处理结束〕";
         }
         if (entry instanceof DuelTimeline.Entry.AttackDeclared a) {
             return sideText(a.side()) + "：攻击宣言 " + cardLabel(a.passcode())
@@ -247,6 +155,11 @@ public final class DuelRecordSections {
                     + "（→" + lp.lpAfter() + "）";
         }
         return null;
+    }
+
+    /** 连锁环数前缀：只有第 2 环起才标（第 1 环就是普通发动，标了反而吵）。 */
+    private static String linkPrefix(Integer chainIndex) {
+        return chainIndex == null || chainIndex <= 1 ? "" : "〔连锁 " + chainIndex + "〕";
     }
 
     private String cardMovedLine(DuelTimeline.Entry.CardMoved m) {
@@ -297,8 +210,14 @@ public final class DuelRecordSections {
     private String backrowMove(DuelTimeline.Entry.CardMoved m, String who, String name) {
         String to = zoneText(m.toZone());
         if (m.fromZone() != null && m.fromZone().equals(m.toZone())) {
-            return who + "：" + (name == null ? "一张魔陷" : name)
-                    + " 改变表示形式（→ " + positionText(m.position()) + "）";
+            // 魔陷区/灵摆区没有"表示形式"：盖牌变成表侧只意味着它被发动（或效果翻开），
+            // 那是"发动"行/我方应答行的事；写成"改变表示形式（→ 表侧攻击）"是事实错误
+            // （2026-11-14 实测：记录里出现"禁忌的一滴 改变表示形式"，而它是速攻魔法）。
+            if (!isFaceDown(m.position())) {
+                return null;
+            }
+            // 反过来（表侧 → 里侧）确实是发生了什么，得说出来，否则模型以为它还开着
+            return who + "：" + (name == null ? "一张魔陷" : name) + " 被翻回里侧";
         }
         if (isFaceDown(m.position())) {
             return who + "：" + (name == null
@@ -308,14 +227,13 @@ public final class DuelRecordSections {
         return who + "：" + (name == null ? "一张魔陷" : name) + " 上场（" + to + "）";
     }
 
-
     /** 卡的可读名：身份不可见给"未知卡"，卡库无资料时保留卡号，绝不编名字。 */
     private String cardLabel(long passcode) {
         if (passcode <= 0) {
             return "未知卡";
         }
         return facts.byPasscode(passcode)
-                .map(CardFact::name)
+                .map(f -> f.name())
                 .orElseGet(() -> "卡(" + passcode + ")");
     }
 
@@ -350,36 +268,6 @@ public final class DuelRecordSections {
     }
 
     private String phaseText(String phase) {
-        return switch (phase) {
-            case "DRAW_PHASE" -> "抽卡阶段";
-            case "STANDBY_PHASE" -> "准备阶段";
-            case "MAIN_PHASE_1" -> "主要阶段1";
-            case "BATTLE_START_STEP", "BATTLE_STEP" -> "战斗阶段";
-            case "DAMAGE_STEP", "DAMAGE_CALCULATION" -> "伤害步骤";
-            case "BATTLE_END_STEP" -> "战斗结束步骤";
-            case "MAIN_PHASE_2" -> "主要阶段2";
-            case "END_PHASE" -> "结束阶段";
-            default -> String.valueOf(phase);
-        };
-    }
-
-    /** 回合头部的回合方后缀（"（我方回合）"）；记录里没有回合开始事件时留空。 */
-    private String turnHeaderSuffix(List<DuelTimeline.Entry> entries) {
-        return entries.stream()
-                .filter(e -> e instanceof DuelTimeline.Entry.TurnStarted)
-                .map(e -> "（" + sideText(((DuelTimeline.Entry.TurnStarted) e).side()) + "回合）")
-                .findFirst()
-                .orElse("");
-    }
-
-    private String clipNames(List<String> names) {
-        String shown = String.join("、", names.subList(0, Math.min(names.size(), SUMMARY_NAME_LIMIT)));
-        return names.size() > SUMMARY_NAME_LIMIT ? shown + " 等" : shown;
-    }
-
-    private static List<DuelTimeline.Entry> dropped(List<DuelTimeline.Entry> entries) {
-        return entries.stream()
-                .filter(e -> !(e instanceof DuelTimeline.Entry.DecisionMade))
-                .toList();
+        return PhaseText.labelOf(phase);
     }
 }

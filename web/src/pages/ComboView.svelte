@@ -190,7 +190,7 @@
   function summarize(e: DuelEvent): string {
     if (e.kind === 'EXEC_DECISION')
       return `${e.requestLabel ?? e.requestKind} → ${e.intentLabel ?? e.intent ?? ''}`
-    if (e.kind === 'PLAN_EVENT' && e.planKind === 'PLAN_PUBLISHED') return `计划发布（${e.steps} 步）`
+    if (e.kind === 'ADVICE_EVENT' && e.adviceKind === 'ADVICE_PUBLISHED') return `建议发布：${e.goal ?? ''}`
     if (e.kind === 'DUEL_STATUS') return `状态 → ${(e.status && STATUS_LABELS[e.status]) || e.status || ''}`
     return e.error ?? e.reason ?? ''
   }
@@ -255,7 +255,7 @@
 <div class="feed">
   {#each events as e, i (i)}
     <div class="entry">
-      <span class="badge PLAN_EVENT">{e.kind}{e.planKind ? '·' + e.planKind : ''}</span>
+      <span class="badge PLAN_EVENT">{e.kind}{e.adviceKind ? '·' + e.adviceKind : ''}</span>
       {#if e.turn !== undefined}<span class="muted">T{e.turn} </span>{/if}
       {summarize(e)}
     </div>

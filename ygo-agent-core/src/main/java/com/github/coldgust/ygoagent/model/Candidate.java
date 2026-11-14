@@ -36,7 +36,7 @@ public sealed interface Candidate {
     }
 
     enum Decline {
-        CHAIN_DECLINE("不响应（弃权）"),
+        CHAIN_DECLINE("放弃优先权（不发动）"),
         EFFECT_NO("不发动"),
         YES_NO_NO("否"),
         CANCEL("取消上一个动作"),

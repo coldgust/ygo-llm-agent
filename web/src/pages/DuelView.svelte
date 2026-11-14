@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { api, type DuelEvent, type DuelView, type StepDetail, type BranchDetail } from '../lib/api'
+  import { api, type DuelEvent, type DuelView, type AdviceOption } from '../lib/api'
   import { statusLabel, TERMINAL_STATUSES } from '../lib/labels'
-  import PlanPanel from '../components/PlanPanel.svelte'
+  import AdvicePanel from '../components/AdvicePanel.svelte'
   import DeckSource from '../components/DeckSource.svelte'
   import { persisted } from '../lib/persisted.svelte'
 
@@ -46,13 +46,18 @@
 
   let duel: DuelView | null = $state(null)
   let events: DuelEvent[] = $state([])
-  let planId = $state('')
-  let planThinking = $state('')
-  let planGoal = $state('')
-  let planConf = $state(0)
-  let planCursor = $state(0)
-  let planSteps = $state<StepDetail[]>([])
-  let planBranches = $state<BranchDetail[]>([])
+  let adviceId = $state('')
+  let adviceTurn = $state(0)
+  let adviceStale = $state(false)
+  let adviceConf = $state(0)
+  let adviceStrategy = $state('')
+  let adviceAnalysis = $state('')
+  let adviceResources = $state('')
+  let adviceGoal = $state('')
+  let adviceOptions = $state<AdviceOption[]>([])
+  let adviceTactics = $state('')
+  let adviceIntel = $state('')
+  let adviceCombo = $state('')
 
   /** seq → 最终提交的操作摘要（后端 SUBMITTED 事件）。 */
   let submittedBySeq = $state<Record<number, string>>({})
@@ -68,24 +73,25 @@
   /** 路径 → 样式类（旧名仍在，兼容历史 trace 回放）。 */
   const LEVEL_COLORS: Record<string, string> = {
     ONLY_CHOICE: 'ONLY_CHOICE', REFLEX: 'ONLY_CHOICE',
-    PLAN_STEP: 'PLAN_STEP', PLAN_EXACT: 'PLAN_STEP',
-    PLAN_BRANCH: 'PLAN_BRANCH', PLAN_SIMILAR: 'PLAN_BRANCH',
+    ZONE_HINT: 'ZONE_HINT',
     LLM_CALL: 'LLM_CALL', LLM_ONESHOT: 'LLM_CALL',
+    PLAN_STEP: 'PLAN_STEP', PLAN_BRANCH: 'PLAN_BRANCH',
     TACTICAL: 'TACTICAL', FALLBACK: 'FALLBACK', COMBO: 'COMBO',
   }
 
-  /** 执行器的五级流水；命中哪一级就高亮哪一级，前面的都算"没接住"。 */
+  /** 三级流水（⓪ 位置兑现 → ① 唯一合法 → ② 决策器判断 → ③ 兜底）；命中哪级高亮哪级。 */
   const STAGES: { key: string; label: string }[] = [
     { key: 'ONLY_CHOICE', label: '①没得选' },
-    { key: 'PLAN', label: '②照计划' },
-    { key: 'LLM_CALL', label: '④决策器判断' },
-    { key: 'FALLBACK', label: '⑤兜底' },
+    { key: 'ZONE_HINT', label: '⓪位置兑现' },
+    { key: 'LLM_CALL', label: '②决策器判断' },
+    { key: 'FALLBACK', label: '③兜底' },
   ]
 
-  /** 规划器事件子类型的徽标文案（枚举名不给使用者看）。 */
-  const PLAN_KIND_LABELS: Record<string, string> = {
-    PLAN_PUBLISHED: '发布计划',
-    KEEP: '计划维持',
+  /** 规划器（幕僚）事件子类型的徽标文案（枚举名不给使用者看）。 */
+  const ADVICE_KIND_LABELS: Record<string, string> = {
+    ADVICE_PUBLISHED: '发布建议',
+    ADVICE_KEPT: '建议维持',
+    ADVICE_KEEP_WITHOUT_ADVICE: '空 keep',
     PARSE_FAILED: '解析失败',
     CHECKPOINT_FAILED: '存档失败',
   }
@@ -93,8 +99,8 @@
   function stageOf(level?: string): string {
     if (!level) return ''
     if (level === 'ONLY_CHOICE' || level === 'REFLEX') return 'ONLY_CHOICE'
-    if (['PLAN_STEP', 'PLAN_BRANCH', 'COMBO', 'PLAN_EXACT', 'PLAN_SIMILAR'].includes(level)) return 'PLAN'
-    if (level === 'LLM_CALL' || level === 'LLM_ONESHOT') return 'LLM_CALL'
+    if (level === 'ZONE_HINT') return 'ZONE_HINT'
+    if (['LLM_CALL', 'LLM_ONESHOT', 'PLAN_STEP', 'PLAN_BRANCH'].includes(level)) return 'LLM_CALL'
     return 'FALLBACK'
   }
 
@@ -134,23 +140,27 @@
       seenEvents.add(key)
     }
 
-    if (e.kind === 'PLAN_EVENT' && e.planKind === 'PLAN_PUBLISHED') {
-      planId = String(e.planId ?? '')
-      planThinking = String(e.thinking ?? '')
-      planGoal = String(e.goal ?? '')
-      planConf = Number(e.confidence ?? 0)
-      planCursor = 0
-      planSteps = e.stepDetails ?? []
-      planBranches = e.branchDetails ?? []
+    if (e.kind === 'ADVICE_EVENT' && e.adviceKind === 'ADVICE_PUBLISHED') {
+      adviceId = String(e.adviceId ?? '')
+      adviceTurn = Number(e.turn ?? 0)
+      adviceStale = false
+      adviceConf = Number(e.confidence ?? 0)
+      adviceStrategy = String(e.strategy ?? '')
+      adviceAnalysis = String(e.analysis ?? '')
+      adviceResources = String(e.resources ?? '')
+      adviceGoal = String(e.goal ?? '')
+      adviceOptions = e.options ?? []
+      adviceTactics = String(e.tactics ?? '')
+      adviceIntel = String(e.intel ?? '')
+      adviceCombo = String(e.combo ?? '')
     }
-    // 执行器每次决策带上当前计划进度，用它把「计划 → 决策」连起来
+    // 执行器每次决策带上当前建议标识，用它把「建议 → 决策」连起来
     if (e.kind === 'EXEC_DECISION') {
-      if (e.planId) planId = String(e.planId)
-      if (e.planGoal) planGoal = String(e.planGoal)
-      if (e.planCursor !== undefined) planCursor = Number(e.planCursor)
-      if (e.planSteps !== undefined && planSteps.length !== Number(e.planSteps)) {
-        // 计划步数变了但没收到 PLAN_PUBLISHED（例如重连回放），至少把长度对上
-        planSteps = planSteps.slice(0, Number(e.planSteps))
+      if (e.adviceId) {
+        adviceId = String(e.adviceId)
+        adviceTurn = Number(e.adviceTurn ?? adviceTurn)
+        adviceStale = Boolean(e.adviceStale ?? false)
+        adviceGoal = String(e.adviceGoal ?? adviceGoal)
       }
     }
     if (e.kind === 'DUEL_STATUS') {
@@ -183,11 +193,18 @@
     events = []
     execSeqs.clear()
     seenEvents.clear()
-    planId = ''
-    planThinking = ''
-    planSteps = []
-    planBranches = []
-    planCursor = 0
+    adviceId = ''
+    adviceTurn = 0
+    adviceStale = false
+    adviceConf = 0
+    adviceStrategy = ''
+    adviceAnalysis = ''
+    adviceResources = ''
+    adviceGoal = ''
+    adviceOptions = []
+    adviceTactics = ''
+    adviceIntel = ''
+    adviceCombo = ''
     submittedBySeq = {}
     try {
       duel = await api.startDuel({
@@ -230,14 +247,14 @@
 
   function levelBadge(e: DuelEvent): string {
     if (e.kind === 'EXEC_DECISION' || e.kind === 'DECISION') return LEVEL_COLORS[e.level ?? e.pathKind ?? ''] ?? 'DUEL_STATUS'
-    if (e.kind === 'PLAN_EVENT') return 'PLAN_EVENT'
+    if (e.kind === 'ADVICE_EVENT') return 'PLAN_EVENT'
     if (e.kind === 'DUEL_STATUS') return 'DUEL_STATUS'
     if (e.kind === 'COMBO_RECORDED') return 'COMBO_RECORDED'
     return 'REFLEX'
   }
 
   function badgeText(e: DuelEvent): string {
-    if (e.kind === 'PLAN_EVENT') return PLAN_KIND_LABELS[e.planKind ?? ''] ?? e.planKind ?? '计划'
+    if (e.kind === 'ADVICE_EVENT') return ADVICE_KIND_LABELS[e.adviceKind ?? ''] ?? e.adviceKind ?? '建议'
     if (e.kind === 'DECISION' || e.kind === 'EXEC_DECISION') {
       // 后端会带 levelLabel（中文），历史事件回退到枚举名
       return e.levelLabel ?? e.pathLabel ?? e.level ?? e.pathKind ?? e.kind
@@ -257,14 +274,15 @@
       const why = e.explanation ? ` — ${e.explanation}` : ''
       return `${req(e)} → ${act(e)}${why}`
     }
-    if (e.kind === 'PLAN_EVENT') {
-      if (e.planKind === 'PLAN_PUBLISHED')
-        return `规划器发布计划 ${e.planId}（${e.steps} 步 / ${e.branches} 分支，置信 ${e.confidence}）：${e.goal ?? ''}`
-      if (e.planKind === 'KEEP') return '规划器确认计划仍有效'
-      if (e.planKind === 'PARSE_FAILED')
-        return `规划器输出解析失败（保持当前计划）${e.reason ? '：' + e.reason : ''}`
-      if (e.planKind === 'CHECKPOINT_FAILED') return '规划器存档失败（冷却降级）'
-      return e.planKind
+    if (e.kind === 'ADVICE_EVENT') {
+      if (e.adviceKind === 'ADVICE_PUBLISHED')
+        return `规划器发布建议 ${e.adviceId}（置信 ${e.confidence}）：${e.goal ?? ''}`
+      if (e.adviceKind === 'ADVICE_KEPT') return '规划器确认建议仍有效'
+      if (e.adviceKind === 'ADVICE_KEEP_WITHOUT_ADVICE') return '规划器回 keep 但没有建议 → 请求重出'
+      if (e.adviceKind === 'PARSE_FAILED')
+        return `规划器输出解析失败（保持当前建议）${e.reason ? '：' + e.reason : ''}`
+      if (e.adviceKind === 'CHECKPOINT_FAILED') return '规划器调用失败（冷却降级）'
+      return e.adviceKind
     }
     if (e.kind === 'DUEL_STATUS') return `对局状态 → ${statusLabel(e.status)}`
     if (e.kind === 'COMBO_RECORDED') return `combo 提取完成：${e.count} 条 → ${e.file ?? ''}`
@@ -359,15 +377,20 @@
     {/if}
   </div>
 
-  {#if planId || planSteps.length}
-    <PlanPanel
-      {planId}
-      {planThinking}
-      {planGoal}
-      {planConf}
-      {planCursor}
-      {planSteps}
-      {planBranches}
+  {#if adviceId}
+    <AdvicePanel
+      {adviceId}
+      {adviceStale}
+      {adviceTurn}
+      strategy={adviceStrategy}
+      analysis={adviceAnalysis}
+      resources={adviceResources}
+      goal={adviceGoal}
+      options={adviceOptions}
+      tactics={adviceTactics}
+      intel={adviceIntel}
+      combo={adviceCombo}
+      {adviceConf}
     />
   {/if}
 

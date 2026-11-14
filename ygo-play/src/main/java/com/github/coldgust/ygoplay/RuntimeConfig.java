@@ -133,16 +133,13 @@ public record RuntimeConfig(
                 .reasoningPlanner(env.reasoningPlanner())
                 .reasoningDecision(env.reasoningDecision())
                 .waitPerDecisionMs(env.plannerWaitDecisionMs())
-                .firstJudgeWaitMs(env.plannerFirstWaitMs())
+                .firstAdviceWaitMs(env.plannerFirstWaitMs())
                 .waitPerTurnMs(env.plannerWaitTurnMs())
                 .maxCheckpointsPerTurn(env.plannerMaxCheckpoints())
-                .similarityThreshold(env.plannerSimilarityThreshold())
                 .judgeTimeoutMs(env.judgeTimeoutMs())
                 .plannerCallTimeoutMs(env.plannerCallTimeoutMs())
                 .plannerCooldownMs(env.plannerCooldownMs())
                 .judgeMaxTokens(env.judgeMaxTokens())
-                .pathPlanning(env.plannerPathPlanning())
-                .plannerRushAnswer(env.plannerRushAnswer())
                 .build();
     }
 

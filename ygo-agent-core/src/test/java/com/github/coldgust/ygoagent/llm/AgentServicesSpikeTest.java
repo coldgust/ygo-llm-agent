@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Queue;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -190,6 +191,106 @@ class AgentServicesSpikeTest {
 
         assertThrows(RuntimeException.class, () -> assistant.chat("d", "p", params()));
         assertTrue(model.requests.size() <= 3, "轮次上限应截断循环: " + model.requests.size());
+    }
+
+    /**
+     * 钉子（planner-judge 记忆化重构的前提 1）：结构化输出解析失败时，raw AiMessage 已由框架
+     * 写入 memory。决策器重答的上下文因此能看到自己的坏回复——更正消息只需引用 badChoice，
+     * 不做"重答是否可见坏回复"的两套兼容。
+     */
+    @Test
+    void 结构化输出_解析失败时原始AiMessage已入memory() {
+        RecordingMemory memory = new RecordingMemory();
+        FakeModel model = new FakeModel();
+        model.enqueue("{\"choice\": \"C"); // 截断畸形
+        Assistant assistant = AiServices.builder(Assistant.class)
+                .chatModel(model)
+                .chatMemory(memory)
+                .build();
+
+        assertThrows(RuntimeException.class, () -> assistant.askPlain("p", params()));
+
+        assertEquals(1, memory.added.stream().filter(m -> m instanceof AiMessage).count(),
+                "解析失败的 AiMessage 应已由框架写入 memory: " + memory.added);
+    }
+
+    /**
+     * 钉子（planner-judge 记忆化重构的前提 2）：工具轮每轮重读 memory.messages()，
+     * 且新 user 消息先 add 进 memory 再读——快照槽（messages() 末尾追加）因此全程可见、
+     * 且落在最新请求行之后（提示词"随后的 [决策快照]"措辞的机制依据）。
+     */
+    @Test
+    void 工具轮每轮重读messages_新user消息先add后读() {
+        CountingMemory memory = new CountingMemory();
+        FakeModel model = new FakeModel();
+        model.enqueueToolCall("call-1", "echo_tool", "{\"text\":\"x\"}");
+        model.enqueue("done");
+        AssistantWithTools assistant = AiServices.builder(AssistantWithTools.class)
+                .chatModel(model)
+                .systemMessage("固定系统提示")
+                .chatMemory(memory)
+                .tools(new EchoTool())
+                .maxToolCallingRoundTrips(4)
+                .build();
+
+        assistant.chat("d", "问1", params());
+
+        assertTrue(memory.messagesCalls >= 2,
+                "工具轮应每轮重读 messages(): " + memory.messagesCalls);
+        ChatRequest first = model.requests.getFirst();
+        assertInstanceOf(dev.langchain4j.data.message.SystemMessage.class, first.messages().getFirst());
+        assertInstanceOf(dev.langchain4j.data.message.UserMessage.class, first.messages().get(1));
+    }
+
+    /**
+     * 钉子（planner-judge 记忆化重构的前提 4）：模型输出 POJO 之外的键（实机 2026-11-14：
+     * 提示词要求 verify 而 POJO 没有）时，@JsonIgnoreProperties(ignoreUnknown=true) 让解析
+     * 容忍未知键——不加它每手决策都会打成"输出不可解析"落兜底。
+     */
+    @Test
+    void 结构化输出_未知字段被JsonIgnoreProperties容忍() {
+        FakeModel model = new FakeModel();
+        model.enqueue("{\"choice\": \"C2\", \"verify\": \"自检文本\", \"extra\": 1}");
+        LenientAssistant lenient = AiServices.create(LenientAssistant.class, model);
+
+        LenientAnswer answer = lenient.askPlain("p");
+        assertEquals("C2", answer.choice());
+    }
+
+    interface LenientAssistant {
+        @UserMessage("{{prompt}}")
+        LenientAnswer askPlain(@V("prompt") String prompt);
+    }
+
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    record LenientAnswer(String choice) {
+    }
+
+    /** 计数 messages() 读取次数的自定义 memory。 */
+    static final class CountingMemory implements ChatMemory {
+        final List<ChatMessage> messages = new ArrayList<>();
+        int messagesCalls;
+
+        @Override
+        public Object id() {
+            return "test";
+        }
+
+        @Override
+        public void add(ChatMessage message) {
+            messages.add(message);
+        }
+
+        @Override
+        public List<ChatMessage> messages() {
+            messagesCalls++;
+            return List.copyOf(messages);
+        }
+
+        @Override
+        public void clear() {
+            messages.clear();
+        }
     }
 
     interface AssistantWithTools {

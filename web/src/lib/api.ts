@@ -36,26 +36,20 @@ export interface DuelView {
   archiveState?: string | null
 }
 
-export interface StepDetail {
-  index?: number
-  when: string
-  verb: string
-  passcode: number
-  /** 计划指定的放置位置编码（MMZ-3/STZ-2/EMZ-1…）；空 = 未指定，届时决策器判断 */
-  zone?: string
-  why: string
-}
-
-export interface BranchDetail {
-  name: string
-  assumes: string
-  steps: string[]
+export interface AdviceOption {
+  /** 动作序列（"检索X" → "用X" → …） */
+  line: string[]
+  gain?: string
+  risk?: string
+  /** 幕僚选中的那条 */
+  pick: boolean
+  why?: string
 }
 
 export interface DuelEvent {
   // 服务端用 SSE 的 event name 区分类型，必须逐个注册监听（见 subscribe）；
   // 新增事件类型忘了加进来，前端就"永远收不到"而且不报错
-  kind: string // DECISION / EXEC_DECISION / SUBMITTED / PLAN_EVENT / DUEL_STATUS / COMBO_RECORDED / connected
+  kind: string // DECISION / EXEC_DECISION / SUBMITTED / ADVICE_EVENT / DUEL_STATUS / COMBO_RECORDED / connected
   seq?: number
   turn?: number
   phase?: string
@@ -74,18 +68,21 @@ export interface DuelEvent {
   confidence?: number
   explanation?: string
   missReasons?: string
-  planKind?: string
-  planId?: string
-  planCursor?: number
-  planSteps?: number
-  planGoal?: string
-  planStep?: number
-  steps?: number
-  branches?: number
-  thinking?: string
+  /** 规划器（幕僚）事件子类型：ADVICE_PUBLISHED / ADVICE_KEPT / ADVICE_KEEP_WITHOUT_ADVICE / PARSE_FAILED / CHECKPOINT_FAILED */
+  adviceKind?: string
+  adviceId?: string
+  /** 建议发布的回合（决策器据此标"上回合制定，仅供参考"） */
+  adviceTurn?: number
+  adviceStale?: boolean
+  adviceGoal?: string
+  strategy?: string
+  analysis?: string
+  resources?: string
   goal?: string
-  stepDetails?: StepDetail[]
-  branchDetails?: BranchDetail[]
+  options?: AdviceOption[]
+  tactics?: string
+  intel?: string
+  combo?: string
   status?: string
   winner?: string | null
   reason?: string | null
@@ -177,7 +174,7 @@ export const api = {
     onError?: (message: string, fatal: boolean) => void,
   ): () => void {
     const source = new EventSource(`/api/duels/${duelId}/events`)
-    const names = ['DECISION', 'EXEC_DECISION', 'SUBMITTED', 'PLAN_EVENT',
+    const names = ['DECISION', 'EXEC_DECISION', 'SUBMITTED', 'ADVICE_EVENT',
       'DUEL_STATUS', 'COMBO_RECORDED', 'connected']
     const handlers = names.map((name) => {
       const handler = (ev: MessageEvent) => {

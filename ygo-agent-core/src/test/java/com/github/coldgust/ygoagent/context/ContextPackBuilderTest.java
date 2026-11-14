@@ -1,7 +1,7 @@
 package com.github.coldgust.ygoagent.context;
 
-import com.github.coldgust.ygoagent.pipeline.plan.ActionSpec;
-import com.github.coldgust.ygoagent.context.DecisionMemory;
+import com.github.coldgust.ygoagent.pipeline.advisor.AdvisorAnswer;
+import com.github.coldgust.ygoagent.pipeline.advisor.AdvisorKeeper;
 import com.github.coldgust.ygodomain.card.CardIdentity;
 import com.github.coldgust.ygodomain.decision.ChoiceRequest;
 import com.github.coldgust.ygodomain.duel.CardInstance;
@@ -16,8 +16,6 @@ import com.github.coldgust.ygoagent.model.Candidate;
 import com.github.coldgust.ygoagent.model.Candidates;
 import com.github.coldgust.ygoagent.model.DecisionPoint;
 import com.github.coldgust.ygoagent.model.RequestKind;
-import com.github.coldgust.ygoagent.pipeline.plan.PlanStep;
-import com.github.coldgust.ygoagent.pipeline.plan.TurnPlan;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -66,8 +64,8 @@ class ContextPackBuilderTest {
     }
 
     @Test
-    void boardSlotsListOccupancyPerCellWithCodes() {
-        // 位置要成为决策，模型必须知道每格站着什么——只给"怪兽区"三个字它没法写 MMZ-3
+    void boardSlotsListOccupancyPerCellInPlainChinese() {
+        // 位置要成为决策，模型必须知道每格站着什么——只给"怪兽区"三个字它就写不出「我方主怪兽区3」
         List<CardInstance> monsters = List.of(new CardInstance(1, TestDuels.known(TestDuels.HORNET),
                 ZoneRef.mainMonster(PlayerSide.SELF, 2), Position.FACE_UP_ATTACK, Map.of(), List.of()));
         List<CardInstance> backrow = List.of(
@@ -77,39 +75,24 @@ class ContextPackBuilderTest {
         String anchor = builder.anchorPack(state);
         assertTrue(anchor.contains("[场地槽位]"), "锚点要有逐格占用:\n" + anchor);
         assertTrue(anchor.contains("3大黄蜂浮游单元"), "第 3 格应显示卡名:\n" + anchor);
-        assertTrue(anchor.contains("MMZ: 1空 2空 3"), "空格要标成空，模型才知道能放哪:\n" + anchor);
-        assertTrue(anchor.contains("STZ: 1闪刀起动-交闪"), "魔陷区也要逐格:\n" + anchor);
-        assertTrue(anchor.contains("FZ: 空"), "场地魔法区不能漏:\n" + anchor);
+        assertTrue(anchor.contains("主怪兽区: 1空 2空 3"), "空格要标成空，模型才知道能放哪:\n" + anchor);
+        assertTrue(anchor.contains("魔陷区: 1闪刀起动-交闪"), "魔陷区也要逐格:\n" + anchor);
+        assertTrue(anchor.contains("场地魔法区: 空"), "场地魔法区不能漏:\n" + anchor);
     }
 
     @Test
-    void placePackListsZonesWithCodes() {
-        // 位置不再单独发一次请求，但包一旦构造出来，候选仍要写清归属+编码（兜底/排查用）
+    void placePackListsZonesInPlainChinese() {
+        // 位置不再单独发一次请求，但包一旦构造出来，候选仍要写清归属与区域名（中文，不带代号）
         DuelState state = TestDuels.state(2, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
         ChoiceRequest request = new ChoiceRequest.PlaceRequest(1, List.of(
                 ZoneRef.mainMonster(PlayerSide.SELF, 0), ZoneRef.mainMonster(PlayerSide.SELF, 1)));
         DecisionPoint point = new DecisionPoint(3, 2, state.phase(), PlayerSide.SELF, request, state,
                 Candidates.from(request), "h", "r", RequestKind.PLACE);
 
-        String pack = builder.decisionPack(point);
-        assertTrue(pack.contains("C1 我方主怪兽区#1（MMZ-1）"), "候选要写清归属+编码:\n" + pack);
+        String pack = builder.judgeSnapshot(point, null, "");
+        assertTrue(pack.contains("C1 我方主怪兽区1"), "候选要写清归属+区域名:\n" + pack);
+        assertFalse(pack.contains("MMZ-"), "渲染层不再出现代号（资料库里没有这种写法）:\n" + pack);
         assertTrue(pack.contains("[场地槽位]"), "位置需要占用信息:\n" + pack);
-    }
-
-    @Test
-    void planStepRendersItsZoneSoOneShotCanHonourIt() {
-        DuelState state = TestDuels.state(2, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
-        DecisionPoint point = TestDuels.mainPhasePoint(state,
-                List.of(TestDuels.cardChoice(10, TestDuels.HORNET)), List.of());
-        PlanStep step = new PlanStep(0,
-                RequestKind.MAIN_PHASE,
-                List.of(new ActionSpec("summon", TestDuels.HORNET,
-                        ZoneRef.mainMonster(PlayerSide.SELF, 2))),
-                Map.of(), Map.of("why", "抢纵列"), 0.8);
-        TurnPlan plan = new TurnPlan("p1", 2, "先展开", "铺场", List.of(step), List.of(), 0, 0.8);
-
-        String pack = builder.decisionPack(point, plan);
-        assertTrue(pack.contains("→ MMZ-3"), "计划里的位置要跟着显示:\n" + pack);
     }
 
     @Test
@@ -208,54 +191,60 @@ class ContextPackBuilderTest {
         assertTrue(section.contains("当前连锁（1 环"), "要逐环列出当前连锁:\n" + section);
         assertTrue(section.contains("对方"), "要标出这一环是谁发动的:\n" + section);
         assertTrue(section.contains("可连锁"), "要列出可连锁的效果:\n" + section);
-        assertTrue(section.contains("不响应（弃权）"), "必须给出弃权选项:\n" + section);
+        assertTrue(section.contains("放弃优先权（不发动）"), "必须给出弃权选项:\n" + section);
         assertTrue(section.contains("弃权项：C"), "弃权项要带编号（不再是伪候选 C0）:\n" + section);
         assertTrue(section.contains("选发"), "要说明是选发而非必发:\n" + section);
         assertTrue(section.contains("均已通过规则校验"), "要声明候选已合法，别让模型自己验条件:\n" + section);
     }
 
     @Test
-    void judgePackCarriesCurrentPlanWithCursorAndBranches() {
+    void adviceSnapshotCarriesStrategyGoalTacticsAndIntel() {
         DuelState state = TestDuels.state(2, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
         var point = TestDuels.mainPhasePoint(state,
                 List.of(TestDuels.cardChoice(201, TestDuels.WIDOW_ANCHOR)), List.of());
 
-        TurnPlan plan = new TurnPlan("P2:SELF#1", 2, "先用抓锚解场再铺场", "用最少手牌打断对手展开",
-                List.of(
-                        step(0, "summon", TestDuels.HORNET, "通召做展开起点"),
-                        step(1, "activate", TestDuels.WIDOW_ANCHOR, "抓锚解对手怪兽"),
-                        step(2, "end_turn", 0, "留手牌过")),
-                List.of(new TurnPlan.TurnBranch("对手检索",
-                        Map.of("phase", "MAIN1"),
-                        List.of(step(100, "activate", TestDuels.ENGAGE, "交闪先赚一张")))),
-                1, 0.8);
+        AdvisorKeeper.Snapshot advice = snapshot("A2:SELF#1", 2, false,
+                "对手是闪刀：换资源换赢，不抢血", "先展开再压制", "检索建立循环，抓检索时点",
+                "对手已交 1 张阻抗；灰流丽可能还在手");
 
-        String pack = builder.decisionPack(point, plan);
+        String pack = builder.judgeSnapshot(point, advice, "");
 
-        assertTrue(pack.contains("[本回合计划] P2:SELF#1"), "直答 要看到计划编号:\n" + pack);
-        assertTrue(pack.contains("进度 1/3"), "要给出计划进度:\n" + pack);
-        assertTrue(pack.contains("目标：用最少手牌打断对手展开"), "要给出目标:\n" + pack);
-        assertTrue(pack.contains("✓ 1. summon 大黄蜂浮游单元"), "已完成步要打勾:\n" + pack);
-        assertTrue(pack.contains("▶ 2. activate 闪刀机-黑寡妇抓锚"), "当前步要打 ▶:\n" + pack);
-        assertTrue(pack.contains("· 3. end_turn"), "待办步要区分:\n" + pack);
-        assertTrue(pack.contains("偏离计划第 N 步"), "要允许偏离但要求说明理由:\n" + pack);
-        assertTrue(pack.contains("分支：") && pack.contains("对手检索"), "分支也要带上:\n" + pack);
+        assertTrue(pack.contains("[规划器情报] A2:SELF#1"), "决策器要看到建议编号:\n" + pack);
+        assertFalse(pack.contains("仅供参考"), "本回合发布的建议不标 stale:\n" + pack);
+        assertTrue(pack.contains("本局策略：对手是闪刀"), "策略要带:\n" + pack);
+        assertTrue(pack.contains("本回合目标：先展开再压制"), "目标要带:\n" + pack);
+        assertTrue(pack.contains("战术：检索建立循环"), "战术要带:\n" + pack);
+        assertTrue(pack.contains("情报要点：对手已交 1 张阻抗"), "情报要带（决策器的时点参考）:\n" + pack);
+        assertTrue(pack.contains("偏离建议，因为"), "要写明偏离建议的规则:\n" + pack);
 
-        // ▶ 步是 MAIN_PHASE，当前决策点也是 MAIN_PHASE → 不该出现"计划未覆盖"的提示
-        assertFalse(pack.contains("计划未覆盖这个窗口"), "同类决策点不该提示未覆盖:\n" + pack);
+        // 没有建议（规划器未就绪）时，退化为纯局面决策，不能凭空造出情报段
+        assertFalse(builder.judgeSnapshot(point, null, "").contains("[规划器情报]"),
+                "无建议时不该出现情报段");
+    }
 
-        // 换到连锁窗口：计划没覆盖，必须明确告诉模型别硬套
-        var chainPoint = new DecisionPoint(
-                9, 2, state.phase(), PlayerSide.OPPONENT,
-                new ChoiceRequest.ChainRequest(List.of()),
-                state, Candidates.from(
-                        new ChoiceRequest.ChainRequest(List.of())),
-                "h", "r", RequestKind.CHAIN);
-        String chainPack = builder.decisionPack(chainPoint, plan);
-        assertTrue(chainPack.contains("计划未覆盖这个窗口"), "类型不一致要说明:\n" + chainPack);
+    @Test
+    void adviceSnapshotMarksStaleAdviceFromLastTurn() {
+        DuelState state = TestDuels.state(2, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
+        var point = TestDuels.mainPhasePoint(state,
+                List.of(TestDuels.cardChoice(201, TestDuels.WIDOW_ANCHOR)), List.of());
 
-        // 没有计划（规划器未就绪）时，退化为纯局面决策，不能凭空造出计划段
-        assertFalse(builder.decisionPack(point).contains("[本回合计划]"), "无计划时不该出现计划段");
+        // keep 跨回合：快照原样保留（不 carry-over），渲染层标"仅供参考"
+        AdvisorKeeper.Snapshot stale = snapshot("A1:SELF#1", 1, false,
+                "", "上一回合的目标", "", "");
+
+        String pack = builder.judgeSnapshot(point, stale, "");
+        assertTrue(pack.contains("[规划器情报] A1:SELF#1（上回合制定，仅供参考）"),
+                "跨回合的 keep 快照要标 stale:\n" + pack);
+        assertTrue(pack.contains("本回合目标：上一回合的目标"), "内容仍要渲染（方向参考）:\n" + pack);
+    }
+
+    /** 测试用建议快照；空串字段不渲染（adviceSection 只带非空段）。 */
+    private static AdvisorKeeper.Snapshot snapshot(String adviceId, int turn, boolean skeleton,
+                                                   String strategy, String goal, String tactics,
+                                                   String intel) {
+        AdvisorAnswer answer = new AdvisorAnswer(false, 0.8, strategy, "", "", goal,
+                List.of(), tactics, intel, "");
+        return new AdvisorKeeper.Snapshot(answer, adviceId, turn, 0.8);
     }
 
     @Test
@@ -275,10 +264,10 @@ class ContextPackBuilderTest {
         assertTrue(anchor.contains("别为了打点把场铺满"), "正文要原样带进去:\n" + anchor);
         assertTrue(anchor.contains("以此为准"), "要说清它是优先级更高的依据:\n" + anchor);
 
-        // 直答的决策包只带动态内容；静态资料由调用方作为独立消息放在前面（前缀缓存）
-        String pack = withStrategy.decisionPack(point);
-        assertFalse(pack.contains("[卡组思路]"), "决策包不再携带静态资料:\n" + pack);
-        assertTrue(pack.startsWith("[局面]"), "动态包以局面开头:\n" + pack);
+        // 决策快照只带动态内容；静态资料在决策器 memory 里（pinned），记录流由 feed 追加
+        String pack = withStrategy.judgeSnapshot(point, null, "");
+        assertFalse(pack.contains("[卡组思路]"), "决策快照不再携带静态资料:\n" + pack);
+        assertTrue(pack.startsWith("[决策快照]"), "快照以标题开头:\n" + pack);
         String combined = withStrategy.judgeStaticMaterial() + pack;
         assertTrue(combined.indexOf("[卡组思路]") < combined.indexOf("[局面]"),
                 "模型阅读顺序仍是思路在前、局面在后:\n" + combined);
@@ -286,10 +275,10 @@ class ContextPackBuilderTest {
         assertTrue(withStrategy.plannerStaticMaterial().contains("[卡组思路]"));
         // 规划器静态消息独立成整局资料（跨回合前缀缓存），锚点只剩易变部分
         assertTrue(withStrategy.plannerStaticMaterial().startsWith("[整局资料]"));
-        assertTrue(withStrategy.plannerAnchorPack(state).startsWith("[局面]"),
-                "锚点以局面开头（最重要的参考）:\n" + withStrategy.plannerAnchorPack(state));
-        assertFalse(withStrategy.plannerAnchorPack(state).contains("[规则速查]"),
-                "静态资料不进锚点（独立消息，跨回合一致）:\n" + withStrategy.plannerAnchorPack(state));
+        assertTrue(withStrategy.plannerSnapshot(state).startsWith("[局面]"),
+                "幕僚快照以局面开头（最重要的参考）:\n" + withStrategy.plannerSnapshot(state));
+        assertFalse(withStrategy.plannerSnapshot(state).contains("[规则速查]"),
+                "静态资料不进快照（pinned 前缀，跨回合一致）:\n" + withStrategy.plannerSnapshot(state));
 
         assertFalse(builder.anchorPack(state).contains("[卡组思路]"));
         assertFalse(ContextPackBuilder.builder(facts)
@@ -433,31 +422,6 @@ class ContextPackBuilderTest {
     }
 
     @Test
-    void skeletonPlanRendersOnlyTheTacticalIntent() {
-        // 计划路径被作废（steps 清空）后，上下文仍要带上"目标/思路"，但不该出现逐步执行标记
-        DuelState state = TestDuels.state(2, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
-        var point = TestDuels.mainPhasePoint(state,
-                List.of(TestDuels.cardChoice(201, TestDuels.WIDOW_ANCHOR)), List.of());
-        TurnPlan skeleton = new TurnPlan("P2:SELF#1", 2, "先解场再赚卡，别为打点烧资源",
-                "保住资源等对手先摊开", List.of(), List.of(), 0, 0.4);
-
-        String pack = builder.decisionPack(point, skeleton);
-
-        assertTrue(pack.contains("步骤已作废"), "要标明路径已作废:\n" + pack);
-        assertTrue(pack.contains("保住资源等对手先摊开"), "目标要保留:\n" + pack);
-        assertTrue(pack.contains("别为打点烧资源"), "思路要保留:\n" + pack);
-        assertFalse(pack.contains("▶"), "作废后不该再有逐步执行标记:\n" + pack);
-    }
-
-    private static PlanStep step(
-            int index, String verb, long passcode, String why) {
-        return new PlanStep(index,
-                RequestKind.MAIN_PHASE,
-                List.of(ActionSpec.of(verb, passcode)),
-                Map.of(), Map.of("why", why), 0.8);
-    }
-
-    @Test
     void spellTrapCandidatesCarryTheirCardTypeButMonstersDoNot() {
         DuelState state = TestDuels.state(2, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
         ChoiceRequest request = new ChoiceRequest.MainPhaseRequest(
@@ -480,30 +444,6 @@ class ContextPackBuilderTest {
     }
 
     @Test
-    void advisoryPlanReadsAsAdviceNeverAsSteps() {
-        // 顾问模式（PLANNER_PATH_PLANNING=false）：计划本来就没有路径，措辞必须说清
-        // "这是建议、你自己选"，而不是"步骤已作废"（后者会让模型以为是异常状态）。
-        ContextPackBuilder advisory = ContextPackBuilder.builder(TestDuels.facts()).advisory(true).build();
-        DuelState state = TestDuels.state(2, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
-        var point = TestDuels.mainPhasePoint(state,
-                List.of(TestDuels.cardChoice(201, TestDuels.WIDOW_ANCHOR)), List.of());
-        // thinking 由解析器把 analysis/tactics/combo 三段拼成
-        String thinking = "场面：主怪区空，墓地魔法 0，对手后场 1 张。\n"
-                + "战术：先检索建立循环，被灰流丽就转盖后场。\n"
-                + "combo：交闪找零衣，通召站中间列，战刀机留手上。";
-        TurnPlan advisoryPlan = new TurnPlan("P2:SELF#1", 2, thinking,
-                "建立交闪循环并保持空场", List.of(), List.of(), 0, 0.7);
-
-        String pack = advisory.decisionPack(point, advisoryPlan);
-
-        assertTrue(pack.contains("顾问模式"), "要标明这是顾问模式:\n" + pack);
-        assertFalse(pack.contains("步骤已作废"), "顾问模式不是作废，是本来就不给路径:\n" + pack);
-        assertTrue(pack.contains("combo：交闪找零衣"), "combo 叙述不能被截断掉:\n" + pack);
-        assertTrue(pack.contains("建立交闪循环并保持空场"), "目标要保留:\n" + pack);
-        assertFalse(pack.contains("▶"), "没有路径就不该有逐步标记:\n" + pack);
-    }
-
-    @Test
     void plannerAnchorCarriesCardTextSoCombinationsCanBeReasoned() {
         // 只给卡名时，模型只能凭记忆判断"这两张能不能配合"，实战里退化成逐张单卡评价。
         // 规划器锚点必须带效果原文；决策包不带（每次决策都拼，成本太高）。
@@ -512,19 +452,19 @@ class ContextPackBuilderTest {
         DuelState state = TestDuels.state(2, true, monsters, List.of(),
                 List.of(), List.of(), 8000, 8000);
 
-        String planner = builder.plannerAnchorPack(state);
-        assertTrue(planner.contains("[卡面]"), "规划器锚点要有卡面段:\n" + planner);
+        String planner = builder.plannerSnapshot(state);
+        assertTrue(planner.contains("[卡面]"), "幕僚快照要有卡面段:\n" + planner);
         assertTrue(planner.contains("以自己墓地1张「闪刀」魔法卡为对象"), "要带效果原文:\n" + planner);
 
         String decision = builder.anchorPack(state);
-        assertFalse(decision.contains("[卡面]"), "决策包不带卡面（成本）:\n" + decision);
+        assertFalse(decision.contains("[卡面]"), "宿主战场报告不带卡面（成本）:\n" + decision);
     }
 
     @Test
     void plannerAnchorListsTheWholeOwnDeck() {
         // 己方卡组是已知信息：给全了规划器才能判断"这张检索能拿到什么"，不必每次现查。
         // 卡组清单整局不变 → 归入规划器静态消息（跨回合前缀缓存），锚点不重复携带。
-        ContextPackBuilder withDeck = ContextPackBuilder.builder(TestDuels.facts()).advisory(true)
+        ContextPackBuilder withDeck = ContextPackBuilder.builder(TestDuels.facts())
                 .deckPasscodes(List.of(TestDuels.KAGARI, TestDuels.ENGAGE)).build();
         DuelState state = TestDuels.state(2, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
 
@@ -535,8 +475,8 @@ class ContextPackBuilderTest {
         assertTrue(staticMaterial.contains("闪刀起动-交闪"), staticMaterial);
         assertTrue(staticMaterial.contains("〔连接怪兽"),
                 "要带种类，模型才能判断能不能特召:\n" + staticMaterial);
-        assertFalse(withDeck.plannerAnchorPack(state).contains("[卡组]"),
-                "卡组清单在静态消息里，锚点不重复");
+        assertFalse(withDeck.plannerSnapshot(state).contains("[卡组]"),
+                "卡组清单在静态消息里，快照不重复");
     }
 
     @Test
@@ -633,7 +573,7 @@ class ContextPackBuilderTest {
         String withTargetSection = targetingBuilder.candidatesSection(
                 chainPoint(state, List.of(withTarget)));
         assertTrue(withTargetSection.contains("对象："), "链路要给出对象:\n" + withTargetSection);
-        assertTrue(withTargetSection.contains("STZ-3"), "对象要带位置:\n" + withTargetSection);
+        assertTrue(withTargetSection.contains("我方魔陷区3"), "对象要带位置（中文区域名）:\n" + withTargetSection);
 
         ChainNode noTarget = new ChainNode(1, TestDuels.known(targeter),
                 targeter << 4, ZoneRef.spellTrap(PlayerSide.OPPONENT, 2), PlayerSide.OPPONENT);
@@ -701,7 +641,7 @@ class ContextPackBuilderTest {
                 request, state, Candidates.from(request), "h", "r", RequestKind.CARD_SELECT);
 
         String scope = builder.describeEffect(TestDuels.SERVANT, TestDuels.SERVANT * 16 + 1);
-        String pack = builder.decisionPack(point, null, DecisionMemory.of(scope, List.of(), ""));
+        String pack = builder.judgeSnapshot(point, null, scope);
 
         assertTrue(pack.contains("[当前效果]"), "要说明这一手在结算哪个效果:\n" + pack);
         assertTrue(pack.contains("王之仆人-黑魔术师"), pack);
@@ -788,9 +728,9 @@ class ContextPackBuilderTest {
     }
 
     @Test
-    void historySectionTellsTheModelWhatItAlreadyDid() {
-        // 直答 是独立单轮调用，没有对话历史：不补"我刚做过什么"，它就会推翻自己
-        // （上一手判"泡影留给上级怪兽"，下一手在检索环节就交了）。
+    void snapshotLeavesRecordAndMemoryToDuelChatMemory() {
+        // 决策器带记忆后（docs/planner-judge-memory-redesign.md §7）："我刚做过什么"与
+        // 过程记录由 memory 的追加流承载，快照不再渲染这些段——重复反而会让模型分不清权威。
         DuelState state = TestDuels.state(3, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
         ChoiceRequest request = new ChoiceRequest.MainPhaseRequest(
                 List.of(TestDuels.cardChoice(1, TestDuels.HORNET)),
@@ -798,32 +738,14 @@ class ContextPackBuilderTest {
         DecisionPoint point = new DecisionPoint(40, 3, state.phase(), PlayerSide.SELF,
                 request, state, Candidates.from(request), "h", "r", RequestKind.MAIN_PHASE);
 
-        var memory = DecisionMemory.of(
-                "", List.of("通常召唤 闪刀姬-零衣(26077387) → MMZ-1", "发动 闪刀起动-交闪(25048511)"),
-                "先建场面，泡影留给对方上级怪兽");
-        String pack = builder.decisionPack(point, null, memory);
+        String pack = builder.judgeSnapshot(point, null, "");
 
-        assertTrue(pack.contains("[本回合已做]"), pack);
-        assertTrue(pack.contains("1. 通常召唤 闪刀姬-零衣"), pack);
-        assertTrue(pack.contains("2. 发动 闪刀起动-交闪"), pack);
-        assertTrue(pack.contains("上一手的判断：先建场面"), pack);
-        assertTrue(pack.contains("为什么改"), "要给出「可以推翻、但必须说明」的约束:" + pack);
-        assertTrue(pack.indexOf("[本回合已做]") < pack.indexOf("[候选]"),
-                "历史要排在候选之前，模型先看到自己做过什么:" + pack);
-    }
-
-    @Test
-    void emptyMemoryAddsNoHistorySection() {
-        DuelState state = TestDuels.state(3, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
-        ChoiceRequest request = new ChoiceRequest.MainPhaseRequest(
-                List.of(TestDuels.cardChoice(1, TestDuels.HORNET)),
-                List.of(), List.of(), List.of(), List.of(), List.of(), true, true, false);
-        DecisionPoint point = new DecisionPoint(1, 3, state.phase(), PlayerSide.SELF,
-                request, state, Candidates.from(request), "h", "r", RequestKind.MAIN_PHASE);
-
-        String pack = builder.decisionPack(point, null,
-                DecisionMemory.NONE);
-        assertFalse(pack.contains("[本回合已做]"), "没有记忆就不该多出这一段:" + pack);
+        assertFalse(pack.contains("[本回合已做]"), "已做动作由记忆承载，快照不渲染:\n" + pack);
+        assertFalse(pack.contains("[本回合时间线]"), "本回合过程由记忆承载，快照不渲染:\n" + pack);
+        assertFalse(pack.contains("[决斗记录]"), "已结算回合由记忆承载，快照不渲染:\n" + pack);
+        assertTrue(pack.contains("[局面]"), "快照仍带实时局面:\n" + pack);
+        assertTrue(pack.indexOf("[局面]") < pack.indexOf("[候选]"),
+                "局面在候选之前（先看场面再选编号）:\n" + pack);
     }
 
     @Test
@@ -869,49 +791,14 @@ class ContextPackBuilderTest {
     }
 
     @Test
-    void recordSectionsAppearOnlyWithTimelinePort() {
+    void plannerSnapshotCarriesBoardAndCardFactsButNotRecords() {
+        // 决斗记录由 DuelChatMemory 的追加流承载（DuelRecordFeed 写入），幕僚快照只带局面与卡面；
+        // 重复给反而会让模型分不清哪个是权威。
         DuelState state = TestDuels.state(3, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
-        ChoiceRequest request = new ChoiceRequest.MainPhaseRequest(
-                List.of(TestDuels.cardChoice(1, TestDuels.HORNET)),
-                List.of(), List.of(), List.of(), List.of(), List.of(), true, true, false);
-        DecisionPoint point = new DecisionPoint(1, 3, state.phase(), PlayerSide.SELF,
-                request, state, Candidates.from(request), "h", "r", RequestKind.MAIN_PHASE);
 
-        // T2（已结算）+ T3（本回合）各一条事件：前缀带 T2，决策包时间线带 T3
-        ContextPackBuilder withTimeline = ContextPackBuilder.builder(facts)
-                .advisory(true)
-                .timeline(new DuelTimeline() {
-                    @Override
-                    public List<DuelTimeline.Entry> since(long seq) {
-                        List<DuelTimeline.Entry> all = List.of(
-                                new DuelTimeline.Entry.LpChanged(1, 2, DuelTimeline.Side.OPPONENT, -500, 7500),
-                                new DuelTimeline.Entry.LpChanged(2, 3, DuelTimeline.Side.SELF, -100, 7900));
-                        return all.stream().filter(e -> e.seq() > seq).toList();
-                    }
-
-                    @Override
-                    public List<DuelTimeline.Entry> turn(int turnNumber) {
-                        return since(0).stream().filter(e -> e.turn() == turnNumber).toList();
-                    }
-
-                    @Override
-                    public long latestSeq() {
-                        return 2;
-                    }
-                })
-                .build();
-
-        assertTrue(withTimeline.decisionPack(point).contains("[本回合时间线] T3"),
-                "有记录端口时决策包要带本回合时间线");
-        assertFalse(builder.decisionPack(point).contains("[本回合时间线]"),
-                "没有记录端口就不该多出这一段");
-        assertTrue(withTimeline.recordOfClosedTurns(3).contains("[决斗记录]"),
-                "已结算回合进记录前缀");
-        assertTrue(withTimeline.recordOfClosedTurns(3).contains("T2："),
-                "已结算回合逐条展开（回合头后缀取决于该组是否有回合开始事件）");
-        assertFalse(withTimeline.recordOfClosedTurns(3).contains("T3"),
-                "结算中的回合不进前缀（由决策包时间线承载）");
-        assertTrue(withTimeline.plannerAnchorPack(state).contains("[决斗记录]"));
-        assertFalse(builder.plannerAnchorPack(state).contains("[决斗记录]"));
+        String snapshot = builder.plannerSnapshot(state);
+        assertTrue(snapshot.contains("[局面]"), "快照带实时局面:\n" + snapshot);
+        assertFalse(snapshot.contains("[决斗记录]"), "记录由记忆承载，快照不重复:\n" + snapshot);
+        assertFalse(snapshot.contains("[卡组思路]"), "静态资料在 pinned 前缀里，快照不重复:\n" + snapshot);
     }
 }

@@ -66,7 +66,16 @@ public final class DuelLogTimeline implements DuelTimeline {
                     event.seq(), event.turn(), sideOfZone(m.fromZone(), m.toZone()),
                     m.passcode(), zone(m.fromZone()), zone(m.toZone()), m.toPosition());
             case DuelEventPayload.EffectActivated e -> new Entry.EffectActivated(
-                    event.seq(), event.turn(), sideOf(e.player()), e.passcode(), e.desc());
+                    event.seq(), event.turn(), sideOf(e.player()), e.passcode(), e.desc(),
+                    e.chainIndex(), zone(e.zone()));
+            case DuelEventPayload.CardRevealed r -> new Entry.CardRevealed(
+                    event.seq(), event.turn(), sideOf(r.player()), r.passcode());
+            case DuelEventPayload.ChainResolved c -> new Entry.ChainSolving(
+                    event.seq(), event.turn(), c.chainIndex(), c.card());
+            case DuelEventPayload.ChainNegated n -> new Entry.ChainNegated(
+                    event.seq(), event.turn(), n.chainIndex(), n.card());
+            case DuelEventPayload.ChainWindowClosed c -> new Entry.ChainEnded(
+                    event.seq(), event.turn(), c.chainLength());
             case DuelEventPayload.AttackDeclared a -> new Entry.AttackDeclared(
                     event.seq(), event.turn(), sideOf(a.player()), a.attackerPasscode(), a.target());
             case DuelEventPayload.LpChanged lp -> new Entry.LpChanged(

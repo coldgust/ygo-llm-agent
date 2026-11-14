@@ -7,11 +7,9 @@ import com.github.coldgust.ygodomain.zone.ZoneKind;
 import com.github.coldgust.ygodomain.zone.ZoneRef;
 import com.github.coldgust.ygoagent.model.DecisionPoint;
 import com.github.coldgust.ygoagent.model.RequestKind;
-import com.github.coldgust.ygoagent.pipeline.plan.PlanStep;
+import com.github.coldgust.ygoagent.pipeline.advisor.AdvisorAnswer;
+import com.github.coldgust.ygoagent.pipeline.advisor.AdvisorKeeper;
 import com.github.coldgust.ygoagent.pipeline.plan.ZoneCodes;
-import com.github.coldgust.ygoagent.pipeline.plan.TurnPlan;
-import com.github.coldgust.ygoagent.context.CardText;
-import com.github.coldgust.ygoagent.context.DecisionMemory;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -22,12 +20,13 @@ import com.github.coldgust.ygoagent.support.Texts;
 import com.github.coldgust.ygoagent.knowledge.CardFact;
 
 /**
- * ContextPack 组装器（v6 §3.2/§3.4）：确定性代码把局面、卡面、数学算好，
- * 组装为规划器锚点与执行器 直答 的上下文。LLM 缺什么就供给什么，供给的都是数据。
+ * ContextPack 组装器（docs/planner-judge-memory-redesign.md）：确定性代码把局面、卡面、数学算好，
+ * 组装为幕僚快照与决策快照的上下文。LLM 缺什么就供给什么，供给的都是数据。
+ * 静态资料与决斗记录已由 DuelChatMemory/DuelRecordFeed 承载，本类只渲染一次性快照。
  *
  * <p>渲染分三块协作：资料段（{@link AnchorSections}）、局面段（{@link BoardSections}）、
- * 候选段（{@link CandidateSections}）；本类负责装配与决策包特有的段落
- * （计划 / 本回合已做 / 当前效果 / 表示形式）。
+ * 候选段（{@link CandidateSections}）；本类负责装配与决策快照特有的段落
+ * （规划器情报 / 当前效果 / 表示形式）。
  */
 public final class ContextPackBuilder {
 
@@ -38,21 +37,16 @@ public final class ContextPackBuilder {
     private final String ruleDigest;
     private final String selfArchetype;
     private final String comboReference;
-    /** 顾问模式：计划只有战术建议、没有可执行步骤（{@code PLANNER_PATH_PLANNING=false}）。 */
-    private final boolean advisoryPlan;
     /** 己方卡组清单（主+额外，去重）。null/空 = 不注入 [卡组] 段。 */
     private final List<Long> deckPasscodes;
-    /** 决斗过程记录端口。null = 不注入记录段（单测与无记录的调用方）。 */
-    private final DuelTimeline timeline;
 
     private final AnchorSections anchor;
     private final BoardSections board;
     private final CandidateSections candidateSections;
-    private final DuelRecordSections recordSections;
 
-    /** 最小构造：可选依赖（思路/规则速查/主题/卡组清单/连招/记录端口）全部缺席。 */
+    /** 最小构造：可选依赖（思路/规则速查/主题/卡组清单/连招）全部缺席。 */
     public ContextPackBuilder(CardFacts facts) {
-        this(facts, null, null, null, false, null, null, null);
+        this(facts, null, null, null, null, null);
     }
 
     /**
@@ -69,10 +63,8 @@ public final class ContextPackBuilder {
         private String deckStrategy;
         private String ruleDigest;
         private String selfArchetype;
-        private boolean advisoryPlan;
         private List<Long> deckPasscodes = List.of();
         private String comboReference;
-        private DuelTimeline timeline;
 
         private Builder(CardFacts facts) {
             this.facts = facts;
@@ -96,12 +88,6 @@ public final class ContextPackBuilder {
             return this;
         }
 
-        /** 顾问模式：规划器只产战术建议、不产可执行步骤（{@code PLANNER_PATH_PLANNING=false}）。 */
-        public Builder advisory(boolean value) {
-            this.advisoryPlan = value;
-            return this;
-        }
-
         /** 己方卡组清单（主+额外）。给全了规划器才知道"能检索到什么、额外能出什么"。 */
         public Builder deckPasscodes(List<Long> value) {
             this.deckPasscodes = value;
@@ -114,38 +100,29 @@ public final class ContextPackBuilder {
             return this;
         }
 
-        /** 决斗过程记录端口（可为空 = 不注入记录段）。 */
-        public Builder timeline(DuelTimeline value) {
-            this.timeline = value;
-            return this;
-        }
-
         public ContextPackBuilder build() {
             return new ContextPackBuilder(facts, deckStrategy, ruleDigest, selfArchetype,
-                    advisoryPlan, deckPasscodes, comboReference, timeline);
+                    deckPasscodes, comboReference);
         }
     }
 
     private ContextPackBuilder(CardFacts facts, String deckStrategy,
-                               String ruleDigest, String selfArchetype, boolean advisoryPlan,
-                               List<Long> deckPasscodes, String comboReference, DuelTimeline timeline) {
+                               String ruleDigest, String selfArchetype,
+                               List<Long> deckPasscodes, String comboReference) {
         this.facts = facts;
         this.cardText = new CardText(facts);
         this.deckStrategy = deckStrategy == null || deckStrategy.isBlank() ? null : deckStrategy.trim();
         this.ruleDigest = ruleDigest == null || ruleDigest.isBlank() ? null : ruleDigest.trim();
         this.selfArchetype = selfArchetype == null || selfArchetype.isBlank()
                 ? null : selfArchetype.trim();
-        this.advisoryPlan = advisoryPlan;
         this.comboReference = comboReference == null || comboReference.isBlank()
                 ? null : comboReference.trim();
         this.deckPasscodes = deckPasscodes == null ? List.of()
                 : List.copyOf(deckPasscodes);
-        this.timeline = timeline;
         this.anchor = new AnchorSections(facts, this.deckStrategy, this.ruleDigest,
                 this.selfArchetype, this.comboReference, this.deckPasscodes);
         this.board = new BoardSections(facts);
         this.candidateSections = new CandidateSections(facts, this.cardText);
-        this.recordSections = new DuelRecordSections(facts, this.cardText);
     }
 
     public boolean hasRuleDigest() {
@@ -170,7 +147,7 @@ public final class ContextPackBuilder {
 
     /**
      * 决策器静态资料段（整局不变）：卡组主题 / 卡组思路 / 规则速查。
-     * 连招参考与 [卡组] 清单是规划器专属（回合级路线规划才用得上），决策器不注入。
+     * 连招参考与 [卡组] 清单是幕僚专属（回合级战术才用得上），决策器不注入。
      */
     public String judgeStaticMaterial() {
         StringBuilder sb = new StringBuilder();
@@ -179,10 +156,9 @@ public final class ContextPackBuilder {
     }
 
     /**
-     * 规划器静态资料段（整局不变）：核心资料 + [实战连招参考] + [卡组] 全清单。
-     * 规划器负责回合级路线规划，需要连招库与整副卡组判断"能检索什么、额外能出什么"。
-     * 由 PlannerSession 作为独立消息放在 history 最前——跨回合逐字节一致，
-     * deepseek 服务端前缀缓存能在整局所有规划器调用上命中这部分。
+     * 幕僚静态资料段（整局不变）：核心资料 + [实战连招参考] + [卡组] 全清单。
+     * 幕僚负责回合级战术与对手读牌，需要连招库与整副卡组判断"能检索什么、额外能出什么"。
+     * 由 DuelAgent 种入 DuelChatMemory 的 [1]——跨回合逐字节一致，前缀缓存整局有效。
      */
     public String plannerStaticMaterial() {
         StringBuilder body = new StringBuilder();
@@ -198,9 +174,8 @@ public final class ContextPackBuilder {
 
     /**
      * 动态局面段：局面行 / 双方手牌与场面 / 墓地·除外 / 场地槽位。
-     * 计数（卡组剩余/场面张数/墓地类型）内联在战场行里；战斗结算由 llm.MathTool 按需提供，
-     * 这里不再注入 [约束]/[数学] 静态段。
-     * 每次决策都可能变，不能进缓存前缀。
+     * 计数（卡组剩余/场面张数/墓地类型）内联在战场行里；战斗结算由 llm.MathTool 按需提供。
+     * 每次决策都可能变，不能进缓存前缀（快照槽内容的主体）。
      */
     public String dynamicBoardPack(DuelState state) {
         StringBuilder sb = new StringBuilder();
@@ -227,69 +202,36 @@ public final class ContextPackBuilder {
     }
 
     /**
-     * 规划器锚点（易变部分）：局面与决斗记录置顶（最重要的参考），其后卡面。
-     * 静态资料不在其中——由 PlannerSession 作为独立消息放在 history 最前
-     * （{@link #plannerStaticMaterial()}，跨回合一致，吃跨回合前缀缓存）。
-     * 记录只含已结算回合（锚点时本回合刚开始，时间线由事件批增量补）。
+     * 幕僚快照（一次性，不入记忆）：局面与相关卡面。决斗记录已在 memory 的追加流里，
+     * 不在这里重发（docs §6.3）。
      */
-    public String plannerAnchorPack(DuelState state) {
-        return dynamicBoardPack(state)
-                + recordSections.recordOfClosedTurns(state.turnNumber(), timeline)
-                + anchor.cardFactsSection(state);
+    public String plannerSnapshot(DuelState state) {
+        return dynamicBoardPack(state) + anchor.cardFactsSection(state);
     }
 
     /**
-     * 回合记录前缀（已结算回合），决策器每次调用作为独立消息注入。
-     * 回合内逐字节一致——上下文缓存的第二层。
+     * 决策快照（docs §7.2，一次性注入、不入记忆）：
+     * [局面]/[场地槽位] + [规划器情报] + （从属决策点）[当前效果]/[本次请求] + [候选]/[候选卡面]。
+     * 静态资料与决斗记录已在决策器 memory（pinned + 追加流），不在这里重发；
+     * 段序与 JudgePrompts.SYSTEM 的快照叙述一致。
+     *
+     * @param advice      规划器最新建议（AdvisorKeeper 快照；null = 无建议）
+     * @param effectScope 正在结算的效果（TurnMemory 解出；空 = 非从属决策点）
      */
-    public String recordOfClosedTurns(int currentTurn) {
-        return recordSections.recordOfClosedTurns(currentTurn, timeline);
-    }
-
-    public String decisionPack(DecisionPoint point) {
-        return decisionPack(point, null);
-    }
-
-    /**
-     * 规划器事件批的记录行：条目由 PlannerSession 经端口增量拉取，本类只负责渲染。
-     * 没有记录端口时返回空列表。
-     */
-    public List<String> timelineLines(List<DuelTimeline.Entry> entries) {
-        return recordSections.lines(entries);
-    }
-
-    /**
-     * 决策包（带计划版）。
-     */
-    public String decisionPack(DecisionPoint point, TurnPlan plan) {
-        return decisionPack(point, plan, DecisionMemory.NONE);
-    }
-
-    /**
-     * 决策包（带"记忆"版）：本回合已做的动作 + 上一手的判断 + 正在结算的效果。
-     */
-    public String decisionPack(DecisionPoint point, TurnPlan plan, DecisionMemory memory) {
-        DecisionMemory remembered = memory == null ? DecisionMemory.NONE : memory;
+    public String judgeSnapshot(DecisionPoint point, AdvisorKeeper.Snapshot advice, String effectScope) {
         StringBuilder sb = new StringBuilder();
-        // 静态资料（规则速查/卡组思路等）不再拼进决策包：调用方把它作为独立消息放在前面
-        // （与 SYSTEM 一起构成稳定前缀吃上下文缓存），决策包只带动态内容
+        sb.append("[决策快照]\n");
         sb.append(dynamicBoardPack(point.state())).append("\n");
-        if (plan != null && (!plan.steps().isEmpty() || !plan.branches().isEmpty()
-                || !Texts.isBlank(plan.goal()) || !Texts.isBlank(plan.thinking()))) {
-            sb.append(planSection(point, plan)).append("\n");
+        if (advice != null) {
+            String section = adviceSection(point, advice);
+            if (!section.isEmpty()) {
+                sb.append(section).append("\n");
+            }
         }
         if (point.kind() == RequestKind.POSITION) {
             sb.append(positionSection());
         }
-        String history = historySection(point, remembered, timeline != null);
-        if (!history.isEmpty()) {
-            sb.append(history).append("\n");
-        }
-        String record = recordSections.turnTimeline(point.turn(), point.state().isMyTurn(), timeline);
-        if (!record.isEmpty()) {
-            sb.append(record).append("\n");
-        }
-        String scope = effectScopeSection(point, remembered.effectScope());
+        String scope = effectScopeSection(point, effectScope);
         if (!scope.isEmpty()) {
             sb.append(scope).append("\n");
         }
@@ -311,35 +253,58 @@ public final class ContextPackBuilder {
         return candidateSections.candidatesSection(point);
     }
 
-    /** 本回合动作记录的条数上限（再多也只是噪声）。 */
-    private static final int HISTORY_MAX_ACTIONS = 8;
+    /**
+     * 一行版候选清单（见 {@link CandidateSections#compactCandidates}）：由编排层拼进决策请求行，
+     * 让"这一手能选什么"跟着请求一起进记忆，而不是只存在于用完即弃的快照里。
+     */
+    public String compactCandidates(DecisionPoint point) {
+        return candidateSections.compactCandidates(point);
+    }
+
+    /** 请求行抬头：第 N 回合 / 谁的回合 / 阶段 / 这一手是什么（见 {@link CandidateSections#requestHeadline}）。 */
+    public String requestHeadline(DecisionPoint point) {
+        return candidateSections.requestHeadline(point);
+    }
+
+    /** 请求行里的连锁行（空链返回空串）：谁在第几环发动了什么、什么效果、对象是谁。 */
+    public String compactChain(DecisionPoint point) {
+        return candidateSections.compactChain(point);
+    }
+
+    /** 请求行里的候选效果正文（按卡去重）：只有卡名看不出"发动了会怎样"。 */
+    public String compactEffectDigest(DecisionPoint point) {
+        return candidateSections.compactEffectDigest(point);
+    }
 
     /**
-     * 决策包的记忆段：有时间线时动作事实由 [本回合时间线] 承载（不重复列），
-     * 这里只补时间线没有的"上一手的判断"；无时间线（离线/无记录注入）回退为完整动作列表。
+     * {@code [规划器情报]}：幕僚最新建议的决策器视图（docs §6.2）。
+     * 只给决策器要用得上的部分（strategy/goal/tactics/intel/combo 选段），
+     * 全部做长度截断，避免吃掉 ④ 的延迟预算；keep 跨回合时标"仅供参考"。
      */
-    private String historySection(DecisionPoint point, DecisionMemory memory, boolean hasTimeline) {
-        if (memory == null || memory.turnActions().isEmpty() && memory.lastIntent().isEmpty()) {
-            return "";
+    private String adviceSection(DecisionPoint point, AdvisorKeeper.Snapshot advice) {
+        AdvisorAnswer a = advice.answer();
+        StringBuilder sb = new StringBuilder("[规划器情报] ").append(advice.adviceId());
+        if (advice.turn() != point.turn()) {
+            sb.append("（上回合制定，仅供参考）");
         }
-        StringBuilder sb = new StringBuilder();
-        if (!hasTimeline && !memory.turnActions().isEmpty()) {
-            sb.append("[本回合已做] T").append(point.turn())
-                    .append(" 你已经做过（动作是既成事实；这些动作的效果是否成立，看 [局面]）：\n");
-            List<String> actions = memory.turnActions();
-            int from = Math.max(0, actions.size() - HISTORY_MAX_ACTIONS);
-            for (int i = from; i < actions.size(); i++) {
-                sb.append("  ").append(i - from + 1).append(". ").append(actions.get(i)).append('\n');
-            }
+        sb.append("\n");
+        if (!Texts.isBlank(a.strategy())) {
+            sb.append("本局策略：").append(Texts.flattenClip(a.strategy(), 200)).append("\n");
         }
-        if (!memory.lastIntent().isEmpty()) {
-            sb.append("  上一手的判断：").append(memory.lastIntent()).append('\n');
+        if (!Texts.isBlank(a.goal())) {
+            sb.append("本回合目标：").append(Texts.flattenClip(a.goal(), 120)).append("\n");
         }
-        if (sb.isEmpty()) {
-            return "";
+        if (!Texts.isBlank(a.tactics())) {
+            sb.append("战术：").append(Texts.flattenClip(a.tactics(), 200)).append("\n");
         }
-        sb.append("  要推翻上一手的判断可以，rationale 里说清「为什么改」；")
-                .append("它与 [局面]/[本回合时间线] 相反时以后者为准。");
+        if (!Texts.isBlank(a.intel())) {
+            sb.append("情报要点：").append(Texts.flattenClip(a.intel(), 200)).append("\n");
+        }
+        if (!Texts.isBlank(a.combo())) {
+            sb.append("动作链参考：").append(Texts.flattenClip(a.combo(), 400)).append("\n");
+        }
+        sb.append("与建议的关系：按它判断，不要反向；与 [局面] 冲突以局面为准，")
+                .append("偏离需在 rationale 里写明\"偏离建议，因为…\"。\n");
         return sb.toString();
     }
 
@@ -419,115 +384,5 @@ public final class ContextPackBuilder {
                   - 守备表示：放弃输出换生存（里侧还能隐藏身份，但对手可据此判断你在守）。
                   判断依据：这回合它需要攻击吗？下回合它需要活着吗？rationale 写一句理由即可。
                 """;
-    }
-
-    /**
-     * 当前计划（直答 的决策主线）：目标 + 思路 + 带进度标记的步骤 + 分支。
-     * <p>只给结论不给"为什么"时，模型遇到与计划冲突的候选会随手改计划；
-     * 所以思路与 why 也一并给，但都做长度截断，避免把 ④ 的延迟吃掉。
-     */
-    private String planSection(DecisionPoint point, TurnPlan plan) {
-        StringBuilder sb = new StringBuilder();
-        boolean stale = plan.turnNumber() != point.turn();
-        int cursor = Math.max(0, Math.min(plan.cursor(), plan.steps().size()));
-        boolean skeleton = plan.steps().isEmpty() && plan.branches().isEmpty();
-        sb.append("[本回合计划] ").append(plan.planId());
-        if (stale) {
-            sb.append("（上回合制定，仅供参考）");
-        }
-        if (skeleton && advisoryPlan) {
-            // 顾问模式：规划器本来就不给路径，只给分析/战术/combo；决策器负责选动作
-            sb.append("（顾问模式：不提供固定路径，以下为战术建议——按它的方向自行选候选）");
-        } else if (skeleton) {
-            // 路径接不上地已被作废，但战术思想仍然有效：只给目标与思路，别让决策脱离主线
-            sb.append("（步骤已作废，以下仅为本回合战术思想——按它判断，不要另起思路）");
-        } else {
-            sb.append(" 进度 ").append(cursor).append("/").append(plan.steps().size())
-                    .append("（▶ = 当前应执行的那一步）");
-        }
-        sb.append("\n");
-        if (!Texts.isBlank(plan.goal())) {
-            sb.append("目标：").append(Texts.flattenClip(plan.goal(), 120)).append("\n");
-        }
-        if (!Texts.isBlank(plan.thinking())) {
-            // 顾问模式的 thinking 是"场面/战术/combo"三段拼起来的，截 160 字会把后两段切掉
-            // 顾问模式的 thinking = 场面 + 方案比较 + 战术 + combo，截断太短会把"为什么选它"切掉
-            sb.append(advisoryPlan ? "建议：" : "思路：")
-                    .append(Texts.flattenClip(plan.thinking(), advisoryPlan ? 1_200 : 160)).append("\n");
-        }
-        if (!plan.steps().isEmpty()) {
-            for (int i = 0; i < plan.steps().size(); i++) {
-                sb.append("  ").append(i == cursor ? "▶" : (i < cursor ? "✓" : "·"))
-                        .append(' ').append(i + 1).append(". ")
-                        .append(stepText(plan.steps().get(i))).append("\n");
-            }
-        }
-        if (!plan.branches().isEmpty()) {
-            sb.append("分支：\n");
-            for (TurnPlan.TurnBranch branch : plan.branches()) {
-                String actions = branch.steps().stream().map(this::stepText)
-                        .reduce((a, b) -> a + " → " + b).orElse("");
-                sb.append("  - ").append(Texts.flattenClip(branch.name(), 40));
-                if (!branch.assumes().isEmpty()) {
-                    String assumes = branch.assumes().entrySet().stream()
-                            .map(e -> e.getKey() + "=" + e.getValue())
-                            .collect(Collectors.joining("、"));
-                    sb.append("（").append(Texts.flattenClip(assumes, 80)).append("）");
-                }
-                sb.append(" → ").append(Texts.flattenClip(actions, 120)).append("\n");
-            }
-        }
-        if (skeleton) {
-            sb.append(advisoryPlan
-                            ? "执行方式：这里没有动作顺序，具体选哪个候选由你按当前局面决定；"
-                            : "执行方式：上面的步骤已失效，请基于这份战术思想结合当前局面自行选择候选；")
-                    .append("不要做与建议相反的动作（例如建议是攒资源，就不要为了打点把组件送掉）。\n");
-            return sb.toString();
-        }
-        if (cursor < plan.steps().size()) {
-            RequestKind expected = plan.steps().get(cursor).expectedRequest();
-            if (point.kind() == RequestKind.POSITION) {
-                sb.append("注意：本决策点是**上一步动作的表示形式**，按 [表示形式决策] 判断即可，不要改计划。\n");
-                return sb.toString();
-            }
-            if (expected != point.kind()) {
-                // ▶ 步是主阶段的事，但当前是连锁/选卡窗口：计划没覆盖这个时刻，
-                // 硬套只会让模型把"主阶段该做什么"错当成"这个窗口该怎么答"。
-                sb.append("注意：▶ 那一步在 ").append(expected).append(" 决策点执行，本决策点是 ")
-                        .append(point.kind()).append("，计划未覆盖这个窗口 → ")
-                        .append("按局面与战术常识自行判断（只要别破坏计划的大方向）。\n");
-            }
-        }
-        sb.append("与计划的关系：若本决策点对应 ▶ 那一步，优先选能兑现它的候选；")
-                .append("若该步在当前局面已不合法、或明显不划算（会亏卡/自破场面），可以偏离，")
-                .append("但必须在 rationale 里点明\"偏离计划第 N 步，因为……\"。\n");
-        return sb.toString();
-    }
-
-    private String stepText(PlanStep step) {
-        if (step.alternatives().isEmpty()) {
-            return "（未给出动作）";
-        }
-        var action = step.alternatives().getFirst();
-        StringBuilder sb = new StringBuilder(action.verb());
-        if (action.passcode() > 0) {
-            sb.append(' ').append(codeLabel(action.passcode()));
-        }
-        if (action.zone() != null) {
-            // 计划里的位置要跟着显示：否则 直答 看到的计划只有"召唤零衣"，
-            // 到了位置决策点时忘了"计划要放 MMZ-3"
-            sb.append(" → ").append(ZoneCodes.code(action.zone()));
-        }
-        Object why = step.expectedEffects().get("why");
-        if (why != null && !Texts.isBlank(String.valueOf(why))) {
-            sb.append(" — ").append(Texts.flattenClip(String.valueOf(why), 60));
-        }
-        return sb.toString();
-    }
-
-    /** 计划里的卡号 → 可读卡名；卡库没命中时保留卡号，绝不猜。 */
-    private String codeLabel(long passcode) {
-        return facts.byPasscode(passcode).map(CardFact::label)
-                .orElseGet(() -> "卡(" + passcode + ")");
     }
 }

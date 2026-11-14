@@ -7,15 +7,15 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * CLI 侧 v6 设置装配：环境相关项（地址/模型/卡库路径）必填缺失 → 抛异常点名键；
+ * CLI 侧流水设置装配：环境相关项（地址/模型/卡库路径）必填缺失 → 抛异常点名键；
  * 调优旋钮不配 = 继承代码默认（PipelineSettings.defaults），配置了覆盖。
+ * （docs/planner-judge-memory-redesign.md：路径规划/抢答/相似匹配 knob 已随顾问定位定稿删除。）
  */
 class RuntimeConfigPlannerTest {
 
@@ -43,7 +43,6 @@ class RuntimeConfigPlannerTest {
         assertEquals("k", settings.apiKey());
         assertEquals(4_000, settings.waitPerDecisionMs());
         assertEquals(30_000, settings.waitPerTurnMs());
-        assertEquals(0.80, settings.similarityThreshold(), 1e-9);
         assertEquals(45_000, settings.plannerCallTimeoutMs());
     }
 
@@ -77,29 +76,27 @@ class RuntimeConfigPlannerTest {
         assertEquals(4_000, settings.waitPerDecisionMs(), "等待预算默认在 PipelineSettings.defaults");
         assertEquals(45_000, settings.plannerCallTimeoutMs());
         assertEquals(60_000, settings.plannerCooldownMs());
-        assertFalse(settings.pathPlanning(), "顾问模式默认");
-        assertTrue(settings.plannerRushAnswer(), "抢答默认开");
     }
 
     @Test
     void malformedValueThrowsNamingKey() {
         Exception e = assertThrows(IllegalStateException.class,
-                () -> planner(Map.of("PLANNER_SIMILARITY_THRESHOLD", "0,8")));
-        assertTrue(e.getMessage().contains("PLANNER_SIMILARITY_THRESHOLD"), e.getMessage());
+                () -> planner(Map.of("PLANNER_WAIT_DECISION_MS", "4,000")));
+        assertTrue(e.getMessage().contains("PLANNER_WAIT_DECISION_MS"), e.getMessage());
     }
 
     @Test
-    void budgetsAndThresholdOverridable() {
+    void budgetsOverridable() {
         var settings = planner(Map.of(
                 "PLANNER_WAIT_DECISION_MS", "3000",
                 "PLANNER_WAIT_TURN_MS", "15000",
-                "PLANNER_SIMILARITY_THRESHOLD", "0.9",
+                "PLANNER_FIRST_WAIT_MS", "9000",
                 "LLM_BASE_URL", "https://example.invalid",
                 "LLM_MODEL", "test-model",
                 "CARD_RAG_PATH", "/tmp/cards.jsonl"));
         assertEquals(3_000, settings.waitPerDecisionMs());
         assertEquals(15_000, settings.waitPerTurnMs());
-        assertEquals(0.9, settings.similarityThreshold(), 1e-9);
+        assertEquals(9_000, settings.firstAdviceWaitMs());
         assertEquals("https://example.invalid", settings.baseUrl());
         assertEquals("test-model", settings.model());
         assertEquals("/tmp/cards.jsonl", settings.cardRagPath().toString());
@@ -122,11 +119,9 @@ class RuntimeConfigPlannerTest {
     }
 
     @Test
-    void rushAnswerAndPathPlanningFromEnv() {
-        assertFalse(planner(Map.of("PLANNER_RUSH_ANSWER", "false")).plannerRushAnswer(), "0/false 关闭抢答");
-        assertTrue(planner(Map.of("PLANNER_RUSH_ANSWER", "1")).plannerRushAnswer());
-        assertTrue(planner(Map.of("PLANNER_PATH_PLANNING", "true")).pathPlanning());
-        assertFalse(planner(Map.of()).pathPlanning(), "未配置 = 顾问模式默认");
+    void waitDecisionZeroForcesFirstWaitOff() {
+        var settings = planner(Map.of("PLANNER_WAIT_DECISION_MS", "0"));
+        assertEquals(0, settings.firstAdviceWaitMs(), "显式关闭等待时首等也归零");
     }
 
     @Test

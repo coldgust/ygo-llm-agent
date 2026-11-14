@@ -88,7 +88,7 @@ public final class DuelNarrative {
         for (Integer turn : turns) {
             List<DuelTraceReader.Action> actions = actionsByTurn.getOrDefault(turn, List.of());
             appendTurn(timeline, turn, episodesByTurn.get(turn), actions,
-                    trace.planFor(turn), ownershipOf(actions));
+                    trace.adviceFor(turn), ownershipOf(actions));
             if (timeline.length() > limit) {
                 timeline.append("\n…（记录过长，后续回合已省略）\n");
                 return;
@@ -101,7 +101,7 @@ public final class DuelNarrative {
 
     private void appendTurn(StringBuilder sb, int turn, List<DecisionEpisode> episodes,
                             List<DuelTraceReader.Action> actions,
-                            DuelTraceReader.TurnPlanView plan, String ownership) {
+                            DuelTraceReader.TurnAdviceView advice, String ownership) {
         sb.append("### T").append(turn);
         if (!ownership.isEmpty()) {
             sb.append("（").append(ownership).append("）");
@@ -112,12 +112,12 @@ public final class DuelNarrative {
         }
         sb.append('\n');
 
-        if (plan != null) {
-            if (!plan.goal().isBlank()) {
-                sb.append("计划目标：").append(Texts.flattenClip(plan.goal(), 200)).append('\n');
+        if (advice != null) {
+            if (!advice.goal().isBlank()) {
+                sb.append("建议目标：").append(Texts.flattenClip(advice.goal(), 200)).append('\n');
             }
-            if (!plan.thinking().isBlank()) {
-                sb.append("计划思路：").append(Texts.flattenClip(plan.thinking(), 300)).append('\n');
+            if (!advice.strategy().isBlank()) {
+                sb.append("本局策略：").append(Texts.flattenClip(advice.strategy(), 300)).append('\n');
             }
         }
         if (actions.isEmpty()) {

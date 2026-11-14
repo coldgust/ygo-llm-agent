@@ -12,25 +12,22 @@ import java.nio.file.Path;
  * 代码默认在 core {@code PipelineSettings.defaults}（本 record 字段 null = 继承）；
  * 环境相关项（网关地址/模型/卡库路径）默认在 application.yaml，Java 必填校验缺失即抛点名。
  *
- * @param enabled              留空 = 有 api-key 即启用；false = 强制关闭 v6 流水
- * @param apiKey               OpenAI 兼容网关凭据；为空则整个规划器/执行器不启用
+ * @param enabled              留空 = 有 api-key 即启用；false = 强制关闭流水
+ * @param apiKey               OpenAI 兼容网关凭据；为空则整个规划器/决策器不启用
  * @param baseUrl              网关地址（yaml 默认 https://api.deepseek.com）
  * @param plannerModel         规划器模型，优先于 llmModel；留空 = 用 llmModel
  * @param llmModel             模型（yaml 默认 deepseek-chat）
  * @param reasoningPlanner     规划器思考强度 off|low|medium|high；留空 = checkpoint 统一 low（推理档）、off = 快档
  * @param reasoningDecision    决策器思考强度；留空 = off（开思考会把 max_tokens 花在思维链上，吃满决策超时）
  * @param cardRagPath          卡牌事实本地查表（PG 不可用时的回退）
- * @param waitDecisionMs       决策一次最多等待规划器 ms（紧急重规划回复）
- * @param firstWaitMs          本回合首个 直答 前等计划的上限 ms
+ * @param waitDecisionMs       决策一次最多等待规划器 ms（本回合首次决策等锚点建议）
+ * @param firstWaitMs          本回合首次决策器判断前等建议的上限 ms
  * @param waitTurnMs           一回合内「为等规划器」的累计上限 ms
- * @param maxCheckpoints       每回合后台 checkpoint 次数上限，成本闸
- * @param similarityThreshold  执行器相似分支匹配阈值 0–1，防假相似
- * @param judgeTimeoutMs       直答 决策硬超时 ms
+ * @param maxCheckpoints       每回合修订 checkpoint 次数上限，成本闸
+ * @param judgeTimeoutMs       决策器判断硬超时 ms
  * @param plannerCallTimeoutMs 规划器后台 checkpoint 单次调用超时 ms
  * @param plannerCooldownMs    规划器连续失败后的降级冷却 ms
- * @param judgeMaxTokens       直答输出上限 tokens
- * @param pathPlanning         true = 规划器产出可执行路径；留空/false = 顾问模式（只给场面分析/战术/combo）
- * @param rushAnswer           ④升级竞速里规划器抢答；false/0 = 升级只跑直答（yaml 默认开）
+ * @param judgeMaxTokens       决策器输出上限 tokens
  */
 @ConfigurationProperties(prefix = "ygo.plan-exec")
 public record PlanExecProperties(
@@ -46,13 +43,10 @@ public record PlanExecProperties(
         Integer firstWaitMs,
         Integer waitTurnMs,
         Integer maxCheckpoints,
-        Double similarityThreshold,
         Integer judgeTimeoutMs,
         Integer plannerCallTimeoutMs,
         Integer plannerCooldownMs,
-        Integer judgeMaxTokens,
-        Boolean pathPlanning,
-        Boolean rushAnswer) {
+        Integer judgeMaxTokens) {
 
     /** v6 是否启用：未显式关闭且 api-key 已配置；显式开启但缺 key → 抛点名。 */
     public boolean v6Enabled() {
@@ -76,16 +70,13 @@ public record PlanExecProperties(
                 .reasoningPlanner(reasoningPlanner)
                 .reasoningDecision(reasoningDecision)
                 .waitPerDecisionMs(waitDecisionMs)
-                .firstJudgeWaitMs(firstWaitMs)
+                .firstAdviceWaitMs(firstWaitMs)
                 .waitPerTurnMs(waitTurnMs)
                 .maxCheckpointsPerTurn(maxCheckpoints)
-                .similarityThreshold(similarityThreshold)
                 .judgeTimeoutMs(judgeTimeoutMs)
                 .plannerCallTimeoutMs(plannerCallTimeoutMs)
                 .plannerCooldownMs(plannerCooldownMs)
                 .judgeMaxTokens(judgeMaxTokens)
-                .pathPlanning(pathPlanning)
-                .plannerRushAnswer(rushAnswer)
                 .build();
     }
 
@@ -105,9 +96,9 @@ public record PlanExecProperties(
         return "PlanExecProperties[enabled=" + enabled + ", apiKey=***, baseUrl=" + baseUrl
                 + ", plannerModel=" + plannerModel + ", llmModel=" + llmModel
                 + ", reasoningPlanner=" + reasoningPlanner + ", reasoningDecision=" + reasoningDecision
-                + ", cardRagPath=" + cardRagPath + ", pathPlanning=" + pathPlanning + ", rushAnswer=" + rushAnswer
+                + ", cardRagPath=" + cardRagPath
                 + ", waitDecisionMs=" + waitDecisionMs + ", firstWaitMs=" + firstWaitMs + ", waitTurnMs=" + waitTurnMs
-                + ", maxCheckpoints=" + maxCheckpoints + ", similarityThreshold=" + similarityThreshold
+                + ", maxCheckpoints=" + maxCheckpoints
                 + ", judgeTimeoutMs=" + judgeTimeoutMs + ", plannerCallTimeoutMs=" + plannerCallTimeoutMs
                 + ", plannerCooldownMs=" + plannerCooldownMs + ", judgeMaxTokens=" + judgeMaxTokens + "]";
     }

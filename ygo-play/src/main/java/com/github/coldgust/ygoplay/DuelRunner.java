@@ -204,6 +204,7 @@ public final class DuelRunner {
             payload.put("requestLabel", s.point().kind().label());
         }
         if (s.decision() != null) {
+            payload.put("level", s.decision().pathKind().name());
             payload.put("levelLabel", s.decision().pathKind().label());
             payload.put("intent", s.decision().intent().getClass().getSimpleName());
         }

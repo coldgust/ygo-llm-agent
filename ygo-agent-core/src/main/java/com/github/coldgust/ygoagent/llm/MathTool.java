@@ -72,15 +72,15 @@ public final class MathTool {
 
     // ---------------------------------------------------------------- 工具面
 
-    @Tool(name = BATTLE_CALC, value = "算一次攻击结算（我方或对方视角）：给攻击方与目标的卡名或格子编码"
-            + "（如 MMZ-3，配 side 参数），返回破坏/交换/被反杀与双方伤害数值。"
+    @Tool(name = BATTLE_CALC, value = "算一次攻击结算（我方或对方视角）：给攻击方与目标的卡名或区域位置"
+            + "（如 我方主怪兽区3、我方额外怪兽区1，配 side 参数），返回破坏/交换/被反杀与双方伤害数值。"
             + "目标留空 = 直接攻击（规则上仅对方场上无怪兽时合法）。"
             + "战斗数值禁止心算，用本工具；上下文已给出的结算不要重复调用。")
     public String battleCalc(
             @P(value = "攻击方所在侧：self（我方，默认）或 opponent（对方）", required = false)
             String side,
-            @P("攻击方：卡名或格子编码，须是攻击表示怪兽") String attacker,
-            @P(value = "目标：卡名或格子编码；留空 = 直接攻击", required = false) String target) {
+            @P("攻击方：卡名或区域位置，须是攻击表示怪兽") String attacker,
+            @P(value = "目标：卡名或区域位置；留空 = 直接攻击", required = false) String target) {
         return traced(BATTLE_CALC, Map.of("side", safe(side), "attacker", safe(attacker),
                 "target", safe(target)), () -> {
             DuelState state = snapshot();
@@ -162,7 +162,7 @@ public final class MathTool {
     }
 
     @Tool(name = DAMAGE_PROJECTION, value = "投影攻击全部打完后的确定伤害合计与斩杀口径："
-            + "attackers 传卡名/格子编码列表（逗号分隔；留空 = 全部攻击位怪兽），"
+            + "attackers 传卡名/区域位置列表（逗号分隔；留空 = 全部攻击位怪兽），"
             + "逐只按剩余目标择优结算（先打掉的不再重复计）。side=self 时合计与对方 LP 比较，"
             + "side=opponent 时合计为对方能对我方造成的确定伤害（与我方 LP 比较）。")
     public String damageProjection(
@@ -311,7 +311,7 @@ public final class MathTool {
             StringBuilder sb = new StringBuilder(header(state)).append("\n素材 ").append(materialList.size())
                     .append(" 只：");
             if (materialList.size() == 0 && g != Goal.TRIBUTE) {
-                return "（缺素材句柄：materials 传卡名/格子编码列表，我方场上怪兽或手牌）";
+                return "（缺素材句柄：materials 传卡名/区域位置列表，我方场上怪兽或手牌）";
             }
             List<Integer> levels = new ArrayList<>();
             for (FieldCard m : materialList.cards()) {
@@ -527,13 +527,13 @@ public final class MathTool {
     /** 解析一只怪兽句柄（场上怪兽区，含手牌可选）。 */
     private Lookup resolveMonsters(PlayerSide side, String handle) {
         if (handle == null || handle.isBlank()) {
-            return Lookup.fail("（缺攻击方句柄：给卡名或格子编码如 MMZ-3）");
+            return Lookup.fail("（缺攻击方句柄：给卡名或区域位置如「我方主怪兽区3」）");
         }
         return resolveOnSide(side, handle.strip(), false);
     }
 
     /**
-     * 句柄 → 场上卡：格子编码（MMZ-3，复用 ZoneCodes 口径）或卡名（精确优先，其次包含，
+     * 句柄 → 场上卡：区域位置（我方主怪兽区3，复用 ZoneCodes 口径）或卡名（精确优先，其次包含，
      * 英文忽略大小写）。歧义/未找到 fail-closed，附可用句柄清单。
      */
     private Lookup resolveOnSide(PlayerSide side, String handle, boolean includeHand) {
@@ -554,7 +554,7 @@ public final class MathTool {
                 return Lookup.fail("（" + handle + " 是空格）\n可用句柄：\n" + handlesOf(pool));
             }
             return Lookup.of(new FieldCard(found, side, facts.byPasscode(found.passcode()).orElse(null),
-                    ZoneCodes.code(ref)));
+                    ZoneCodes.label(ref)));
         }
         String query = handle.strip();
         List<FieldCard> exact = new ArrayList<>();
@@ -579,7 +579,7 @@ public final class MathTool {
         }
         if (matches.size() > 1) {
             return Lookup.fail("（「" + query + "」匹配到 " + matches.size() + " 张，"
-                    + "请用格子编码指定）\n" + handlesOf(matches));
+                    + "请用区域位置指定）\n" + handlesOf(matches));
         }
         return Lookup.of(matches.getFirst());
     }
@@ -588,14 +588,14 @@ public final class MathTool {
         List<FieldCard> pool = new ArrayList<>();
         for (CardInstance c : state.monsters(side)) {
             pool.add(new FieldCard(c, side, facts.byPasscode(c.passcode()).orElse(null),
-                    ZoneCodes.code(c.zone())));
+                    ZoneCodes.label(c.zone())));
         }
         for (CardInstance c : state.spellTraps(side)) {
             pool.add(new FieldCard(c, side, facts.byPasscode(c.passcode()).orElse(null),
-                    ZoneCodes.code(c.zone())));
+                    ZoneCodes.label(c.zone())));
         }
         state.fieldSpell(side).ifPresent(c -> pool.add(new FieldCard(c, side,
-                facts.byPasscode(c.passcode()).orElse(null), ZoneCodes.code(c.zone()))));
+                facts.byPasscode(c.passcode()).orElse(null), ZoneCodes.label(c.zone()))));
         if (includeHand) {
             for (CardInstance c : state.player(side).hand()) {
                 if (!c.isUnknown()) {
@@ -636,7 +636,7 @@ public final class MathTool {
             for (CardInstance m : state.monsters(side)) {
                 if (m.position() == Position.FACE_UP_ATTACK && withLines.contains(m.instanceId())) {
                     out.add(new FieldCard(m, side, facts.byPasscode(m.passcode()).orElse(null),
-                            ZoneCodes.code(m.zone())));
+                            ZoneCodes.label(m.zone())));
                 }
             }
             return out.isEmpty()
