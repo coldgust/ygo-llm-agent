@@ -129,4 +129,13 @@ public final class TurnMemory {
     public void markWaitedForAdvice(int turn) {
         turnsWaitedForAdvice.add(turn);
     }
+
+    /**
+     * 重规划后重置等待标记（决策器判决 needReplan=true 时调用）：
+     * 下一次决策前按配置的首次等待时长（firstAdviceWaitMs）<b>再</b>等一次新规划，
+     * 而不是因为"本回合已等过"直接跳过等待。
+     */
+    public void clearWaitedForAdvice(int turn) {
+        turnsWaitedForAdvice.remove(turn);
+    }
 }

@@ -31,7 +31,10 @@ import com.github.coldgust.ygoagent.support.Texts;
 final class CandidateSections {
 
     private static final int CANDIDATE_FACT_MAX_CARDS = 6;
-    private static final int CANDIDATE_FACT_TOTAL_LIMIT = 1_200;
+    /** [候选卡面] 总预算：全文条款（抗性/限制常在后半段条款，不能截）下的体积闸。 */
+    private static final int CANDIDATE_FACT_TOTAL_LIMIT = 3_600;
+    /** 单卡条款全文的预算上限：只挡病态长文本，正常卡面全文可容纳。 */
+    private static final int CANDIDATE_FACT_CARD_LIMIT = 1_000;
     /** 请求行候选清单的上限：超出的只在快照里（选卡请求可能几十项，清单不能无限长）。 */
     private static final int COMPACT_MAX = 12;
 
@@ -75,7 +78,7 @@ final class CandidateSections {
             Optional<String> firedClause = cardText.clauseOf(passcode, y.description());
             sj.add("是否发动：" + effectCardLabel(y.card())
                     + (firedClause.isPresent()
-                    ? " —— 这次要发动的是：" + CardText.brief(firedClause.get())
+                    ? " —— 这次要发动的是：" + firedClause.get()
                     : ""));
             if (firedClause.isEmpty()) {
                 appendUnlabeledEffectClauses(sj, passcode);
@@ -119,7 +122,7 @@ final class CandidateSections {
             appendGroup(sj, "可用区域", point.candidatesOf(Candidate.ZoneC.class),
                     c -> zoneLabel(c));
         } else {
-            sj.add(point.kind() + "：候选 " + point.candidates().size() + " 个（详情走 Reflex/直答）");
+            sj.add(point.kind() + "：候选 " + point.candidates().size() + " 个（详情见上方快照 [候选]）");
         }
         appendCandidateCardFacts(sj, point);
         return sj.toString();
@@ -189,7 +192,7 @@ final class CandidateSections {
                 } else if (!clauses.isEmpty()) {
                     sj.add("      该卡效果（协议未标明本次发动的是哪一条，按实际会造成的后果判断）：");
                     for (String clause : clauses) {
-                        sj.add("        " + CardText.brief(clause));
+                        sj.add("        " + clause);
                     }
                 } else {
                     sj.add("      （卡库无此卡资料：不要凭印象编它的效果，必要时调 find_card 查）");
@@ -485,7 +488,7 @@ final class CandidateSections {
         sj.add("  协议**没有标出**这次是哪一条效果（「是否发动」的确认号不是效果序号）：下面把全部条款"
                 + "（①②③…）列出来，按排除法定位——");
         for (String clause : clauses) {
-            sj.add("    " + CardText.brief(clause));
+            sj.add("    " + clause);
         }
         sj.add("  定位方法：① 本回合已经发动过的效果（见记忆中的决斗记录）不可能是本次请求，先排除；"
                 + "② 再看哪一条的发动时点与当前时点吻合（刚召唤·特殊召唤成功 / 刚进墓地 / 刚被破坏·除外 / "
@@ -500,7 +503,7 @@ final class CandidateSections {
         }
         sj.add("      该卡其他效果（判断它后续还能做什么时看这里）：");
         for (String clause : others) {
-            sj.add("        " + CardText.brief(clause));
+            sj.add("        " + clause);
         }
     }
 
@@ -525,7 +528,7 @@ final class CandidateSections {
             if (clauses.isEmpty()) {
                 continue;
             }
-            cards.put(passcode, "- " + cardText.card(passcode) + "：" + cardText.all(clauses, 320));
+            cards.put(passcode, "- " + cardText.card(passcode) + "：" + cardText.allFull(clauses, CANDIDATE_FACT_CARD_LIMIT));
         }
         if (cards.isEmpty()) {
             return;

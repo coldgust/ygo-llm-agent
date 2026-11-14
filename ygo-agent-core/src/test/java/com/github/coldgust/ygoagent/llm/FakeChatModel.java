@@ -29,7 +29,8 @@ public class FakeChatModel implements ChatModel {
     public boolean fail = false;
 
     public FakeChatModel(String... replies) {
-        this.replies = List.of(replies.length == 0 ? new String[]{"{\"keep\": true}"} : replies);
+        // 默认回复是空 JSON（无实质建议内容）：需要建议产出的用例必须显式给回复序列
+        this.replies = List.of(replies.length == 0 ? new String[]{"{}"} : replies);
     }
 
     @Override

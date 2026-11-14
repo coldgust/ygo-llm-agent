@@ -2,6 +2,8 @@ package com.github.coldgust.ygoagent.context;
 
 import com.github.coldgust.ygoagent.knowledge.CardFact;
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
+import com.github.coldgust.ygodomain.zone.ZoneKind;
+import com.github.coldgust.ygodomain.zone.ZoneRef;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -10,11 +12,16 @@ import java.util.StringJoiner;
 
 public final class CardText {
 
+    /**
+     * 一次"发动"的性质：发动了<b>卡本身</b>（永续魔陷/场地魔法翻开上场的发动），
+     * 还是发动了某条<b>效果</b>，或无法判定（见 {@link #activationKind}）。
+     */
+    public enum ActivationKind { CARD, EFFECT, UNKNOWN }
+
     /** 条款标记（多效果卡）。①②③… 是印刷顺序，和引擎的"第 N 个可发动效果"不是一回事。 */
     private static final String CLAUSE_MARKS = "①②③④⑤⑥⑦⑧";
 
-    /** 单条条款的默认长度：给"这次发动的就是它"用，要能读完发动条件。 */
-    public static final int FOCUS_LIMIT = 260;
+    /** 压缩展示的单条条款长度：只用于持久段（记忆记录行）——快照一次性段一律全文。 */
     public static final int BRIEF_LIMIT = 140;
     public static final int ALL_TOTAL_LIMIT = 400;
 
@@ -160,11 +167,57 @@ public final class CardText {
         return passcode > 0 && effectCode > 0 && (effectCode >>> 4) == passcode;
     }
 
+    /**
+     * 永续魔法 / 永续陷阱 / 场地魔法——"发动卡"与"发动效果"是两回事的那一类
+     * （卡面 ①②③ 要等卡表侧在场后另起的连锁才发动；通常魔法/陷阱发动卡 = 发动那条款）。
+     */
+    public boolean isContinuousLike(long passcode) {
+        return facts.byPasscode(passcode)
+                .map(f -> f.cardType() != null
+                        && (f.cardType().contains("永续") || f.cardType().contains("场地")))
+                .orElse(false);
+    }
+
+    private boolean isSpellOrTrap(long passcode) {
+        return facts.byPasscode(passcode)
+                .map(f -> "SPELL".equals(f.kind()) || "TRAP".equals(f.kind()))
+                .orElse(false);
+    }
+
+    /**
+     * 判定一次"发动"是发动了<b>卡本身</b>还是某条<b>效果</b>（2026-11-15 用户反馈：
+     * 永续魔法发动卡被渲染成"发动…的效果"，记录与决策行都误导模型以为 ①② 已发动）。
+     *
+     * <p>两条独立信号按可靠度排序：
+     * <ol>
+     *   <li>描述码是本卡效果码（{@link #isOwnEffectCode}）→ 效果；</li>
+     *   <li>来源区域是手牌/卡组 → 卡（手牌里的卡只能"发动卡"；"发动效果"必在场上）；</li>
+     *   <li>魔法/陷阱（kind）且描述码为 0 → 卡（协议对发动卡送 0，效果发动带效果码；
+     *       通常魔法/陷阱此时卡=效果，措辞也成立）；</li>
+     *   <li>其余 → 无法判定，调用方按现状渲染（全部条款，不下结论）。</li>
+     * </ol>
+     */
+    public ActivationKind activationKind(long passcode, long description, ZoneRef sourceZone) {
+        if (isOwnEffectCode(passcode, description)) {
+            return ActivationKind.EFFECT;
+        }
+        if (sourceZone != null
+                && (sourceZone.kind() == ZoneKind.HAND || sourceZone.kind() == ZoneKind.DECK)) {
+            return ActivationKind.CARD;
+        }
+        if (description == 0 && isSpellOrTrap(passcode)) {
+            return ActivationKind.CARD;
+        }
+        return ActivationKind.UNKNOWN;
+    }
+
 
     /**
      * <b>"这次要发动的是哪一条"</b>——本类存在的核心理由。
      *
-     * <p>能定位就给那一条原文；定位不到就列出全部条款；连卡都没有就明说缺资料。
+     * <p>能定位就给那一条<b>全文</b>（2026-11-15 用户反馈：截断会把后半段的限制条件
+     * ——"那之后…""这个效果在…不能发动"——切掉，而那正是"该不该发"的关键）；
+     * 定位不到就列出全部条款；连卡都没有就明说缺资料。
      * <b>任何分支都不返回空串</b>：留白等于让模型自己编。
      */
     public String fired(long passcode, long effectCode) {
@@ -173,7 +226,7 @@ public final class CardText {
             return passcode <= 0 ? "" : MISSING_CARD;
         }
         Optional<String> fired = clauseOf(passcode, clauses, effectCode);
-        return fired.map(clause -> clip(clause, FOCUS_LIMIT)).orElseGet(() -> all(clauses));
+        return fired.orElseGet(() -> all(clauses));
     }
 
     public String all(List<String> clauses) {
@@ -194,6 +247,29 @@ public final class CardText {
             }
             joiner.add(part);
             used += part.length();
+        }
+        return joiner.toString();
+    }
+
+    /**
+     * 全文版条款并列（快照 [候选卡面] 用）：限制/抗性常在后面的条款
+     * （『不会被效果破坏』『不能作为效果的对象』），每条款截到 140 字会让
+     * "选了等于白付代价"的判断依据整段消失。totalLimit 只挡病态长文本，
+     * 正常卡面全文可容纳。
+     */
+    public String allFull(List<String> clauses, int totalLimit) {
+        if (clauses.isEmpty()) {
+            return "";
+        }
+        StringJoiner joiner = new StringJoiner(" ／ ");
+        int used = 0;
+        for (String clause : clauses) {
+            if (used > 0 && used + clause.length() > totalLimit) {
+                joiner.add("…（其余略）");
+                break;
+            }
+            joiner.add(clause);
+            used += clause.length();
         }
         return joiner.toString();
     }

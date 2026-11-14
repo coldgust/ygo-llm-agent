@@ -1,10 +1,18 @@
 <script lang="ts">
   import type { AdviceOption } from '../lib/api'
 
+  /** 规划器产出建议的来源 checkpoint → 展示标签。 */
+  const CHECKPOINT_LABELS: Record<string, string> = {
+    anchor: '回合锚点',
+    replan: '重规划',
+  }
+
   let {
     adviceId,
     adviceStale,
     adviceTurn,
+    checkpoint = '',
+    retired = false,
     strategy,
     analysis,
     resources,
@@ -18,6 +26,9 @@
     adviceId: string
     adviceStale: boolean
     adviceTurn: number
+    checkpoint?: string
+    /** 决策器已判决本建议作废（等待重规划发布）：内容置灰展示。 */
+    retired?: boolean
     strategy: string
     analysis: string
     resources: string
@@ -30,14 +41,20 @@
   } = $props()
 </script>
 
-<div class="prompt advice">
+<div class="prompt advice" class:retired>
   <div class="advicehead">
     <b>规划器建议 {adviceId}</b>
     <span class="muted">
-      T{adviceTurn}{#if adviceStale} · 上回合制定，仅供参考{/if}
+      {#if CHECKPOINT_LABELS[checkpoint]}<span class="ckpt">{CHECKPOINT_LABELS[checkpoint]}</span> · {/if}T{adviceTurn}{#if adviceStale} · 上回合制定，仅供参考{/if}
       {#if adviceConf}· 置信 {adviceConf.toFixed(2)}{/if}
     </span>
   </div>
+  {#if retired}
+    <div class="retired-banner">
+      ⚠ 本建议已被决策器判定为不可实现 / 不合理 / 已偏离局面并作废，等待重规划发布；
+      在此期间决策器不带规划自行判断。
+    </div>
+  {/if}
   {#if strategy}<div class="seg"><span class="k">本局策略</span>{strategy}</div>{/if}
   {#if analysis}<div class="seg"><span class="k">场面</span>{analysis}</div>{/if}
   {#if resources}<div class="seg"><span class="k">资源</span>{resources}</div>{/if}
@@ -71,6 +88,27 @@
   .advice {
     border: 1px solid #2f4470;
     background: #111725;
+  }
+  .advice.retired {
+    border-color: #6a5a2f;
+    opacity: 0.62;
+  }
+  .retired-banner {
+    margin: 0 0 8px;
+    padding: 6px 10px;
+    border: 1px dashed #8a7a3f;
+    border-radius: 6px;
+    background: #1c1a10;
+    color: #d9c07a;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .ckpt {
+    color: #c0a6f0;
+    border: 1px solid #4a3a6a;
+    border-radius: 8px;
+    padding: 0 6px;
+    font-size: 11px;
   }
   .advicehead {
     display: flex;

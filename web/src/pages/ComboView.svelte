@@ -189,8 +189,11 @@
 
   function summarize(e: DuelEvent): string {
     if (e.kind === 'EXEC_DECISION')
-      return `${e.requestLabel ?? e.requestKind} → ${e.intentLabel ?? e.intent ?? ''}`
-    if (e.kind === 'ADVICE_EVENT' && e.adviceKind === 'ADVICE_PUBLISHED') return `建议发布：${e.goal ?? ''}`
+      return `${(e.requestHeadline || e.requestLabel || e.requestKind || '').replace(/。$/, '')} → ${e.intentLabel ?? e.intent ?? ''}`
+    if (e.kind === 'POSITION_HINT') return `位置预分配：${e.zone ?? ''}`
+    if (e.kind === 'RUN_DONE') return `录入对局完成：${e.answered ?? '—'} 手（兜底 ${e.fallbacks ?? '—'}）`
+    if (e.kind === 'ADVICE_EVENT' && e.adviceKind === 'ADVICE_PUBLISHED')
+      return `建议发布：${e.goal ?? ''}`
     if (e.kind === 'DUEL_STATUS') return `状态 → ${(e.status && STATUS_LABELS[e.status]) || e.status || ''}`
     return e.error ?? e.reason ?? ''
   }

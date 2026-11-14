@@ -118,6 +118,55 @@ class DuelRecordSectionsTest {
     }
 
     @Test
+    void continuousSpellCardActivationIsNotRenderedAsEffectActivation() {
+        // 2026-11-15 用户反馈：永续魔法从手牌/盖放状态发动 = 发动卡本身，①② 都没发动。
+        // 旧行渲染成"发动 X：①…／②…"，读起来像两条效果都发动了
+        DuelTimeline timeline = timeline(
+                new DuelTimeline.Entry.TurnStarted(1, 2, DuelTimeline.Side.SELF),
+                new DuelTimeline.Entry.EffectActivated(2, 2, DuelTimeline.Side.SELF,
+                        TestDuels.MULTITASK, 0, 1, ZoneRef.hand(PlayerSide.SELF)));
+
+        String section = joined(sections.lines(timeline.turn(2)));
+        assertTrue(section.contains("发动的是这张卡本身"),
+                "发动卡要明说（不是发动效果）:\n" + section);
+        assertTrue(section.contains("①②③ 的效果都还没有发动"),
+                "永续魔法要点明效果未发动:\n" + section);
+        // 条款全文仍附在后面供参考，但必须排在"效果未发动"的注记之后，不能读成已发动
+        assertTrue(section.indexOf("都还没有发动") < section.indexOf("①：1回合1次"),
+                "注记要在条款正文之前:\n" + section);
+    }
+
+    @Test
+    void continuousSpellCardActivationFromSetIsAlsoCardActivation() {
+        // 从盖放状态翻开发动（desc=0、来源是魔陷区）同样判为发动卡
+        DuelTimeline timeline = timeline(
+                new DuelTimeline.Entry.TurnStarted(1, 2, DuelTimeline.Side.SELF),
+                new DuelTimeline.Entry.EffectActivated(2, 2, DuelTimeline.Side.SELF,
+                        TestDuels.MULTITASK, 0, 1, ZoneRef.spellTrap(PlayerSide.SELF, 2)));
+
+        String section = joined(sections.lines(timeline.turn(2)));
+        assertTrue(section.contains("发动的是这张卡本身"), section);
+        assertTrue(section.contains("①②③ 的效果都还没有发动"), section);
+    }
+
+    @Test
+    void continuousSpellEffectActivationStillNamesItsClause() {
+        // 已表侧发动效果 ①（desc = 本卡效果码）：照常精确定位条款，不加"发动卡"注记
+        DuelTimeline timeline = timeline(
+                new DuelTimeline.Entry.TurnStarted(1, 2, DuelTimeline.Side.SELF),
+                new DuelTimeline.Entry.EffectActivated(2, 2, DuelTimeline.Side.SELF,
+                        TestDuels.MULTITASK, TestDuels.MULTITASK * 16, 1,
+                        ZoneRef.spellTrap(PlayerSide.SELF, 2)));
+
+        String section = joined(sections.lines(timeline.turn(2)));
+        assertTrue(section.contains("我方：发动 闪刀机关-多任务战刀机"), section);
+        assertTrue(section.contains("①：1回合1次，以自己场上1张其他卡为对象才能发动"),
+                "效果码可解析时要给精确条款:\n" + section);
+        assertFalse(section.contains("发动的是这张卡本身"),
+                "效果发动不要误标成发动卡:\n" + section);
+    }
+
+    @Test
     void turnStartedRendersABoundaryLine() {
         // 直推全文后，回合分界由边界行承载（不再有摘要行的"T3（对方回合）"头）
         DuelTimeline timeline = timeline(

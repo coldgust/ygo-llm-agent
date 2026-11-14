@@ -20,7 +20,7 @@ import com.github.coldgust.ygoagent.model.Timing;
 import com.github.coldgust.ygoagent.pipeline.judge.JudgePrompts;
 import com.github.coldgust.ygoagent.pipeline.reflex.ReflexPolicyImpl;
 import com.github.coldgust.ygoagent.planner.PlannerPrompts;
-import com.github.coldgust.ygoagent.planner.PlannerSession;
+import com.github.coldgust.ygoagent.planner.PlannerRuntime;
 import com.github.coldgust.ygoagent.trace.DecisionTraceWriter;
 import com.github.coldgust.ygoagent.pipeline.TestDuels;
 import dev.langchain4j.data.message.SystemMessage;
@@ -115,7 +115,7 @@ class PipelineCharacterizationTest {
         FakeChatModel chat = new FakeChatModel(advisorJson("先展开再压制"),
                 "{\"choice\": \"C1\", \"rationale\": \"r\", \"confidence\": 0.5}");
         Agents agents = agents(chat, cfg());
-        PlannerSession planner = PlannerSession.builder(agents.planner(),
+        PlannerRuntime planner = PlannerRuntime.builder(agents.planner(),
                 new ContextPackBuilder(TestDuels.facts()),
                 cfg(), agents.plannerMemory())
                 .feed(feedFor(agents.plannerMemory(), agents.judgeMemory()))
@@ -139,7 +139,10 @@ class PipelineCharacterizationTest {
 
         assertEquals(1, catcher.execEvents.size(), "一次决策一条 EXEC_DECISION");
         Map<String, Object> payload = catcher.execEvents.getFirst();
-        assertEquals(Set.of("level", "levelLabel", "requestLabel", "intent", "intentLabel",
+        assertEquals(Set.of("level", "levelLabel", "requestLabel",
+                        // 2026-11-15：前端描述与决策器对齐——抬头/连锁内容/阶段中文名随事件发出
+                        "requestHeadline", "phaseLabel",
+                        "intent", "intentLabel",
                         "confidence", "missReasons", "explanation",
                         "adviceId", "adviceTurn", "adviceStale", "adviceGoal",
                         "seq", "turn", "phase", "requestKind"),
@@ -153,7 +156,7 @@ class PipelineCharacterizationTest {
         EventCatcher catcher = new EventCatcher();
         FakeChatModel chat = new FakeChatModel("{\"choice\": \"C1\", \"rationale\": \"r\", \"confidence\": 0.5}");
         Agents agents = agents(chat, cfg());
-        PlannerSession planner = PlannerSession.builder(agents.planner(),
+        PlannerRuntime planner = PlannerRuntime.builder(agents.planner(),
                 new ContextPackBuilder(TestDuels.facts()),
                 cfg(), agents.plannerMemory())
                 .feed(feedFor(agents.plannerMemory(), agents.judgeMemory()))
@@ -173,7 +176,9 @@ class PipelineCharacterizationTest {
         port.decide(mainPoint(), DecisionDeadline.of(3000));
 
         Map<String, Object> payload = catcher.execEvents.getFirst();
-        assertEquals(Set.of("level", "levelLabel", "requestLabel", "intent", "intentLabel",
+        assertEquals(Set.of("level", "levelLabel", "requestLabel",
+                        "requestHeadline", "phaseLabel",
+                        "intent", "intentLabel",
                         "confidence", "missReasons", "explanation",
                         "seq", "turn", "phase", "requestKind"),
                 payload.keySet(), "无建议时 adviceId/adviceTurn/adviceStale/adviceGoal 不出现");

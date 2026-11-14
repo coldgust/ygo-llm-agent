@@ -2,6 +2,7 @@ package com.github.coldgust.ygoagent.pipeline;
 
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
 import com.github.coldgust.ygoagent.context.DuelRecordFeed;
+import com.github.coldgust.ygoagent.context.PhaseText;
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
 import com.github.coldgust.ygoagent.llm.memory.DuelChatMemory;
 import com.github.coldgust.ygoagent.llm.service.JudgeAgent;
@@ -21,7 +22,7 @@ import com.github.coldgust.ygoagent.pipeline.plan.PlacementResolver;
 import com.github.coldgust.ygoagent.pipeline.plan.ZoneCodes;
 import com.github.coldgust.ygoagent.pipeline.reflex.FallbackIntents;
 import com.github.coldgust.ygoagent.pipeline.reflex.ReflexPolicy;
-import com.github.coldgust.ygoagent.planner.PlannerSession;
+import com.github.coldgust.ygoagent.planner.PlannerRuntime;
 import com.github.coldgust.ygoagent.trace.DecisionTraceWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,7 +48,8 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(DecisionPipeline.class);
 
     private final ReflexPolicy reflex;
-    private final PlannerSession planner;
+    private final PlannerRuntime planner;
+    private final ContextPackBuilder packer;
     private final PipelineSettings settings;
     private final DecisionEngine delegate;
     private final DecisionTraceWriter traceWriter;
@@ -62,7 +64,7 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
      * 可选依赖用 Builder 逐项声明；派生子件（PlacementResolver/LlmJudge）在构造器内组装——
      * 这里是它们的唯一生产性组装点。
      */
-    public static Builder builder(ReflexPolicy reflex, PlannerSession planner,
+    public static Builder builder(ReflexPolicy reflex, PlannerRuntime planner,
                                   ContextPackBuilder packer, JudgeAgent judgeAgent,
                                   PipelineSettings settings, CardFacts facts) {
         return new Builder(reflex, planner, packer, judgeAgent, settings, facts);
@@ -71,7 +73,7 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
     /** 依赖收集器：必填六件套 + 决策器记忆件 + 可选兜底引擎/轨迹/日志（缺省走静默默认）。 */
     public static final class Builder {
         private final ReflexPolicy reflex;
-        private final PlannerSession planner;
+        private final PlannerRuntime planner;
         private final ContextPackBuilder packer;
         private final JudgeAgent judgeAgent;
         private final PipelineSettings settings;
@@ -82,7 +84,7 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
         private DuelChatMemory judgeMemory;
         private DuelRecordFeed feed;
 
-        private Builder(ReflexPolicy reflex, PlannerSession planner,
+        private Builder(ReflexPolicy reflex, PlannerRuntime planner,
                         ContextPackBuilder packer, JudgeAgent judgeAgent,
                         PipelineSettings settings, CardFacts facts) {
             this.reflex = reflex;
@@ -133,13 +135,14 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
         }
     }
 
-    private DecisionPipeline(ReflexPolicy reflex, PlannerSession planner,
+    private DecisionPipeline(ReflexPolicy reflex, PlannerRuntime planner,
                              ContextPackBuilder packer, JudgeAgent judgeAgent,
                              PipelineSettings settings, CardFacts facts,
                              DecisionEngine delegate, DecisionTraceWriter traceWriter,
                              VerboseLog trace, DuelChatMemory judgeMemory, DuelRecordFeed feed) {
         this.reflex = reflex;
         this.planner = planner;
+        this.packer = packer;
         this.settings = settings;
         this.delegate = delegate;
         this.traceWriter = DecisionTraceWriter.noopOr(traceWriter);
@@ -175,12 +178,6 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
             levelLabel = "异常降级";
         }
         memory.rememberEffectScope(point, decision);
-        try {
-            if (point.kind() == RequestKind.MAIN_PHASE || point.kind() == RequestKind.BATTLE_PHASE) {
-                planner.requestRevision(point);
-            }
-        } catch (RuntimeException ignored) {
-        }
         long end = System.nanoTime();
         // 全链路日志：一行看清"这次是谁做的决定、花了多久、为什么没走上一级"
         trace.decision("seq=" + point.seq() + " T" + point.turn() + " " + point.kind().label()
@@ -194,6 +191,15 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
         payload.put("level", level);
         payload.put("levelLabel", levelLabel);
         payload.put("requestLabel", point.kind().label());
+        // 前端描述与决策器对齐（2026-11-15 用户指令）：决策器看到的请求抬头（回合/谁的回合/阶段/
+        // "此时可发动效果"等）、连锁逐环内容、阶段中文名一并发出——空链窗口不再显示成"连锁响应"，
+        // 有连锁时前端能同步看到在响应什么。
+        payload.put("phaseLabel", PhaseText.label(point.phase()));
+        payload.put("requestHeadline", packer.requestHeadline(point));
+        String chainLine = packer.compactChain(point);
+        if (!chainLine.isEmpty()) {
+            payload.put("chain", chainLine);
+        }
         payload.put("intent", decision.intent().getClass().getSimpleName());
         payload.put("intentLabel", ChoiceIntent.label(decision.intent()));
         payload.put("confidence", decision.confidence());

@@ -20,7 +20,7 @@ import java.util.Set;
 
 /**
  * REFLEX = <b>零策略假设层</b>：只回答"无论玩家的战略如何、答案都相同"的请求；
- * 凡是有取舍的，一律返回 {@code empty}，交给 ②计划匹配 → ④直答 → ⑤兜底。
+ * 凡是有取舍的，一律返回 {@code empty}，交给 ②计划匹配 → ④判断 → ⑤兜底。
  */
 public final class ReflexPolicyImpl implements ReflexPolicy {
 

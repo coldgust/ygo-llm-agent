@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p>只拥有调度相关的计数与锁：本回合已发数、在途锁（防重复排队）、记录水位（增量拉取）、
  * 回合预算计数。判断逻辑（配额、自排空条件）集中在这里；编排（收事件、拼批、调 LLM）
- * 留在 {@link PlannerSession}。
+ * 留在 {@link PlannerRuntime}。
  */
 final class EventCheckpoints {
 

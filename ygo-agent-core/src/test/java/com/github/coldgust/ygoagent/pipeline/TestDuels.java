@@ -39,6 +39,10 @@ public final class TestDuels {
      * 用来回归"不许把第一条 ① 当成本次请求"（实机最新一局 seq=10 的事故）。
      */
     public static final long CYANOS = 20357457L;
+    /**
+     * 闪刀机关-多任务战刀机：永续魔法，①② 是表侧在场后另起的连锁（发动卡 ≠ 发动效果）。
+     */
+    public static final long MULTITASK = 24010609L;
 
     /** 内存版卡牌事实（测试用）。 */
     public static CardFacts facts() {
@@ -75,6 +79,14 @@ public final class TestDuels {
                 "①：这张卡不会被效果破坏，双方不能把这张卡作为效果的对象。"
                         + "②：自己主要阶段才能发动。对方场上1只怪兽破坏，给与对方那个原本攻击力数值的伤害。"
                         + "③：1回合1次，卡的效果发动时，丢弃1张手卡才能发动。那个发动无效并破坏，这张卡的攻击力上升1000。"));
+        map.put(MULTITASK, new CardFact(MULTITASK, "闪刀机关-多任务战刀机",
+                "Sky Striker Mecha - Multiroll", "SPELL", "永续魔法", "", "",
+                null, null, null,
+                "①：1回合1次，以自己场上1张其他卡为对象才能发动。这个回合，对方不能对应"
+                        + "自己的魔法卡的发动把魔法·陷阱·怪兽的效果发动。并且，再把作为对象的卡送去墓地。"
+                        + "②：自己·对方的结束阶段才能发动。把最多有这个回合这张卡表侧表示存在期间"
+                        + "自己发动的「闪刀」魔法卡数量的「闪刀」魔法卡从自己墓地到自己场上盖放"
+                        + "（同名卡最多1张）。这个效果盖放的卡从场上离开的场合除外。"));
         map.put(44405066L, new CardFact(44405066L, "圣夜降临的骑士", "Knight", "MONSTER",
                 "效果怪兽", "战士", "光", 2500, 2000, 7, "测试怪 A。"));
         map.put(70902743L, new CardFact(70902743L, "红莲魔龙", "Red Dragon", "MONSTER",

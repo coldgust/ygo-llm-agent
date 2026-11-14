@@ -3,7 +3,9 @@ package com.github.coldgust.ygoagent.selection;
 import com.github.coldgust.ygodomain.decision.ChoiceRequest;
 import com.github.coldgust.ygodomain.decision.ChoiceSelection;
 import com.github.coldgust.ygodomain.duel.Position;
+import com.github.coldgust.ygodomain.zone.ZoneKind;
 import com.github.coldgust.ygodomain.zone.ZoneRef;
+import com.github.coldgust.ygoagent.context.CardText;
 import com.github.coldgust.ygoagent.pipeline.plan.ZoneCodes;
 
 import java.util.List;
@@ -67,7 +69,7 @@ public final class SelectionDescriber {
             case ChoiceSelection.Reposition a -> "变更表示形式 " + card(a.card());
             case ChoiceSelection.SetMonster a -> "盖放怪兽 " + card(a.card());
             case ChoiceSelection.SetSpellTrap a -> "盖放魔陷 " + card(a.card());
-            case ChoiceSelection.Activate a -> "发动 " + card(a.effect().card()) + " 的效果";
+            case ChoiceSelection.Activate a -> activation(a.effect());
             case ChoiceSelection.EnterBattlePhase ignored -> "进入战斗阶段";
             case ChoiceSelection.EndTurn ignored -> "结束回合";
             case ChoiceSelection.ShuffleHand ignored -> "洗牌";
@@ -76,7 +78,7 @@ public final class SelectionDescriber {
 
     private String battle(ChoiceSelection.BattlePhaseAction action) {
         return switch (action) {
-            case ChoiceSelection.BattleActivate a -> "发动 " + card(a.effect().card()) + " 的效果";
+            case ChoiceSelection.BattleActivate a -> activation(a.effect());
             case ChoiceSelection.Attack a -> "攻击 " + card(a.target().card())
                     + (a.target().directAttack() ? "（直接攻击）" : "");
             case ChoiceSelection.EnterMainPhase2 ignored -> "进入主要阶段 2";
@@ -90,6 +92,38 @@ public final class SelectionDescriber {
             case ChoiceSelection.UnselectStep.Unselect s -> "取消选中 " + card(s.card());
             case ChoiceSelection.UnselectStep.Finish ignored -> "结束选择";
         };
+    }
+
+    /**
+     * 发动措辞区分"发动卡"与"发动效果"（2026-11-15 用户反馈：永续魔法从手牌发动
+     * 被写成"发动…的效果"，事实上只是发动了卡本身、卡面效果一条都没发动）。
+     *
+     * <p>判据与记录层 {@link CardText#activationKind} 同源：描述码是本卡效果码 → 效果；
+     * 来源区域是手牌/卡组、或魔陷类区域且描述码为 0 → 发动卡本身；其余保守按效果措辞。
+     */
+    private String activation(ChoiceRequest.EffectChoice effect) {
+        String label = effect == null ? "?" : card(effect.card());
+        if (effect == null) {
+            return "发动 " + label;
+        }
+        long passcode = effect.card() == null || effect.card().identity() == null
+                ? 0 : effect.card().identity().passcode();
+        long description = effect.description();
+        if (CardText.isOwnEffectCode(passcode, description)) {
+            return "发动 " + label + " 的效果";
+        }
+        ZoneRef zone = effect.card() == null ? null : effect.card().zone();
+        if (zone != null && (zone.kind() == ZoneKind.HAND || zone.kind() == ZoneKind.DECK
+                || (description == 0 && spellTrapish(zone)))) {
+            return "发动 " + label + "（发动卡本身，非效果）";
+        }
+        return "发动 " + label + " 的效果";
+    }
+
+    private static boolean spellTrapish(ZoneRef zone) {
+        return zone.kind() == ZoneKind.SPELL_TRAP_ZONE
+                || zone.kind() == ZoneKind.FIELD_ZONE
+                || zone.kind() == ZoneKind.PENDULUM_ZONE;
     }
 
     private String chain(ChoiceSelection.ChainAnswer answer) {

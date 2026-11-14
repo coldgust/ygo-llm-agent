@@ -21,13 +21,17 @@ final class AnchorSections {
     private static final int DECK_STRATEGY_LIMIT = 2_500;
     private static final int RULE_DIGEST_LIMIT = 8_000;
 
-    private static final int DECK_SECTION_LIMIT = 7_000;
-    private static final int DECK_EFFECT_LIMIT_EXTRA = 160;
-    private static final int DECK_EFFECT_LIMIT_MAIN = 110;
+    /**
+     * 卡组清单段总预算（安全阀，正常到不了）：效果文本**全文不截断**——
+     * 截成半句会让模型丢掉"②③效果"和后半段的限制条件（2026-11-14 实测反馈，
+     * 2026-11-15 用户再次指出 [卡组] 清单同样存在），宁可多花静态消息的 token。
+     * 该段整局不变、进跨回合前缀缓存，实际成本只付一次。
+     */
+    private static final int DECK_SECTION_LIMIT = 20_000;
 
     private static final int CARD_FACT_MAX_CARDS = 14;
-    private static final int CARD_FACT_EFFECT_LIMIT = 180;
-    private static final int CARD_FACT_TOTAL_LIMIT = 2_200;
+    /** 卡面段总预算（安全阀）：同理全文不截断，手牌/场上的卡是判断的第一依据。 */
+    private static final int CARD_FACT_TOTAL_LIMIT = 8_000;
 
     private final CardFacts facts;
     private final String deckStrategy;
@@ -76,7 +80,7 @@ final class AnchorSections {
     }
 
     /**
-     * {@code [卡组]}：己方整副卡组（主+额外）的卡名/种类/攻守/效果摘要。
+     * {@code [卡组]}：己方整副卡组（主+额外）的卡名/种类/攻守/效果全文（不截断）。
      */
     String deckSection() {
         if (deckPasscodes.isEmpty()) {
@@ -95,7 +99,6 @@ final class AnchorSections {
             if (fact == null) {
                 continue;
             }
-            boolean extra = fact.isMonster() && fact.level() == null && fact.defense() == null;
             String effect = fact.effect() == null ? "" : fact.effect().replaceAll("\\s+", " ").trim();
             StringBuilder line = new StringBuilder("- ").append(fact.label());
             StringBuilder meta = new StringBuilder();
@@ -110,16 +113,15 @@ final class AnchorSections {
                 line.append("〔").append(meta).append("〕");
             }
             if (!effect.isEmpty()) {
-                line.append("：").append(Texts.flattenClip(effect,
-                        extra ? DECK_EFFECT_LIMIT_EXTRA : DECK_EFFECT_LIMIT_MAIN));
+                // 全文不截断（flatten 只压平空白）：半句效果比没有更危险，见类内 DECK_SECTION_LIMIT 注释
+                line.append("：").append(Texts.flatten(effect));
             }
             line.append('\n');
             if (used + line.length() > DECK_SECTION_LIMIT) {
                 break;
             }
             if (listed == 0) {
-                sb.append("[卡组] 己方卡组（这是你自己的卡组清单，可用它判断能检索/特召什么；")
-                        .append("需要更完整的效果再调 find_card）：\n");
+                sb.append("[卡组] 己方卡组（这是你自己的卡组清单，效果为全文，可用它判断能检索/特召什么）：\n");
             }
             sb.append(line);
             used += line.length();
@@ -171,7 +173,8 @@ final class AnchorSections {
             String effect = fact.effect().replaceAll("\\s+", " ").trim();
             String line = "- " + fact.label()
                     + (Texts.isBlank(fact.cardType()) ? "" : "〔" + fact.cardType() + "〕")
-                    + "：" + Texts.flattenClip(effect, CARD_FACT_EFFECT_LIMIT) + "\n";
+                    // 全文不截断：场上的卡是要逐条对条件的对象，半句文本会误导判断
+                    + "：" + Texts.flatten(effect) + "\n";
             sb.append(line);
             used += line.length();
             count++;

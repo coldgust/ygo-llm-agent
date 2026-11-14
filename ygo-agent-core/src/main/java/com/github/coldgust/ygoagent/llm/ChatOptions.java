@@ -27,7 +27,7 @@ public record ChatOptions(double temperature, int maxTokens, boolean jsonMode, S
      *
      * <p>和决策档的三点不同：不要 JSON 模式（输出是 Markdown）、温度略高（允许措辞变化，
      * 但仍在 0.3 以内以免自由发挥成小说）、不需要 tools。这条路不在决策热路径上，
-     * 超时可以给得比 直答 宽。
+     * 超时可以给得比 判断 宽。
      */
     public static ChatOptions narrative(int maxTokens) {
         return new ChatOptions(0.3, Math.max(maxTokens, 800), false, "off");

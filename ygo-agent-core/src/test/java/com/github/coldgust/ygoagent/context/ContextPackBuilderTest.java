@@ -203,7 +203,7 @@ class ContextPackBuilderTest {
         var point = TestDuels.mainPhasePoint(state,
                 List.of(TestDuels.cardChoice(201, TestDuels.WIDOW_ANCHOR)), List.of());
 
-        AdvisorKeeper.Snapshot advice = snapshot("A2:SELF#1", 2, false,
+        AdvisorKeeper.Snapshot advice = snapshot("A2:SELF#1", 2,
                 "对手是闪刀：换资源换赢，不抢血", "先展开再压制", "检索建立循环，抓检索时点",
                 "对手已交 1 张阻抗；灰流丽可能还在手");
 
@@ -228,21 +228,21 @@ class ContextPackBuilderTest {
         var point = TestDuels.mainPhasePoint(state,
                 List.of(TestDuels.cardChoice(201, TestDuels.WIDOW_ANCHOR)), List.of());
 
-        // keep 跨回合：快照原样保留（不 carry-over），渲染层标"仅供参考"
-        AdvisorKeeper.Snapshot stale = snapshot("A1:SELF#1", 1, false,
+        // 上回合发布的建议仍未被替换（本回合锚点失败）：渲染层标"仅供参考"
+        AdvisorKeeper.Snapshot stale = snapshot("A1:SELF#1", 1,
                 "", "上一回合的目标", "", "");
 
         String pack = builder.judgeSnapshot(point, stale, "");
         assertTrue(pack.contains("[规划器情报] A1:SELF#1（上回合制定，仅供参考）"),
-                "跨回合的 keep 快照要标 stale:\n" + pack);
+                "跨回合的旧建议快照要标 stale:\n" + pack);
         assertTrue(pack.contains("本回合目标：上一回合的目标"), "内容仍要渲染（方向参考）:\n" + pack);
     }
 
     /** 测试用建议快照；空串字段不渲染（adviceSection 只带非空段）。 */
-    private static AdvisorKeeper.Snapshot snapshot(String adviceId, int turn, boolean skeleton,
+    private static AdvisorKeeper.Snapshot snapshot(String adviceId, int turn,
                                                    String strategy, String goal, String tactics,
                                                    String intel) {
-        AdvisorAnswer answer = new AdvisorAnswer(false, 0.8, strategy, "", "", goal,
+        AdvisorAnswer answer = new AdvisorAnswer(0.8, strategy, "", "", goal,
                 List.of(), tactics, intel, "");
         return new AdvisorKeeper.Snapshot(answer, adviceId, turn, 0.8);
     }

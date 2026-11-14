@@ -49,7 +49,9 @@ export interface AdviceOption {
 export interface DuelEvent {
   // 服务端用 SSE 的 event name 区分类型，必须逐个注册监听（见 subscribe）；
   // 新增事件类型忘了加进来，前端就"永远收不到"而且不报错
-  kind: string // DECISION / EXEC_DECISION / SUBMITTED / ADVICE_EVENT / DUEL_STATUS / COMBO_RECORDED / connected
+  kind: string
+  // DECISION / EXEC_DECISION / SUBMITTED / POSITION_HINT / ADVICE_EVENT /
+  // RUN_DONE / DUEL_STATUS / COMBO_RECORDED / connected
   seq?: number
   turn?: number
   phase?: string
@@ -58,6 +60,12 @@ export interface DuelEvent {
   level?: string
   levelLabel?: string
   requestLabel?: string
+  /** 决策器看到的请求抬头（第 N 回合 对方回合，阶段，此时可发动效果/连锁响应），与决策器输入一致 */
+  requestHeadline?: string
+  /** 决策器看到的连锁内容（连锁1 对方「卡名」…效果原文；链上无效果时省略该字段） */
+  chain?: string
+  /** 阶段中文名（主要阶段1 / 战斗阶段 / 伤害步骤…） */
+  phaseLabel?: string
   pathLabel?: string
   intent?: string
   /** 意图的中文短标签（后端附带；历史事件回退到 intent 枚举名） */
@@ -68,8 +76,12 @@ export interface DuelEvent {
   confidence?: number
   explanation?: string
   missReasons?: string
-  /** 规划器（幕僚）事件子类型：ADVICE_PUBLISHED / ADVICE_KEPT / ADVICE_KEEP_WITHOUT_ADVICE / PARSE_FAILED / CHECKPOINT_FAILED */
+  /** 规划器（幕僚）事件子类型：ADVICE_PUBLISHED / ADVICE_REPLAN_REQUESTED / PARSE_FAILED / CHECKPOINT_FAILED */
   adviceKind?: string
+  /** 规划器产出本次建议的 checkpoint：anchor（回合锚点）/ replan（决策器要求重规划） */
+  checkpoint?: string
+  /** 本次规划耗时（毫秒，ADVICE_PUBLISHED 附带） */
+  elapsedMs?: number
   adviceId?: string
   /** 建议发布的回合（决策器据此标"上回合制定，仅供参考"） */
   adviceTurn?: number
@@ -85,7 +97,10 @@ export interface DuelEvent {
   combo?: string
   status?: string
   winner?: string | null
+  /** 终态 DUEL_STATUS 的胜利原因 / 重规划请求与解析失败的原因说明 */
   reason?: string | null
+  /** POSITION_HINT：决策器选动作时一并给出的落位区域（中文区名），挂在产生它的决策行上 */
+  zone?: string
   archivePolicy?: string | null
   archiveState?: string | null
   answered?: number | null
@@ -114,6 +129,8 @@ export interface ComboRecordPayload {
   stepPreviews: string[]
   summary: string | null
   summarySource: string
+  /** 关键卡（LLM 摘要附带，可能为空） */
+  keyCards?: string | null
 }
 
 async function json<T>(res: Response): Promise<T> {
@@ -174,8 +191,8 @@ export const api = {
     onError?: (message: string, fatal: boolean) => void,
   ): () => void {
     const source = new EventSource(`/api/duels/${duelId}/events`)
-    const names = ['DECISION', 'EXEC_DECISION', 'SUBMITTED', 'ADVICE_EVENT',
-      'DUEL_STATUS', 'COMBO_RECORDED', 'connected']
+    const names = ['DECISION', 'EXEC_DECISION', 'SUBMITTED', 'POSITION_HINT',
+      'ADVICE_EVENT', 'RUN_DONE', 'DUEL_STATUS', 'COMBO_RECORDED', 'connected']
     const handlers = names.map((name) => {
       const handler = (ev: MessageEvent) => {
         try {

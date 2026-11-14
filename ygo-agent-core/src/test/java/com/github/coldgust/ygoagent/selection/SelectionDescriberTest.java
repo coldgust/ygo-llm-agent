@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -55,6 +56,34 @@ class SelectionDescriberTest {
         String text = describer.describe(request, selection);
         assertTrue(text.contains("发动"), text);
         assertTrue(text.contains("闪刀起动-交闪") && text.contains(String.valueOf(ENGAGE)), text);
+    }
+
+    @Test
+    void cardActivationIsNotWordedAsEffectActivation() {
+        // 2026-11-15 用户反馈：永续魔法从手牌发动是"发动卡本身"，不能写成"发动…的效果"
+        var card = new ChoiceRequest.CardChoice(1, CardIdentity.Known.of(24010609L),
+                ZoneRef.hand(PlayerSide.SELF));
+        var selection = new ChoiceSelection.Activate(
+                new ChoiceRequest.EffectChoice(card, 0));
+        String text = describer.describe(null, selection);
+        assertTrue(text.contains("发动卡本身"), text);
+
+        // 从盖放状态翻开（魔陷区 + desc=0）同样是发动卡
+        var setCard = new ChoiceRequest.CardChoice(2, CardIdentity.Known.of(24010609L),
+                ZoneRef.spellTrap(PlayerSide.SELF, 2));
+        assertTrue(describer.describe(null,
+                new ChoiceSelection.Activate(new ChoiceRequest.EffectChoice(setCard, 0)))
+                .contains("发动卡本身"));
+
+        // 本卡效果码（卡号<<4）→ 照常措辞"的效果"
+        var effect = new ChoiceRequest.CardChoice(3, CardIdentity.Known.of(24010609L),
+                ZoneRef.spellTrap(PlayerSide.SELF, 2));
+        String effectText = describer.describe(null,
+                new ChoiceSelection.Activate(
+                        new ChoiceRequest.EffectChoice(effect, 24010609L * 16)));
+        assertTrue(effectText.contains("的效果"),
+                "效果码命中本卡时按效果措辞: " + effectText);
+        assertFalse(effectText.contains("发动卡本身"), effectText);
     }
 
     @Test

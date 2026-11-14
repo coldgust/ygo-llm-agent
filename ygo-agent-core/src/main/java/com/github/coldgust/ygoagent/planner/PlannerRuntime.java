@@ -22,8 +22,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -31,25 +29,29 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * 战术幕僚的持续 session 门面（docs/planner-judge-memory-redesign.md §6）：只做编排，不持有可拆状态。
+ * 战术幕僚的持续运行时门面（docs/planner-judge-memory-redesign.md §6）：只做编排，不持有可拆状态。
+ * 名字取 Runtime 而非 Session，是因为它承载的不是"一次会话"，而是幕僚跑起来所需的全部机制——
+ * 整局记忆、后台执行线程、锚点与配额、降级冷却；会话本体是里面的 {@link DuelChatMemory}。
  * <ul>
  *   <li>连续对话：整局一份 {@link DuelChatMemory}（pinned [system, 静态资料] + 决斗记录追加流 +
  *       历次建议），修剪由 memory 承载；</li>
  *   <li>锚点：回合切换时记录流拉取（入史）+ 局面快照 stage（不入史）+ 薄请求行，请求本回合建议
- *       （{@link AdvisorKeeper} 持有最新快照）；</li>
- *   <li>修订：MAIN/BATTLE flush 触发、配额内（每回合一次），同构锚点（ADVISOR_REVISION_TEMPLATE）；</li>
- *   <li>keep：建议仍适用 → 快照原样保留，不 carry-over（渲染层按回合号标"仅供参考"）；</li>
+ *       （{@link AdvisorKeeper} 持有最新快照）。<b>每回合规划一次</b>：回合内不再主动修订，
+ *       keep 也随之废止——每次 checkpoint 都必须产出全量建议（2026-11-14 用户指令）；</li>
+ *   <li>重规划：决策器判决 needReplan=true 触发（每回合一次配额），请求行原样带决策器给出的
+ *       重规划原因（ADVISOR_REPLAN_TEMPLATE）；发起即作废旧建议（{@link AdvisorKeeper#retire}）——
+ *       新建议没来得及发布前，决策器不带旧规划；</li>
  *   <li>降级：LLM 失败进入冷却期，期间请求快速返回空（决策器靠记忆与快照自行判断）。</li>
  * </ul>
  * 全部 LLM 调用在单线程后台执行器上运行；对外状态为不可变快照（无锁读）。
- * 抢答与重规划已随顾问定位定稿删除（规划器不再回答候选）。
+ * 抢答已随顾问定位定稿删除（规划器不再回答候选）；回合内唯一的重规划由决策器判决驱动。
  */
-public final class PlannerSession implements AutoCloseable {
+public final class PlannerRuntime implements AutoCloseable {
 
-    private static final Logger log = LoggerFactory.getLogger(PlannerSession.class);
+    private static final Logger log = LoggerFactory.getLogger(PlannerRuntime.class);
 
-    /** 修订 checkpoint 的每回合上限：顾问建议是回合级主线，多次修订大多回 keep 白烧配额。 */
-    private static final int REVISION_CHECKPOINTS_PER_TURN = 1;
+    /** 重规划 checkpoint 的每回合上限：唯一回合内规划；封顶防"决策器每手都判重规划"刷爆配额。 */
+    private static final int REPLAN_CHECKPOINTS_PER_TURN = 1;
 
     private final PlannerAgent plannerAgent;
     private final ContextPackBuilder packer;
@@ -67,12 +69,10 @@ public final class PlannerSession implements AutoCloseable {
     private final EventCheckpoints checkpoints = new EventCheckpoints();
     private final AtomicReference<Instant> degradedUntil = new AtomicReference<>(Instant.EPOCH);
     private final AtomicLong checkpointCount = new AtomicLong();
-    /** 本回合是否已因"keep 但无建议"补过一次（防每轮都补，刷爆配额）。 */
-    private final Set<String> keepWithoutAdviceRetried = ConcurrentHashMap.newKeySet();
     private final VerboseLog trace;
 
-    /** 当前回合键（"回合数:回合方"）：锚点触发、每回合配额与恢复的键。 */
-    private String turnKey = "";
+    /** 当前回合键（"回合数:回合方"）：锚点触发、每回合配额与恢复的键。volatile：决策线程读、worker 写。 */
+    private volatile String turnKey = "";
 
     /**
      * 可选依赖用 Builder 逐项声明（望远镜构造器在 ContextPackBuilder 有失控教训）。
@@ -118,16 +118,16 @@ public final class PlannerSession implements AutoCloseable {
             return this;
         }
 
-        public PlannerSession build() {
+        public PlannerRuntime build() {
             if (feed == null) {
-                throw new IllegalStateException("PlannerSession 缺 feed（记录流拉取的必填接线）");
+                throw new IllegalStateException("PlannerRuntime 缺 feed（记录流拉取的必填接线）");
             }
-            return new PlannerSession(plannerAgent, packer, settings, memory,
+            return new PlannerRuntime(plannerAgent, packer, settings, memory,
                     traceWriter, feed, trace);
         }
     }
 
-    private PlannerSession(PlannerAgent plannerAgent, ContextPackBuilder packer,
+    private PlannerRuntime(PlannerAgent plannerAgent, ContextPackBuilder packer,
                            PipelineSettings settings, DuelChatMemory memory,
                            DecisionTraceWriter traceWriter, DuelRecordFeed feed, VerboseLog trace) {
         this.plannerAgent = plannerAgent;
@@ -164,8 +164,9 @@ public final class PlannerSession implements AutoCloseable {
     }
 
     /**
-     * 决策时等待规划器：本回合首次决策等锚点建议发布（预算内轮询；keep 语义下快照可能仍是
-     * 上回合的——渲染层标 stale）。不健康/超时 → empty（调用方落 ② 直答）。
+     * 决策时等待规划器：本回合首次决策等锚点建议发布（预算内轮询）。
+     * 上回合锚点失败时快照可能仍是上回合的——渲染层按回合号标 stale。
+     * 不健康/超时 → empty（调用方落 ② 判断）。
      */
     public Optional<AdvisorKeeper.Snapshot> waitForAdvice(long waitMs) {
         if (waitMs <= 0 || degraded()) {
@@ -224,7 +225,6 @@ public final class PlannerSession implements AutoCloseable {
         checkpoints.resetForTurn();
         checkpointCount.set(0);
         checkpoints.resetTurnBudget();
-        keepWithoutAdviceRetried.clear();
         long startedAt = System.currentTimeMillis();
         // 记录流先入史（回合收尾摘要 + 增量），快照随后 stage——厚内容不入记忆
         feed.fillBeforeCall(memory, point.turn());
@@ -242,44 +242,53 @@ public final class PlannerSession implements AutoCloseable {
         }
     }
 
-    /** 锚点请求行（A.2）；无可沿用建议时明确禁止 keep（防"keep 无建议"空转一轮）。 */
+    /** 锚点请求行（A.2）：每回合规划一次、只此一次，必须产出全量建议（keep 已废止）。 */
     private String anchorRequest(DecisionPoint point) {
         int turn = point.turn();
         boolean oppTurn = !point.state().isMyTurn();
         String side = point.state().isMyTurn() ? "我方回合" : "对方回合";
-        String request = oppTurn
+        return oppTurn
                 ? PlannerPrompts.ADVISOR_ANCHOR_OPP_TEMPLATE.formatted(turn)
                 : PlannerPrompts.ADVISOR_ANCHOR_TEMPLATE.formatted(turn, side);
-        if (keeper.isEmpty()) {
-            request = request
-                    + "\n注意：这是本回合首次请求，当前没有任何可沿用的建议"
-                    + "——禁止回复 {\"keep\": true}，请直接输出完整的建议 JSON。";
-        }
-        return request;
     }
 
     /**
-     * 修订 checkpoint（MAIN/BATTLE flush 触发）：配额内把"记录已追加 + 最新快照"带给幕僚，
-     * 请求 keep 或更新建议。
+     * 重规划（决策器判决 needReplan=true 触发，唯一的回合内规划）：
+     * <ol>
+     *   <li>配额/在途闸通过后<b>立即作废旧建议</b>（{@link AdvisorKeeper#retire}）——
+     *       决策器已判定它不可用，新规划发布前不得再带给决策器；</li>
+     *   <li>worker 上同构锚点跑重规划 checkpoint：请求行原样转达决策器给出的原因，
+     *       发布走 completeCheckpoint。</li>
+     * </ol>
+     * 调用方（决策线程）随即重置"本回合已等过建议"标记（TurnMemory.clearWaitedForAdvice），
+     * 下一次决策前按配置的首次等待时长（firstAdviceWaitMs）再等一次新规划。
+     *
+     * @param reason 决策器给出的重规划原因（可空；空白时请求行给占位说明）
      */
-    public void requestRevision(DecisionPoint point) {
+    public void requestReplan(DecisionPoint point, String reason) {
         if (turnKey.isEmpty() || degraded()) {
             return;
         }
-        if (!checkpoints.quotaAvailable(REVISION_CHECKPOINTS_PER_TURN,
+        if (!checkpoints.quotaAvailable(REPLAN_CHECKPOINTS_PER_TURN,
                 checkpointCount.get(), settings.maxCheckpointsPerTurn())) {
-            return; // 成本闸：本回合不再修订
+            return; // 成本闸：本回合不再重规划（沿用上一份建议或无建议判断）
         }
         if (!checkpoints.tryQueue()) {
-            return; // 已有在途检查点
+            return; // 已有在途检查点（锚点或上一次重规划）：规划已在路上，不再重复作废
         }
+        keeper.retire();
+        log.info("决策器判决重规划（回合 {}）：旧建议已作废，原因：{}",
+                point.turn(), Texts.isBlank(reason) ? "（未给出）" : Texts.flattenClip(reason, 120));
+        adviceEvent("ADVICE_REPLAN_REQUESTED", Map.of(
+                "turn", point.turn(),
+                "reason", String.valueOf(Texts.isBlank(reason) ? "" : Texts.flattenClip(reason, 200))));
         String segment = turnKey;
         worker.execute(() -> {
             try {
                 if (!segment.equals(turnKey)) {
                     return; // 段已轮换：这是上一回合的事，新回合的锚点会重新规划
                 }
-                if (!checkpoints.quotaAvailable(REVISION_CHECKPOINTS_PER_TURN,
+                if (!checkpoints.quotaAvailable(REPLAN_CHECKPOINTS_PER_TURN,
                         checkpointCount.get(), settings.maxCheckpointsPerTurn())) {
                     return;
                 }
@@ -289,13 +298,13 @@ public final class PlannerSession implements AutoCloseable {
                 try {
                     memory.stageOnce(UserMessage.from(packer.plannerSnapshot(point.state())));
                     AdvisorAnswer answer;
-                    try (var ignored = trace.scope("规划器 revision")) {
-                        answer = plannerAgent.checkpoint(PlannerPrompts.ADVISOR_REVISION_TEMPLATE);
+                    try (var ignored = trace.scope("规划器 replan")) {
+                        answer = plannerAgent.checkpoint(replanRequest(reason));
                     }
-                    completeCheckpoint("revision", answer, startedAt, point);
+                    completeCheckpoint("replan", answer, startedAt, point);
                 } catch (RuntimeException e) {
                     // 与锚点同构：调用失败进冷却、解析失败保留建议；漏 catch 会打死 worker 线程（实测事故）
-                    handleCheckpointFailure("revision", e);
+                    handleCheckpointFailure("replan", e);
                 } finally {
                     memory.dropEphemeral();
                 }
@@ -305,32 +314,24 @@ public final class PlannerSession implements AutoCloseable {
         });
     }
 
+    /** 重规划请求行（A.2 同构）：决策器的原因原样转达（截断防护），空白给占位说明。 */
+    private static String replanRequest(String reason) {
+        String why = Texts.isBlank(reason) ? "（决策器未给出原因）" : Texts.flattenClip(reason, 200);
+        return PlannerPrompts.ADVISOR_REPLAN_TEMPLATE.formatted(why);
+    }
+
     /**
-     * checkpoint 后处理（keep 判定 / 建议解析 / 发布）。调用失败与解析失败分开处理：
-     * 解析失败（框架 POJO 解析抛出的非 LlmChatException）不是"规划器坏了"，保留当前建议。
+     * checkpoint 后处理（解析校验 / 发布）。调用失败与解析失败分开处理：
+     * 解析失败（框架 POJO 解析抛出的非 LlmChatException）不是"规划器坏了"，只记因不发布。
+     * keep 已废止（2026-11-14）：每次 checkpoint 都必须产出全量建议——
+     * 内容为空即视为未按 schema 输出。
      */
     private void completeCheckpoint(String kind, AdvisorAnswer raw, long startedAt, DecisionPoint point) {
         long elapsed = System.currentTimeMillis() - startedAt;
         checkpointCount.incrementAndGet();
         AdvisorAnswer answer = raw;
-        if (Boolean.TRUE.equals(answer.keep())) {
-            if (keeper.isEmpty()) {
-                log.info("规划器回 keep 但当前没有建议（kind={}），改请求重出建议", kind);
-                adviceEvent("ADVICE_KEEP_WITHOUT_ADVICE", Map.of("checkpoint", String.valueOf(kind)));
-                if (keepWithoutAdviceRetried.add(turnKey)) {
-                    runKeepRecovery(kind, point);
-                }
-                return;
-            }
-            log.info("规划器回 keep（{}）：建议沿用（adviceId={}）", kind,
-                    keeper.current().map(AdvisorKeeper.Snapshot::adviceId).orElse("?"));
-            adviceEvent("ADVICE_KEPT", Map.of(
-                    "checkpoint", String.valueOf(kind),
-                    "adviceId", keeper.current().map(AdvisorKeeper.Snapshot::adviceId).orElse("")));
-            return;
-        }
         if (!answer.hasAdvice()) {
-            String reason = "输出无效：keep 缺失且建议内容为空";
+            String reason = "输出无效：无实质建议内容";
             log.warn("规划器输出无法解析为建议（kind={}，原因：{}）", kind, reason);
             adviceEvent("PARSE_FAILED", Map.of("checkpoint", String.valueOf(kind),
                     "reason", reason));
@@ -382,24 +383,6 @@ public final class PlannerSession implements AutoCloseable {
             sb.append("情报：").append(Texts.flattenClip(a.intel(), 160));
         }
         return sb.toString();
-    }
-
-    /** keep 恢复：同一次调用现场（快照原样 stage）请求完整建议，每回合至多一次。 */
-    private void runKeepRecovery(String kind, DecisionPoint point) {
-        long startedAt = System.currentTimeMillis();
-        try {
-            memory.stageOnce(UserMessage.from(packer.plannerSnapshot(point.state())));
-            AdvisorAnswer answer;
-            try (var ignored = trace.scope("规划器 keep 恢复")) {
-                answer = plannerAgent.checkpoint(
-                        PlannerPrompts.ADVISOR_KEEP_RECOVERY_TEMPLATE.formatted(String.valueOf(kind)));
-            }
-            completeCheckpoint("recovery", answer, startedAt, point);
-        } catch (RuntimeException e) {
-            handleCheckpointFailure("recovery", e);
-        } finally {
-            memory.dropEphemeral();
-        }
     }
 
     private void handleCheckpointFailure(String kind, RuntimeException e) {

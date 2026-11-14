@@ -112,6 +112,17 @@ public final class DuelRecordSections {
         if (entry instanceof DuelTimeline.Entry.EffectActivated e) {
             String head = linkPrefix(e.chainIndex()) + sideText(e.side()) + "：发动 "
                     + cardLabel(e.passcode());
+            // 先判"发动的是卡还是效果"（永续魔陷/场地魔法翻开上场的发动不发动任何条款，
+            // 2026-11-15 用户反馈）：是卡就明说，别把全部条款写得像"都发动了"
+            CardText.ActivationKind kind = cardText.activationKind(
+                    e.passcode(), e.description(), e.sourceZone());
+            List<String> clauses = cardText.clauses(e.passcode());
+            if (kind == CardText.ActivationKind.CARD) {
+                String note = cardText.isContinuousLike(e.passcode())
+                        ? "（发动的是这张卡本身；此时卡面 ①②③ 的效果都还没有发动）"
+                        : "（发动的是这张卡本身）";
+                return head + note + (clauses.isEmpty() ? "" : "：" + cardText.all(clauses));
+            }
             Optional<String> clause = cardText.firedClause(e.passcode(), e.description());
             if (clause.isPresent()) {
                 // 描述码可解析（或单条款卡）：给那一条正文，就是准确答案
@@ -120,7 +131,6 @@ public final class DuelRecordSections {
             // 多条款卡解不出条款（MDPro3 分叉的 CHAINING desc 是类别值，不带效果序号）：
             // 给 来源区域 + 全部条款全文，让模型/复盘自己判断发动了哪条——
             // 创造的 ① 场上·手卡发动、② 墓地发动，区域就能分开；绝不猜一条冒充定位
-            List<String> clauses = cardText.clauses(e.passcode());
             if (clauses.isEmpty()) {
                 return head;
             }

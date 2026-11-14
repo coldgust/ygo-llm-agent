@@ -24,7 +24,7 @@ import com.github.coldgust.ygoagent.model.Timing;
 import com.github.coldgust.ygoagent.model.Candidates;
 import com.github.coldgust.ygoagent.pipeline.judge.JudgePrompts;
 import com.github.coldgust.ygoagent.planner.PlannerPrompts;
-import com.github.coldgust.ygoagent.planner.PlannerSession;
+import com.github.coldgust.ygoagent.planner.PlannerRuntime;
 import com.github.coldgust.ygoagent.pipeline.reflex.ReflexPolicyImpl;
 import com.github.coldgust.ygoagent.trace.DecisionTraceWriter;
 import com.github.coldgust.ygodomain.decision.ChoiceRequest;
@@ -33,6 +33,7 @@ import com.github.coldgust.ygodomain.zone.ZoneRef;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import org.junit.jupiter.api.Test;
@@ -43,6 +44,7 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -96,9 +98,9 @@ class DecisionPipelineTest {
         return feed;
     }
 
-    private static PlannerSession plannerSession(Agents agents, ContextPackBuilder packer,
+    private static PlannerRuntime plannerSession(Agents agents, ContextPackBuilder packer,
                                                  PipelineSettings cfg, VerboseLog trace) {
-        return PlannerSession.builder(agents.planner(), packer, cfg, agents.plannerMemory())
+        return PlannerRuntime.builder(agents.planner(), packer, cfg, agents.plannerMemory())
                 .feed(feedFor(agents.plannerMemory()))
                 .trace(trace)
                 .build();
@@ -123,7 +125,7 @@ class DecisionPipelineTest {
                 List.of(TestDuels.effectChoice(11, TestDuels.ENGAGE, 1001)));
     }
 
-    private record Rig(DecisionPipeline port, PlannerSession planner, FakeChatModel chat,
+    private record Rig(DecisionPipeline port, PlannerRuntime planner, FakeChatModel chat,
                        AtomicInteger delegateCalls) {
     }
 
@@ -142,7 +144,7 @@ class DecisionPipelineTest {
     private Rig rig(PipelineSettings cfg, String... chatReplies) {
         FakeChatModel chat = new FakeChatModel(chatReplies);
         Agents agents = agents(chat, cfg);
-        PlannerSession planner = plannerSession(agents, new ContextPackBuilder(TestDuels.facts()), cfg, trace);
+        PlannerRuntime planner = plannerSession(agents, new ContextPackBuilder(TestDuels.facts()), cfg, trace);
         AtomicInteger delegateCalls = new AtomicInteger();
         DecisionEngine delegate = (point, deadline) -> {
             delegateCalls.incrementAndGet();
@@ -178,7 +180,7 @@ class DecisionPipelineTest {
         assertEquals(0, rig.delegateCalls().get());
         rig.planner().drainForTests();
         // 规划器照常观察（回合锚点），但决策路径没有走 决策器判断：
-        // 调用数 = 锚点 1 次 + keep 无建议的恢复 1 次，关键是"没有第 3 次决策器判断"。
+        // 调用数 = 锚点 1 次（输出无效，keep 恢复已废止，无第二次），关键是"没有决策器判断"。
         assertTrue(rig.chat().requests.size() <= 3,
                 "REFLEX 命中后不应再调 LLM 做决策器判断，实际调用 " + rig.chat().requests.size());
     }
@@ -219,14 +221,75 @@ class DecisionPipelineTest {
     }
 
     @Test
-    void keepWithoutAdviceStillLetsJudgeDecide() {
-        // 锚点回 keep 且无建议（恢复请求也失败）：② 决策器判断照常工作，建议缺席不阻塞
-        Rig rig = rig("{\"keep\": true}",
+    void judgeReplanRetiresOldAdviceAndRepublishesWithReason() {
+        // 2026-11-14 用户指令：决策器判决 needReplan=true → 发起重规划（原因转达规划器），
+        // 旧建议即刻作废；本手决策照常给出。
+        Rig rig = rig(fastWait(),
+                advisorJson("先展开再压制"),
+                "{\"choice\": \"C1\", \"rationale\": \"召唤大黄蜂\", \"confidence\": 0.8, "
+                        + "\"needReplan\": true, \"replanReason\": \"主打线资源已被无效消耗\"}",
+                advisorJson("改为保资源"));
+        DecisionPoint point = mainPoint();
+        rig.planner().observePoint(point);
+        rig.planner().drainForTests();
+        String oldAdviceId = rig.planner().currentAdvice().orElseThrow().adviceId();
+
+        DuelDecision decision = rig.port().decide(point, DecisionDeadline.of(3000));
+        assertEquals(PathKind.LLM_CALL, decision.pathKind(), "重规划不影响本手决策");
+        assertEquals(ChoiceIntent.Summon.class, decision.intent().getClass());
+
+        rig.planner().drainForTests();
+        var fresh = rig.planner().currentAdvice().orElseThrow();
+        assertFalse(fresh.adviceId().equals(oldAdviceId), "重规划应发布新建议（旧建议已作废）");
+        String plannerSaw = allUserTexts(rig);
+        assertTrue(plannerSaw.contains("===重规划"), "规划器应收到重规划请求行");
+        assertTrue(plannerSaw.contains("主打线资源已被无效消耗"),
+                "决策器的重规划原因应原样转达给规划器");
+    }
+
+    @Test
+    void replanIsCappedAtOnePerTurn() {
+        // 同回合第二次 needReplan：配额闸挡下——不重复作废建议、不再发重规划请求
+        Rig rig = rig(fastWait(),
+                advisorJson("第一条建议"),
+                "{\"choice\": \"C1\", \"rationale\": \"召唤大黄蜂\", \"confidence\": 0.8, "
+                        + "\"needReplan\": true, \"replanReason\": \"第一手判决\"}",
+                advisorJson("重规划建议"),
+                "{\"choice\": \"C1\", \"rationale\": \"召唤大黄蜂\", \"confidence\": 0.8, "
+                        + "\"needReplan\": true, \"replanReason\": \"第二手判决\"}");
+        DecisionPoint point = mainPoint();
+        rig.planner().observePoint(point);
+        rig.planner().drainForTests();
+        rig.port().decide(point, DecisionDeadline.of(3000));
+        rig.planner().drainForTests();
+        String replannedId = rig.planner().currentAdvice().orElseThrow().adviceId();
+
+        rig.port().decide(point, DecisionDeadline.of(3000));
+        rig.planner().drainForTests();
+        assertEquals(replannedId, rig.planner().currentAdvice().orElseThrow().adviceId(),
+                "同回合第二次重规划应被配额挡下（建议不作废）");
+        assertEquals(1, allUserTexts(rig).split("===重规划", -1).length - 1,
+                "重规划请求行只应出现一次");
+    }
+
+    /** 假模型收到的全部 user 消息文本（断言"规划器看到了什么"用）。 */
+    private static String allUserTexts(Rig rig) {
+        return rig.chat().requests.stream()
+                .flatMap(r -> r.messages().stream())
+                .filter(m -> m instanceof UserMessage)
+                .map(m -> ((UserMessage) m).singleText())
+                .collect(Collectors.joining("\n"));
+    }
+
+    @Test
+    void invalidAdvisorOutputStillLetsJudgeDecide() {
+        // 锚点输出无效（无实质建议内容）：② 决策器判断照常工作，建议缺席不阻塞
+        Rig rig = rig("{}",
                 "{\"choice\": \"C1\", \"rationale\": \"召唤大黄蜂\", \"confidence\": 0.8}");
         DecisionPoint point = mainPoint();
         rig.planner().observePoint(point);
         rig.planner().drainForTests();
-        assertTrue(rig.planner().currentAdvice().isEmpty(), "keep 无建议且恢复失败 → 无建议");
+        assertTrue(rig.planner().currentAdvice().isEmpty(), "锚点输出无效 → 无建议");
 
         DuelDecision decision = rig.port().decide(point, DecisionDeadline.of(3000));
         assertEquals(PathKind.LLM_CALL, decision.pathKind());
@@ -388,7 +451,7 @@ class DecisionPipelineTest {
                 .build();
         FakeChatModel chat = new FakeChatModel(replies);
         Agents agents = agents(chat, cfg);
-        PlannerSession planner = plannerSession(agents, new ContextPackBuilder(TestDuels.facts()), cfg, trace);
+        PlannerRuntime planner = plannerSession(agents, new ContextPackBuilder(TestDuels.facts()), cfg, trace);
         AtomicInteger calls = new AtomicInteger();
         DecisionEngine delegate = (point, deadline) -> {
             calls.incrementAndGet();
@@ -468,7 +531,7 @@ class DecisionPipelineTest {
         PlannerAgent plannerAgent = new PlannerAgent(
                 new ResilientChatModel(new SlowModel(600, advisorJson("先展开再压制"))),
                 plannerMemory, List.of(), trace);
-        PlannerSession planner = PlannerSession.builder(plannerAgent,
+        PlannerRuntime planner = PlannerRuntime.builder(plannerAgent,
                 new ContextPackBuilder(TestDuels.facts()), longer, plannerMemory)
                 .feed(feedFor(plannerMemory))
                 .trace(trace)
@@ -527,7 +590,7 @@ class DecisionPipelineTest {
         PlannerAgent plannerAgent = new PlannerAgent(
                 new ResilientChatModel(new LateKeepModel()),
                 plannerMemory, List.of(), trace);
-        PlannerSession planner = PlannerSession.builder(plannerAgent,
+        PlannerRuntime planner = PlannerRuntime.builder(plannerAgent,
                 new ContextPackBuilder(TestDuels.facts()), cfg, plannerMemory)
                 .feed(feedFor(plannerMemory))
                 .trace(trace)
@@ -576,7 +639,7 @@ class DecisionPipelineTest {
         PlannerAgent plannerAgent = new PlannerAgent(
                 new ResilientChatModel(new SlowModel(500, advisorJson("保资源，抓检索时点"))),
                 plannerMemory, List.of(), trace);
-        PlannerSession planner = PlannerSession.builder(plannerAgent,
+        PlannerRuntime planner = PlannerRuntime.builder(plannerAgent,
                 new ContextPackBuilder(TestDuels.facts()), cfg, plannerMemory)
                 .feed(feedFor(plannerMemory))
                 .trace(trace)
@@ -612,11 +675,11 @@ class DecisionPipelineTest {
                 "首次决策器判断在连锁窗口里也应等到建议");
     }
 
-    /** 先秒回 keep（无建议可发），锚点路径不产出建议。 */
+    /** 先秒回空 JSON（无建议可发），锚点路径不产出建议。 */
     private static final class LateKeepModel implements ChatModel {
         @Override
         public ChatResponse chat(dev.langchain4j.model.chat.request.ChatRequest request) {
-            return ChatResponse.builder().aiMessage(AiMessage.from("{\"keep\": true}")).build();
+            return ChatResponse.builder().aiMessage(AiMessage.from("{}")).build();
         }
     }
 
@@ -628,7 +691,7 @@ class DecisionPipelineTest {
                 .build();
         FakeChatModel chat = new FakeChatModel(advisorJson("先展开"));
         var plannerMemory = newPlannerMemory();
-        PlannerSession planner = PlannerSession.builder(
+        PlannerRuntime planner = PlannerRuntime.builder(
                 new PlannerAgent(new ResilientChatModel(chat.baked(tight.checkpointOptions(), true)),
                         plannerMemory, List.of(), trace),
                 new ContextPackBuilder(TestDuels.facts()),
@@ -669,7 +732,7 @@ class DecisionPipelineTest {
     void plannerDegradesAfterChatFailure() {
         FakeChatModel chat = new FakeChatModel();
         var plannerMemory = newPlannerMemory();
-        PlannerSession planner = PlannerSession.builder(
+        PlannerRuntime planner = PlannerRuntime.builder(
                 new PlannerAgent(new ResilientChatModel(chat.baked(settings().checkpointOptions(), true)),
                         plannerMemory, List.of(), trace),
                 new ContextPackBuilder(TestDuels.facts()),
@@ -689,7 +752,7 @@ class DecisionPipelineTest {
     void turnChangeRotatesSegment() {
         FakeChatModel chat = new FakeChatModel(advisorJson("先展开"));
         var plannerMemory = newPlannerMemory();
-        PlannerSession planner = PlannerSession.builder(
+        PlannerRuntime planner = PlannerRuntime.builder(
                 new PlannerAgent(new ResilientChatModel(chat.baked(settings().checkpointOptions(), true)),
                         plannerMemory, List.of(), trace),
                 new ContextPackBuilder(TestDuels.facts()),

@@ -33,7 +33,7 @@ import com.github.coldgust.ygoagent.pipeline.fallback.TacticalPlannerImpl;
 import com.github.coldgust.ygoagent.pipeline.judge.JudgePrompts;
 import com.github.coldgust.ygoagent.pipeline.reflex.ReflexPolicyImpl;
 import com.github.coldgust.ygoagent.planner.PlannerPrompts;
-import com.github.coldgust.ygoagent.planner.PlannerSession;
+import com.github.coldgust.ygoagent.planner.PlannerRuntime;
 import com.github.coldgust.ygoagent.trace.DecisionTraceWriter;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
@@ -157,7 +157,7 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
                                 .withReasoning(settings.reasoningDecision()),
                         Duration.ofMillis(settings.judgeTimeoutMs()), true, log0),
                 judgeMemory, decisionTools.providers(), log0);
-        PlannerSession planner = PlannerSession.builder(plannerAgent, packer, settings, plannerMemory)
+        PlannerRuntime planner = PlannerRuntime.builder(plannerAgent, packer, settings, plannerMemory)
                 .traceWriter(traceWriter)
                 .feed(feed)
                 .trace(log0)

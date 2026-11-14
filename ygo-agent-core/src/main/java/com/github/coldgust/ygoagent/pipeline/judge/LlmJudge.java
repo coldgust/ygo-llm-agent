@@ -19,7 +19,7 @@ import com.github.coldgust.ygoagent.pipeline.PipelineSettings;
 import com.github.coldgust.ygoagent.pipeline.TurnMemory;
 import com.github.coldgust.ygoagent.pipeline.advisor.AdvisorKeeper;
 import com.github.coldgust.ygoagent.pipeline.plan.CandidateIntents;
-import com.github.coldgust.ygoagent.planner.PlannerSession;
+import com.github.coldgust.ygoagent.planner.PlannerRuntime;
 import com.github.coldgust.ygodomain.decision.ChoiceRequest;
 import com.github.coldgust.ygodomain.zone.ZoneRef;
 import dev.langchain4j.data.message.UserMessage;
@@ -52,7 +52,7 @@ public final class LlmJudge implements AutoCloseable {
 
     private final JudgeAgent judgeAgent;
     private final ContextPackBuilder packer;
-    private final PlannerSession planner;
+    private final PlannerRuntime planner;
     private final TurnMemory memory;
     private final DuelChatMemory judgeMemory;
     private final DuelRecordFeed feed;
@@ -64,7 +64,7 @@ public final class LlmJudge implements AutoCloseable {
     });
 
     public LlmJudge(JudgeAgent judgeAgent, ContextPackBuilder packer, PipelineSettings settings,
-                    PlannerSession planner, TurnMemory memory,
+                    PlannerRuntime planner, TurnMemory memory,
                     DuelChatMemory judgeMemory, DuelRecordFeed feed, VerboseLog trace) {
         this.judgeAgent = judgeAgent;
         this.packer = packer;
@@ -106,20 +106,21 @@ public final class LlmJudge implements AutoCloseable {
                 try (var ignored = trace.scope("决策器判断 T" + point.turn() + " " + point.kind())) {
                     answer = judgeAgent.decide(requestLine(point));
                 } catch (RuntimeException e) {
-                    notes.add(callFailure(e) ? "直答调用失败：" + rootCause(e)
-                            : "直答输出不可解析：" + rootCause(e));
+                    notes.add(callFailure(e) ? "判断调用失败：" + rootCause(e)
+                            : "判断输出不可解析：" + rootCause(e));
                     return Optional.<Drafted>empty();
                 }
-                Optional<Drafted> built = buildFromDraft(point, answer, "直答", null);
+                maybeRequestReplan(point, answer);
+                Optional<Drafted> built = buildFromDraft(point, answer, "判断", null);
                 if (built.isPresent() || isNoneAnswer(answer)
                         || (answer.candidateId() != null
                             && point.candidate(answer.candidateId()).isPresent())) {
                     return built.or(() -> {
-                        notes.add("直答无法映射成意图：" + answer.choice());
+                        notes.add("判断无法映射成意图：" + answer.choice());
                         return Optional.<Drafted>empty();
                     });
                 }
-                notes.add("直答选择越界：" + answer.choice()
+                notes.add("判断选择越界：" + answer.choice()
                         + "（候选 " + point.candidates().size() + " 个），已要求重答");
                 JudgeAnswer second;
                 try (var ignored = trace.scope("决策器判断重答 T" + point.turn() + " " + point.kind())) {
@@ -129,7 +130,8 @@ public final class LlmJudge implements AutoCloseable {
                             : "重答仍不可解析：" + rootCause(e));
                     return Optional.<Drafted>empty();
                 }
-                return buildFromDraft(point, second, "直答·重答", notes);
+                maybeRequestReplan(point, second);
+                return buildFromDraft(point, second, "判断·重答", notes);
             } finally {
                 // 快照只用一次（含重答）；入史的只有请求行/更正行/回复/工具对
                 judgeMemory.dropEphemeral();
@@ -137,7 +139,7 @@ public final class LlmJudge implements AutoCloseable {
         }, judgePool)
                 .exceptionally(ex -> {
                     log.info("决策器判断调用失败: {}", String.valueOf(ex));
-                    notes.add("直答调用失败：" + rootCause(ex));
+                    notes.add("判断调用失败：" + rootCause(ex));
                     return Optional.empty();
                 });
 
@@ -147,11 +149,11 @@ public final class LlmJudge implements AutoCloseable {
             return decided;
         } catch (TimeoutException e) {
             judgeFuture.cancel(true);
-            notes.add("直答超时：" + deadlineMs + "ms 内未返回");
+            notes.add("判断超时：" + deadlineMs + "ms 内未返回");
             missReasons.addAll(notes);
             return Optional.empty();
         } catch (Exception e) {
-            notes.add("直答异常：" + rootCause(e));
+            notes.add("判断异常：" + rootCause(e));
             missReasons.addAll(notes);
             return Optional.empty();
         }
@@ -160,6 +162,25 @@ public final class LlmJudge implements AutoCloseable {
     private DuelDecision accept(Drafted drafted) {
         memory.recordDecisionZone(drafted.zone());
         return drafted.decision();
+    }
+
+    /**
+     * 决策器的重规划判决（needReplan=true，2026-11-14 用户指令）：
+     * <ol>
+     *   <li>重置"本回合已等过建议"标记——下一次决策前按配置的首次等待时长
+     *       （firstAdviceWaitMs）<b>再</b>等一次新规划；</li>
+     *   <li>{@link PlannerRuntime#requestReplan}：发起重规划（每回合一次配额），
+     *       原因原样转达规划器；配额闸通过时旧建议即刻作废——
+     *       新规划没来得及发布，决策器就不带旧规划内容（快照渲染的 [规划器情报] 段缺席）。</li>
+     * </ol>
+     * 本手决策不受影响：choice 已照常给出，重规划只改变后续的规划供给。
+     */
+    private void maybeRequestReplan(DecisionPoint point, JudgeAnswer answer) {
+        if (answer == null || !answer.needReplanOr(false)) {
+            return;
+        }
+        memory.clearWaitedForAdvice(point.turn());
+        planner.requestReplan(point, answer.replanReason());
     }
 
     /**
@@ -188,13 +209,13 @@ public final class LlmJudge implements AutoCloseable {
         if (!effects.isEmpty()) {
             sb.append("候选效果：").append(effects).append("\n");
         }
-        return sb.append("请读上方 [决策快照] 的完整卡面与对象信息，输出单个选择 JSON。").toString();
+        return sb.append("请读随后的 [决策快照] 的完整卡面与对象信息，输出单个选择 JSON。").toString();
     }
 
     /** 更正行（入 memory）：坏 choice 与候选编号清单；快照仍在槽内可见。 */
     private static String correctionLine(DecisionPoint point, JudgeAnswer bad) {
         return "===更正=== 你上一答 choice=" + bad.choice() + " 不在候选集内。本请求可选编号："
-                + candidateCodes(point) + "。请重读上方 [决策快照]，只输出 JSON，"
+                + candidateCodes(point) + "。请重读随后的 [决策快照]，只输出 JSON，"
                 + "choice 必须是其中之一。";
     }
 
