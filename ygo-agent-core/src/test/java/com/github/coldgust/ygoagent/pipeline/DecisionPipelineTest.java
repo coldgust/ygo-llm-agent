@@ -76,17 +76,17 @@ class DecisionPipelineTest {
 
     private static PlannerSession plannerSession(Agents agents, ContextPackBuilder packer,
                                                  CardFacts facts, PipelineSettings cfg, VerboseLog trace) {
-        return new PlannerSession(agents.planner(), agents.urgent(), packer, facts, cfg, trace);
+        return PlannerSession.builder(agents.planner(), agents.urgent(), packer, facts, cfg)
+                .trace(trace)
+                .build();
     }
 
     private static PipelineSettings settings() {
         PipelineSettings d = PipelineSettings.defaults(Path.of("data/card_rag/cards.jsonl"),
                 "https://api.deepseek.com", "test-key", "deepseek-chat");
-        return new PipelineSettings(d.enabled(), d.baseUrl(), d.apiKey(), d.model(),
-                d.waitPerDecisionMs(), d.firstJudgeWaitMs(), d.waitPerTurnMs(),
-                d.maxCheckpointsPerTurn(), d.similarityThreshold(), d.judgeTimeoutMs(),
-                d.plannerCallTimeoutMs(), d.plannerCooldownMs(), d.cardRagPath(),
-                d.judgeMaxTokens(), true, true);
+        return PipelineSettings.builder(d)
+                .pathPlanning(true)
+                .build();
     }
 
     private static DecisionPoint mainPoint() {
@@ -108,11 +108,10 @@ class DecisionPipelineTest {
 
     /** 测试用：把"整回合等计划"压到很短，避免用例被 7s 等待拖慢。 */
     private static PipelineSettings fastWait() {
-        PipelineSettings s = settings();
-        return new PipelineSettings(true, s.baseUrl(), s.apiKey(), s.model(),
-                400, 400, s.waitPerTurnMs(), s.maxCheckpointsPerTurn(),
-                s.similarityThreshold(), s.judgeTimeoutMs(), s.plannerCallTimeoutMs(),
-                s.plannerCooldownMs(), s.cardRagPath(), s.judgeMaxTokens(), true, true);
+        return PipelineSettings.builder(settings())
+                .waitPerDecisionMs(400)
+                .firstJudgeWaitMs(400)
+                .build();
     }
 
     private Rig rig(String... chatReplies) {
@@ -130,11 +129,14 @@ class DecisionPipelineTest {
                     DecisionExplanation.of("delegate"),
                     Timing.ZERO);
         };
-        var port = new DecisionPipeline(new ReflexPolicyImpl(),
+        var port = DecisionPipeline.builder(new ReflexPolicyImpl(),
                 planner,
                 new ContextPackBuilder(TestDuels.facts()),
-                agents.judge(), cfg, TestDuels.facts(), delegate,
-                DecisionTraceWriter.NOOP, trace);
+                agents.judge(), cfg, TestDuels.facts())
+                .delegate(delegate)
+                .traceWriter(DecisionTraceWriter.NOOP)
+                .trace(trace)
+                .build();
         return new Rig(port, planner, chat, delegateCalls);
     }
 
@@ -215,11 +217,9 @@ class DecisionPipelineTest {
     void rushAnswerOffSkipsPlannerInEscalation() {
         // 抢答开关关闭：④升级只跑直答，规划会话不应收到"===发散"的紧急决策请求
         PipelineSettings s = settings();
-        PipelineSettings off = new PipelineSettings(true, s.baseUrl(), s.apiKey(), s.model(),
-                s.waitPerDecisionMs(), s.firstJudgeWaitMs(), s.waitPerTurnMs(),
-                s.maxCheckpointsPerTurn(), s.similarityThreshold(), s.judgeTimeoutMs(),
-                s.plannerCallTimeoutMs(), s.plannerCooldownMs(), s.cardRagPath(),
-                s.judgeMaxTokens(), true, false);
+        PipelineSettings off = PipelineSettings.builder(s)
+                .plannerRushAnswer(false)
+                .build();
         Rig rig = rig(off,
                 planJson("activate", 999999999L),                                    // 锚点：无效计划
                 "{\"choice\": \"C1\", \"rationale\": \"召唤大黄蜂\", \"confidence\": 0.8}"); // 直答
@@ -409,10 +409,10 @@ class DecisionPipelineTest {
     }
 
     private Rig rigWithTrace(ReasonCatcher tracer, String... replies) {
-        PipelineSettings cfg = new PipelineSettings(true, settings().baseUrl(), settings().apiKey(),
-                settings().model(), 0, 0, 20_000, 6, 0.80, 300,
-                settings().plannerCallTimeoutMs(), settings().plannerCooldownMs(),
-                settings().cardRagPath(), settings().judgeMaxTokens(), true, true);
+        PipelineSettings cfg = PipelineSettings.builder(settings())
+                .waitPerDecisionMs(0).firstJudgeWaitMs(0)
+                .waitPerTurnMs(20_000).judgeTimeoutMs(300)
+                .build();
         FakeChatModel chat = new FakeChatModel(replies);
         Agents agents = agents(chat, cfg);
         PlannerSession planner = plannerSession(agents, new ContextPackBuilder(TestDuels.facts()), TestDuels.facts(), cfg, trace);
@@ -423,9 +423,13 @@ class DecisionPipelineTest {
                     DecisionExplanation.of("delegate"),
                     Timing.ZERO);
         };
-        var port = new DecisionPipeline(point -> Optional.empty(), planner,
+        var port = DecisionPipeline.builder(point -> Optional.empty(), planner,
                 new ContextPackBuilder(TestDuels.facts()),
-                agents.judge(), cfg, TestDuels.facts(), delegate, tracer, trace);
+                agents.judge(), cfg, TestDuels.facts())
+                .delegate(delegate)
+                .traceWriter(tracer)
+                .trace(trace)
+                .build();
         return new Rig(port, planner, chat, calls);
     }
 
@@ -552,10 +556,10 @@ class DecisionPipelineTest {
     void firstOneshotOfTurnWaitsLongerForThePlan() {
         // 本回合第一次要 直答 时计划还没发布：普通预算(800ms 的一半=400ms)很容易一次等不到
         // 就整回合放弃；加长后应该能拿到计划并走 ② 精确命中。
-        PipelineSettings longer = new PipelineSettings(true, settings().baseUrl(), settings().apiKey(),
-                settings().model(), 800, 3_000, 20_000, 6, 0.80, 300,
-                settings().plannerCallTimeoutMs(), settings().plannerCooldownMs(),
-                settings().cardRagPath(), settings().judgeMaxTokens(), true, true);
+        PipelineSettings longer = PipelineSettings.builder(settings())
+                .waitPerDecisionMs(800).firstJudgeWaitMs(3_000)
+                .waitPerTurnMs(20_000).judgeTimeoutMs(300)
+                .build();
         var memory = new PlannerChatMemory("test");
         PlannerAgent plannerAgent = new PlannerAgent(
                 new ResilientChatModel(new SlowModel(600, planJson("summon", TestDuels.HORNET))),
@@ -563,17 +567,22 @@ class DecisionPipelineTest {
         PlannerUrgentAgent urgentAgent = new PlannerUrgentAgent(
                 new ResilientChatModel(new SlowModel(600, "{\"choice\": \"C1\", \"confidence\": 0.5}")),
                 PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), trace);
-        PlannerSession planner = new PlannerSession(plannerAgent, urgentAgent,
+        PlannerSession planner = PlannerSession.builder(plannerAgent, urgentAgent,
                 new ContextPackBuilder(TestDuels.facts()),
-                TestDuels.facts(), longer, trace);
+                TestDuels.facts(), longer)
+                .trace(trace)
+                .build();
         DecisionEngine delegate = (point, deadline) -> {
             throw new AssertionError("不该落到 ⑤ 兜底");
         };
-        var port = new DecisionPipeline(new ReflexPolicyImpl(),
+        var port = DecisionPipeline.builder(new ReflexPolicyImpl(),
                 planner, new ContextPackBuilder(TestDuels.facts()),
                 new JudgeAgent(new ResilientChatModel(new LateAnswerModel()), List.of(), trace),
-                longer, TestDuels.facts(), delegate,
-                DecisionTraceWriter.NOOP, trace);
+                longer, TestDuels.facts())
+                .delegate(delegate)
+                .traceWriter(DecisionTraceWriter.NOOP)
+                .trace(trace)
+                .build();
 
         DecisionPoint point = mainPoint();
         planner.observePoint(point); // 触发锚点：异步生成计划（600ms）
@@ -596,19 +605,19 @@ class DecisionPipelineTest {
         // 只受本回合等待额度约束（等待是额外时间，不再为 直答 预留）
         assertEquals(2_000, DecisionPipeline.planWaitMs(false, s, 2_000));
 
-        PipelineSettings off = new PipelineSettings(true, s.baseUrl(), s.apiKey(), s.model(),
-                0, 7_000, 20_000, 6, 0.80, 300, s.plannerCallTimeoutMs(), s.plannerCooldownMs(),
-                s.cardRagPath(), s.judgeMaxTokens(), true, true);
+        PipelineSettings off = PipelineSettings.builder(s)
+                .waitPerDecisionMs(0).waitPerTurnMs(20_000).judgeTimeoutMs(300)
+                .build();
         assertEquals(0, DecisionPipeline.planWaitMs(false, off, 30_000),
                 "waitPerDecision=0 是显式关闭等待");
     }
 
     @Test
     void waitingForPlanDoesNotEatTheDecisionBudget() {
-        PipelineSettings cfg = new PipelineSettings(true, settings().baseUrl(), settings().apiKey(),
-                settings().model(), 150, 1_000, 20_000, 6, 0.80, 5_000,
-                settings().plannerCallTimeoutMs(), settings().plannerCooldownMs(),
-                settings().cardRagPath(), settings().judgeMaxTokens(), true, true);
+        PipelineSettings cfg = PipelineSettings.builder(settings())
+                .waitPerDecisionMs(150).firstJudgeWaitMs(1_000)
+                .waitPerTurnMs(20_000).judgeTimeoutMs(5_000)
+                .build();
         var memory = new PlannerChatMemory("test");
         PlannerAgent plannerAgent = new PlannerAgent(
                 new ResilientChatModel(new LateAnswerModel()),
@@ -616,17 +625,23 @@ class DecisionPipelineTest {
         PlannerUrgentAgent urgentAgent = new PlannerUrgentAgent(
                 new ResilientChatModel(new LateAnswerModel()),
                 PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), trace);
-        PlannerSession planner = new PlannerSession(plannerAgent, urgentAgent,
+        PlannerSession planner = PlannerSession.builder(plannerAgent, urgentAgent,
                 new ContextPackBuilder(TestDuels.facts()),
-                TestDuels.facts(), cfg, trace);
-        var port = new DecisionPipeline(
+                TestDuels.facts(), cfg)
+                .trace(trace)
+                .build();
+        var port = DecisionPipeline.builder(
                 new ReflexPolicyImpl(), planner,
                 new ContextPackBuilder(TestDuels.facts()),
                 new JudgeAgent(new ResilientChatModel(new SlowModel(700,
                         "{\"choice\":\"C1\",\"rationale\":\"断检索\",\"confidence\":0.8}")), List.of(), trace),
-                cfg, TestDuels.facts(), (p, d) -> {
+                cfg, TestDuels.facts())
+                .delegate((p, d) -> {
                     throw new AssertionError("等待不该吃光预算，本应走 直答");
-                }, DecisionTraceWriter.NOOP, trace);
+                })
+                .traceWriter(DecisionTraceWriter.NOOP)
+                .trace(trace)
+                .build();
 
         var state = TestDuels.state(2, false, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
         var effect = TestDuels.effectChoice(40, TestDuels.ENGAGE, 1001);
@@ -649,10 +664,10 @@ class DecisionPipelineTest {
     void firstOneshotOfTurnAlsoWaitsInAChainWindow() {
         // 用户口径：这个"首个"是指本回合第一次要 直答，不是第一次主阶段——
         // 对手回合开场的第一枪（连锁窗口）同样值得等计划。
-        PipelineSettings cfg = new PipelineSettings(true, settings().baseUrl(), settings().apiKey(),
-                settings().model(), 800, 3_000, 20_000, 6, 0.80, 300,
-                settings().plannerCallTimeoutMs(), settings().plannerCooldownMs(),
-                settings().cardRagPath(), settings().judgeMaxTokens(), true, true);
+        PipelineSettings cfg = PipelineSettings.builder(settings())
+                .waitPerDecisionMs(800).firstJudgeWaitMs(3_000)
+                .waitPerTurnMs(20_000).judgeTimeoutMs(300)
+                .build();
         String plan = "{\"thinking\": \"断检索\", \"goal\": \"保留资源\", \"main_line\": {\"steps\": ["
                 + "{\"when\": \"CHAIN\", \"verb\": \"activate\", \"passcode\": " + TestDuels.ENGAGE
                 + ", \"why\": \"这一环在赚卡\"}]}}";
@@ -663,16 +678,22 @@ class DecisionPipelineTest {
         PlannerUrgentAgent urgentAgent = new PlannerUrgentAgent(
                 new ResilientChatModel(new SlowModel(500, "{\"choice\": \"C1\"}")),
                 PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), trace);
-        PlannerSession planner = new PlannerSession(plannerAgent, urgentAgent,
+        PlannerSession planner = PlannerSession.builder(plannerAgent, urgentAgent,
                 new ContextPackBuilder(TestDuels.facts()),
-                TestDuels.facts(), cfg, trace);
-        var port = new DecisionPipeline(
+                TestDuels.facts(), cfg)
+                .trace(trace)
+                .build();
+        var port = DecisionPipeline.builder(
                 new ReflexPolicyImpl(), planner,
                 new ContextPackBuilder(TestDuels.facts()),
                 new JudgeAgent(new ResilientChatModel(new LateAnswerModel()), List.of(), trace),
-                cfg, TestDuels.facts(), (p, d) -> {
+                cfg, TestDuels.facts())
+                .delegate((p, d) -> {
                     throw new AssertionError("不该落到 ⑤ 兜底");
-                }, DecisionTraceWriter.NOOP, trace);
+                })
+                .traceWriter(DecisionTraceWriter.NOOP)
+                .trace(trace)
+                .build();
 
         var state = TestDuels.state(2, false, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
         // 用场上的卡：手牌响应的时机由对手决定，已刻意不让计划接地
@@ -712,19 +733,21 @@ class DecisionPipelineTest {
 
     @Test
     void waitBudgetZeroSkipsPlannerWait() {
-        PipelineSettings tight = new PipelineSettings(
-                true, settings().baseUrl(), settings().apiKey(), settings().model(),
-                0, 0, 20_000, 6, 0.80, 300, settings().plannerCallTimeoutMs(),
-                settings().plannerCooldownMs(), settings().cardRagPath(), settings().judgeMaxTokens(), true, true);
+        PipelineSettings tight = PipelineSettings.builder(settings())
+                .waitPerDecisionMs(0).firstJudgeWaitMs(0)
+                .waitPerTurnMs(20_000).judgeTimeoutMs(300)
+                .build();
         FakeChatModel chat = new FakeChatModel(planJson("activate", 123456789L)); // 计划不可接地
         var memory = new PlannerChatMemory("test");
-        PlannerSession planner = new PlannerSession(
+        PlannerSession planner = PlannerSession.builder(
                 new PlannerAgent(new ResilientChatModel(chat.baked(tight.checkpointOptions(), true)),
                         PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), "", trace),
                 new PlannerUrgentAgent(new ResilientChatModel(chat.baked(decisionTier(tight), true)),
                         PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), trace),
                 new ContextPackBuilder(TestDuels.facts()),
-                TestDuels.facts(), tight, trace);
+                TestDuels.facts(), tight)
+                .trace(trace)
+                .build();
         AtomicInteger delegateCalls = new AtomicInteger();
         DecisionEngine delegate = (point, deadline) -> {
             delegateCalls.incrementAndGet();
@@ -732,12 +755,15 @@ class DecisionPipelineTest {
                     DecisionExplanation.of("delegate"),
                     Timing.ZERO);
         };
-        var port = new DecisionPipeline(point -> Optional.empty(), planner,
+        var port = DecisionPipeline.builder(point -> Optional.empty(), planner,
                 new ContextPackBuilder(TestDuels.facts()),
                 new JudgeAgent(new ResilientChatModel(chat.baked(decisionTier(tight), false)),
                         List.of(), trace),
-                tight, TestDuels.facts(), delegate,
-                DecisionTraceWriter.NOOP, trace);
+                tight, TestDuels.facts())
+                .delegate(delegate)
+                .traceWriter(DecisionTraceWriter.NOOP)
+                .trace(trace)
+                .build();
         DecisionPoint point = mainPoint();
         planner.observePoint(point);
         planner.drainForTests();
@@ -752,13 +778,15 @@ class DecisionPipelineTest {
     void plannerDegradesAfterChatFailure() {
         FakeChatModel chat = new FakeChatModel();
         var memory = new PlannerChatMemory("test");
-        PlannerSession planner = new PlannerSession(
+        PlannerSession planner = PlannerSession.builder(
                 new PlannerAgent(new ResilientChatModel(chat.baked(settings().checkpointOptions(), true)),
                         PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), "", trace),
                 new PlannerUrgentAgent(new ResilientChatModel(chat.baked(decisionTier(settings()), true)),
                         PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), trace),
                 new ContextPackBuilder(TestDuels.facts()),
-                TestDuels.facts(), settings(), trace);
+                TestDuels.facts(), settings())
+                .trace(trace)
+                .build();
         DecisionPoint point = mainPoint();
         chat.fail = true;
         planner.observePoint(point);
@@ -771,13 +799,15 @@ class DecisionPipelineTest {
     void turnChangeRotatesSegment() {
         FakeChatModel chat = new FakeChatModel(planJson("activate", TestDuels.ENGAGE));
         var memory = new PlannerChatMemory("test");
-        PlannerSession planner = new PlannerSession(
+        PlannerSession planner = PlannerSession.builder(
                 new PlannerAgent(new ResilientChatModel(chat.baked(settings().checkpointOptions(), true)),
                         PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), "", trace),
                 new PlannerUrgentAgent(new ResilientChatModel(chat.baked(decisionTier(settings()), true)),
                         PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), trace),
                 new ContextPackBuilder(TestDuels.facts()),
-                TestDuels.facts(), settings(), trace);
+                TestDuels.facts(), settings())
+                .trace(trace)
+                .build();
         DecisionPoint point = mainPoint();
         planner.observePoint(point);
         planner.drainForTests();

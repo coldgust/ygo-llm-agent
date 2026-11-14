@@ -36,10 +36,10 @@ class PlannerSessionRecordBatchTest {
     private static PipelineSettings settings() {
         PipelineSettings s = PipelineSettings.defaults(Path.of("data/card_rag/cards.jsonl"),
                 "https://api.deepseek.com", "test-key", "deepseek-chat");
-        return new PipelineSettings(true, s.baseUrl(), s.apiKey(), s.model(), 0, 0,
-                s.waitPerTurnMs(), s.maxCheckpointsPerTurn(), s.similarityThreshold(),
-                s.judgeTimeoutMs(), s.plannerCallTimeoutMs(), s.plannerCooldownMs(),
-                s.cardRagPath(), s.judgeMaxTokens(), true, true);
+        return PipelineSettings.builder(s)
+                .waitPerDecisionMs(0).firstJudgeWaitMs(0)
+                .pathPlanning(true)
+                .build();
     }
 
     private static DecisionPoint pointOf(int turn) {
@@ -99,8 +99,11 @@ class PlannerSessionRecordBatchTest {
                 .advisory(true)
                 .timeline(timeline)
                 .build();
-        PlannerSession planner = new PlannerSession(plannerAgent, urgentAgent, packer, TestDuels.facts(),
-                settings(), null, timeline, trace);
+        PlannerSession planner = PlannerSession.builder(plannerAgent, urgentAgent, packer,
+                TestDuels.facts(), settings())
+                .timeline(timeline)
+                .trace(trace)
+                .build();
 
         DecisionPoint point = pointOf(3);
         planner.observePoint(point);

@@ -58,32 +58,18 @@ public record PlanExecProperties(
         PipelineSettings defaults = PipelineSettings.defaults(
                 Path.of(Texts.firstNonBlank(cardRagPath, "data/card_rag/cards.jsonl")),
                 base, apiKey, model);
-        return new PipelineSettings(
-                true,
-                defaults.baseUrl(),
-                defaults.apiKey(),
-                defaults.model(),
-                reasoningPlanner,
-                reasoningDecision,
-                or(waitDecisionMs, defaults.waitPerDecisionMs()),
-                or(firstWaitMs, defaults.firstJudgeWaitMs()),
-                or(waitTurnMs, defaults.waitPerTurnMs()),
-                or(maxCheckpoints, defaults.maxCheckpointsPerTurn()),
-                or(similarityThreshold, defaults.similarityThreshold()),
-                or(judgeTimeoutMs, defaults.judgeTimeoutMs()),
-                defaults.plannerCallTimeoutMs(),
-                defaults.plannerCooldownMs(),
-                defaults.cardRagPath(),
-                defaults.judgeMaxTokens(),
-                Boolean.TRUE.equals(pathPlanning),
-                rushAnswer == null ? defaults.plannerRushAnswer() : rushAnswer);
-    }
-
-    private static Integer or(Integer override, int fallback) {
-        return override == null ? fallback : override;
-    }
-
-    private static Double or(Double override, double fallback) {
-        return override == null ? fallback : override;
+        return PipelineSettings.builder(defaults)
+                .reasoningPlanner(reasoningPlanner)
+                .reasoningDecision(reasoningDecision)
+                // 留空的属性传 null = 继承 core 默认
+                .waitPerDecisionMs(waitDecisionMs)
+                .firstJudgeWaitMs(firstWaitMs)
+                .waitPerTurnMs(waitTurnMs)
+                .maxCheckpointsPerTurn(maxCheckpoints)
+                .similarityThreshold(similarityThreshold)
+                .judgeTimeoutMs(judgeTimeoutMs)
+                .pathPlanning(Boolean.TRUE.equals(pathPlanning))
+                .plannerRushAnswer(rushAnswer)
+                .build();
     }
 }

@@ -22,4 +22,9 @@ public interface DecisionTraceWriter {
         public void event(String kind, Map<String, Object> payload) {
         }
     };
+
+    /** null → NOOP：可选轨迹落点的统一默认化（各组装点共用，替代三元样板）。 */
+    static DecisionTraceWriter noopOr(DecisionTraceWriter writer) {
+        return writer == null ? NOOP : writer;
+    }
 }

@@ -87,10 +87,10 @@ class PlannerSessionCarryOverTest {
         PipelineSettings s = PipelineSettings.defaults(Path.of("data/card_rag/cards.jsonl"),
                 "https://api.deepseek.com", "test-key", "deepseek-chat");
         // 测试不需要真的等：把等待压到 0
-        return new PipelineSettings(true, s.baseUrl(), s.apiKey(), s.model(), 0, 0,
-                s.waitPerTurnMs(), s.maxCheckpointsPerTurn(), s.similarityThreshold(),
-                s.judgeTimeoutMs(), s.plannerCallTimeoutMs(), s.plannerCooldownMs(),
-                s.cardRagPath(), s.judgeMaxTokens(), true, true);
+        return PipelineSettings.builder(s)
+                .waitPerDecisionMs(0).firstJudgeWaitMs(0)
+                .pathPlanning(true)
+                .build();
     }
 
     private static String planJson() {
@@ -109,9 +109,11 @@ class PlannerSessionCarryOverTest {
         Recorder recorder = new Recorder();
         recorder.script(planJson()); // 第一次给真计划（避免触发 keep 恢复路径），之后 keep
         var stack = stack(trace, recorder);
-        PlannerSession planner = new PlannerSession(stack.planner(), stack.urgent(),
+        PlannerSession planner = PlannerSession.builder(stack.planner(), stack.urgent(),
                 new ContextPackBuilder(TestDuels.facts()),
-                TestDuels.facts(), settings(), trace);
+                TestDuels.facts(), settings())
+                .trace(trace)
+                .build();
 
         planner.observePoint(pointOf(1));
         planner.drainForTests();
@@ -147,11 +149,7 @@ class PlannerSessionCarryOverTest {
     }
 
     private static PipelineSettings withReasoning(PipelineSettings s, String reasoningPlanner) {
-        return new PipelineSettings(s.enabled(), s.baseUrl(), s.apiKey(), s.model(), reasoningPlanner,
-                s.reasoningDecision(), s.waitPerDecisionMs(), s.firstJudgeWaitMs(), s.waitPerTurnMs(),
-                s.maxCheckpointsPerTurn(), s.similarityThreshold(), s.judgeTimeoutMs(),
-                s.plannerCallTimeoutMs(), s.plannerCooldownMs(), s.cardRagPath(), s.judgeMaxTokens(),
-                s.pathPlanning(), s.plannerRushAnswer());
+        return PipelineSettings.builder(s).reasoningPlanner(reasoningPlanner).build();
     }
 
     @Test
@@ -159,9 +157,11 @@ class PlannerSessionCarryOverTest {
         Recorder recorder = new Recorder();
         recorder.script(planJson());
         var stack = stack(trace, recorder);
-        PlannerSession planner = new PlannerSession(stack.planner(), stack.urgent(),
+        PlannerSession planner = PlannerSession.builder(stack.planner(), stack.urgent(),
                 new ContextPackBuilder(TestDuels.facts()),
-                TestDuels.facts(), settings(), trace);
+                TestDuels.facts(), settings())
+                .trace(trace)
+                .build();
 
         planner.observePoint(pointOf(1));
         planner.drainForTests();
@@ -194,9 +194,11 @@ class PlannerSessionCarryOverTest {
         recorder.script("{\"keep\": true}");
         recorder.script(planJson());
         var stack = stack(trace, recorder);
-        PlannerSession planner = new PlannerSession(stack.planner(), stack.urgent(),
+        PlannerSession planner = PlannerSession.builder(stack.planner(), stack.urgent(),
                 new ContextPackBuilder(TestDuels.facts()),
-                TestDuels.facts(), settings(), trace);
+                TestDuels.facts(), settings())
+                .trace(trace)
+                .build();
 
         planner.observePoint(pointOf(1));
         planner.drainForTests();
@@ -212,9 +214,11 @@ class PlannerSessionCarryOverTest {
         Recorder recorder = new Recorder();
         recorder.script(planJson());
         var stack = stack(trace, recorder);
-        PlannerSession planner = new PlannerSession(stack.planner(), stack.urgent(),
+        PlannerSession planner = PlannerSession.builder(stack.planner(), stack.urgent(),
                 new ContextPackBuilder(TestDuels.facts()),
-                TestDuels.facts(), settings(), trace);
+                TestDuels.facts(), settings())
+                .trace(trace)
+                .build();
 
         planner.observePoint(pointOf(1));
         planner.drainForTests();

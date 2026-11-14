@@ -68,33 +68,161 @@ public record PipelineSettings(
     }
 
     public static PipelineSettings defaults(Path cardRagPath, String baseUrl, String apiKey, String model) {
-        return new PipelineSettings(true, baseUrl, apiKey, model,
+        return new PipelineSettings(true, baseUrl, apiKey, model, null, null,
                 4_000, 7_000, 30_000, 6, 0.80, 10_000, 45_000, 60_000,
                 cardRagPath, 3_000, false, true);
     }
 
-    /** 便捷构造：思考强度未配置（档位默认）。 */
-    public PipelineSettings(
-            boolean enabled,
-            String baseUrl,
-            String apiKey,
-            String model,
-            int waitPerDecisionMs,
-            int firstJudgeWaitMs,
-            int waitPerTurnMs,
-            int maxCheckpointsPerTurn,
-            double similarityThreshold,
-            int judgeTimeoutMs,
-            int plannerCallTimeoutMs,
-            int plannerCooldownMs,
-            Path cardRagPath,
-            int judgeMaxTokens,
-            boolean pathPlanning,
-            boolean plannerRushAnswer) {
-        this(enabled, baseUrl, apiKey, model, null, null,
-                waitPerDecisionMs, firstJudgeWaitMs, waitPerTurnMs, maxCheckpointsPerTurn,
-                similarityThreshold, judgeTimeoutMs, plannerCallTimeoutMs, plannerCooldownMs,
-                cardRagPath, judgeMaxTokens, pathPlanning, plannerRushAnswer);
+    /**
+     * 种子式 Builder：从既有设置出发逐项覆盖，默认值唯一定义在 {@link #defaults}。
+     * 宿主解析出自己的配置源后，用它做"默认值 + 局部覆盖"的级联，替代
+     * 18 参位置传参（原来的 16 参"思考强度未配置"望远镜重载已删除）。
+     */
+    public static Builder builder(PipelineSettings seed) {
+        return new Builder(seed);
+    }
+
+    /** 字段收集器：未显式设置的字段继承种子（{@link #builder}）。 */
+    public static final class Builder {
+        private final PipelineSettings seed;
+        private Boolean enabled;
+        private String baseUrl;
+        private String apiKey;
+        private String model;
+        private String reasoningPlanner;
+        private String reasoningDecision;
+        private Integer waitPerDecisionMs;
+        private Integer firstJudgeWaitMs;
+        private Integer waitPerTurnMs;
+        private Integer maxCheckpointsPerTurn;
+        private Double similarityThreshold;
+        private Integer judgeTimeoutMs;
+        private Integer plannerCallTimeoutMs;
+        private Integer plannerCooldownMs;
+        private Path cardRagPath;
+        private Integer judgeMaxTokens;
+        private Boolean pathPlanning;
+        private Boolean plannerRushAnswer;
+
+        private Builder(PipelineSettings seed) {
+            this.seed = seed;
+        }
+
+        public Builder enabled(Boolean value) {
+            this.enabled = value;
+            return this;
+        }
+
+        public Builder baseUrl(String value) {
+            this.baseUrl = value;
+            return this;
+        }
+
+        public Builder apiKey(String value) {
+            this.apiKey = value;
+            return this;
+        }
+
+        public Builder model(String value) {
+            this.model = value;
+            return this;
+        }
+
+        public Builder reasoningPlanner(String value) {
+            this.reasoningPlanner = value;
+            return this;
+        }
+
+        public Builder reasoningDecision(String value) {
+            this.reasoningDecision = value;
+            return this;
+        }
+
+        public Builder waitPerDecisionMs(Integer value) {
+            this.waitPerDecisionMs = value;
+            return this;
+        }
+
+        public Builder firstJudgeWaitMs(Integer value) {
+            this.firstJudgeWaitMs = value;
+            return this;
+        }
+
+        public Builder waitPerTurnMs(Integer value) {
+            this.waitPerTurnMs = value;
+            return this;
+        }
+
+        public Builder maxCheckpointsPerTurn(Integer value) {
+            this.maxCheckpointsPerTurn = value;
+            return this;
+        }
+
+        public Builder similarityThreshold(Double value) {
+            this.similarityThreshold = value;
+            return this;
+        }
+
+        public Builder judgeTimeoutMs(Integer value) {
+            this.judgeTimeoutMs = value;
+            return this;
+        }
+
+        public Builder plannerCallTimeoutMs(Integer value) {
+            this.plannerCallTimeoutMs = value;
+            return this;
+        }
+
+        public Builder plannerCooldownMs(Integer value) {
+            this.plannerCooldownMs = value;
+            return this;
+        }
+
+        public Builder cardRagPath(Path value) {
+            this.cardRagPath = value;
+            return this;
+        }
+
+        public Builder judgeMaxTokens(Integer value) {
+            this.judgeMaxTokens = value;
+            return this;
+        }
+
+        public Builder pathPlanning(Boolean value) {
+            this.pathPlanning = value;
+            return this;
+        }
+
+        public Builder plannerRushAnswer(Boolean value) {
+            this.plannerRushAnswer = value;
+            return this;
+        }
+
+        public PipelineSettings build() {
+            return new PipelineSettings(
+                    or(enabled, seed.enabled()),
+                    or(baseUrl, seed.baseUrl()),
+                    or(apiKey, seed.apiKey()),
+                    or(model, seed.model()),
+                    or(reasoningPlanner, seed.reasoningPlanner()),
+                    or(reasoningDecision, seed.reasoningDecision()),
+                    or(waitPerDecisionMs, seed.waitPerDecisionMs()),
+                    or(firstJudgeWaitMs, seed.firstJudgeWaitMs()),
+                    or(waitPerTurnMs, seed.waitPerTurnMs()),
+                    or(maxCheckpointsPerTurn, seed.maxCheckpointsPerTurn()),
+                    or(similarityThreshold, seed.similarityThreshold()),
+                    or(judgeTimeoutMs, seed.judgeTimeoutMs()),
+                    or(plannerCallTimeoutMs, seed.plannerCallTimeoutMs()),
+                    or(plannerCooldownMs, seed.plannerCooldownMs()),
+                    or(cardRagPath, seed.cardRagPath()),
+                    or(judgeMaxTokens, seed.judgeMaxTokens()),
+                    or(pathPlanning, seed.pathPlanning()),
+                    or(plannerRushAnswer, seed.plannerRushAnswer()));
+        }
+
+        private static <T> T or(T override, T fallback) {
+            return override == null ? fallback : override;
+        }
     }
 
     /** 思考强度归一化：只接受 off/low/medium/high（大小写不敏感），其余（含 null/空白）= 档位默认。 */

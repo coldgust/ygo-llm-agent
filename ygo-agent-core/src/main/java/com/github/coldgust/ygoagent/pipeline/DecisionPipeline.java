@@ -7,7 +7,6 @@ import com.github.coldgust.ygoagent.knowledge.CardFacts;
 import com.github.coldgust.ygoagent.llm.service.JudgeAgent;
 import com.github.coldgust.ygoagent.llm.DecisionTools;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
-import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
 import com.github.coldgust.ygoagent.model.ChoiceIntent;
 import com.github.coldgust.ygoagent.model.DecisionDeadline;
 import com.github.coldgust.ygoagent.model.DecisionExplanation;
@@ -66,18 +65,75 @@ public final class DecisionPipeline implements DecisionEngine, AutoCloseable {
     private final PlanFollower follower;
     private final LlmJudge judge;
 
-    public DecisionPipeline(ReflexPolicy reflex, PlannerSession planner,
-                                    ContextPackBuilder packer, JudgeAgent judgeAgent,
-                                    PipelineSettings settings, CardFacts facts,
-                                    DecisionEngine delegate, DecisionTraceWriter traceWriter,
-                                    VerboseLog trace) {
+    /**
+     * 可选依赖用 Builder 逐项声明；派生子件（IntentSummary/PlacementResolver/
+     * PlanFollower/LlmJudge）在构造器内组装——这里是它们的唯一生产性组装点。
+     */
+    public static Builder builder(ReflexPolicy reflex, PlannerSession planner,
+                                  ContextPackBuilder packer, JudgeAgent judgeAgent,
+                                  PipelineSettings settings, CardFacts facts) {
+        return new Builder(reflex, planner, packer, judgeAgent, settings, facts);
+    }
+
+    /** 依赖收集器：必填六件套 + 可选兜底引擎/轨迹/日志（缺省走静默默认）。 */
+    public static final class Builder {
+        private final ReflexPolicy reflex;
+        private final PlannerSession planner;
+        private final ContextPackBuilder packer;
+        private final JudgeAgent judgeAgent;
+        private final PipelineSettings settings;
+        private final CardFacts facts;
+        private DecisionEngine delegate;
+        private DecisionTraceWriter traceWriter;
+        private VerboseLog trace;
+
+        private Builder(ReflexPolicy reflex, PlannerSession planner,
+                        ContextPackBuilder packer, JudgeAgent judgeAgent,
+                        PipelineSettings settings, CardFacts facts) {
+            this.reflex = reflex;
+            this.planner = planner;
+            this.packer = packer;
+            this.judgeAgent = judgeAgent;
+            this.settings = settings;
+            this.facts = facts;
+        }
+
+        /** 兜底决策引擎（⑤ 纯规则链；缺省 = 无兜底）。 */
+        public Builder delegate(DecisionEngine value) {
+            this.delegate = value;
+            return this;
+        }
+
+        /** 决策轨迹落点（缺省 NOOP）。 */
+        public Builder traceWriter(DecisionTraceWriter value) {
+            this.traceWriter = value;
+            return this;
+        }
+
+        /** 全链路日志（缺省全关）。 */
+        public Builder trace(VerboseLog value) {
+            this.trace = value;
+            return this;
+        }
+
+        public DecisionPipeline build() {
+            return new DecisionPipeline(reflex, planner, packer, judgeAgent, settings, facts,
+                    delegate, traceWriter, trace);
+        }
+    }
+
+    private DecisionPipeline(ReflexPolicy reflex, PlannerSession planner,
+                             ContextPackBuilder packer, JudgeAgent judgeAgent,
+                             PipelineSettings settings, CardFacts facts,
+                             DecisionEngine delegate, DecisionTraceWriter traceWriter,
+                             VerboseLog trace) {
         this.reflex = reflex;
         this.planner = planner;
         this.settings = settings;
         this.facts = facts;
         this.delegate = delegate;
-        this.traceWriter = traceWriter == null ? DecisionTraceWriter.NOOP : traceWriter;
-        this.trace = trace == null ? new VerboseLog(VerboseLogSettings.off()) : trace;
+        this.traceWriter = DecisionTraceWriter.noopOr(traceWriter);
+        this.trace = VerboseLog.offOr(trace);
         this.intentSummary = new IntentSummary(facts);
         this.placement = new PlacementResolver(planner, memory);
         this.follower = new PlanFollower(planner, new StepGrounder(), new SimilarityMatcher(),

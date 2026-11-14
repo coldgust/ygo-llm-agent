@@ -4,7 +4,6 @@ import com.github.coldgust.ygoagent.knowledge.CardFacts;
 import com.github.coldgust.ygoagent.knowledge.JsonlCardFacts;
 import com.github.coldgust.ygoagent.llm.LightRagSettings;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
-import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
 import com.github.coldgust.ygoagent.trace.CallbackTraceWriter;
 import com.github.coldgust.ygoplay.DuelRunSpec;
 import com.github.coldgust.ygoplay.DuelRunner;
@@ -52,7 +51,7 @@ public class DuelRunnerFactory {
         this.comboRecords = comboRecords;
         this.planExecProps = planExecProps;
         this.lightRagProps = lightRagProps;
-        this.trace = trace == null ? new VerboseLog(VerboseLogSettings.off()) : trace;
+        this.trace = VerboseLog.offOr(trace);
     }
 
     public DuelExecutor create(DuelRunSpec spec) {

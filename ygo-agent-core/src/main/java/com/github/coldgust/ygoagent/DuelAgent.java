@@ -15,7 +15,6 @@ import com.github.coldgust.ygoagent.llm.LightRagSettings;
 import com.github.coldgust.ygoagent.llm.MathTool;
 import com.github.coldgust.ygoagent.llm.RulebookTool;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
-import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
 import com.github.coldgust.ygoagent.llm.ChatOptions;
 import com.github.coldgust.ygoagent.llm.memory.PlannerChatMemory;
 import com.github.coldgust.ygoagent.llm.AgentModels;
@@ -74,9 +73,8 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
      * @throws UncheckedIOException 卡牌事实文件读取失败（fail-fast，对局不该在没卡面的情况下开打）
      */
     public static DuelAgent open(PipelineSettings settings, Config config, VerboseLog verbose) {
-        VerboseLog log0 = verbose == null ? new VerboseLog(VerboseLogSettings.off()) : verbose;
-        DecisionTraceWriter traceWriter = config.traceWriter() == null
-                ? DecisionTraceWriter.NOOP : config.traceWriter();
+        VerboseLog log0 = VerboseLog.offOr(verbose);
+        DecisionTraceWriter traceWriter = DecisionTraceWriter.noopOr(config.traceWriter());
         RuleBasedEngine baseEngine = new RuleBasedEngine(
                 new ReflexPolicyImpl(), new TacticalPlannerImpl(), new SimpleArbiter(), traceWriter);
         boolean llm = settings != null && settings.enabled();
@@ -155,12 +153,18 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
                                 .withReasoning(settings.reasoningDecision()),
                         Duration.ofMillis(settings.judgeTimeoutMs()), true, log0),
                 decisionTools.providers(), log0);
-        PlannerSession planner = new PlannerSession(
-                plannerAgent, urgentAgent, packer, facts, settings, traceWriter,
-                config.timeline(), log0);
-        DecisionPipeline pipeline = new DecisionPipeline(
-                new ReflexPolicyImpl(), planner, packer, judgeAgent, settings, facts,
-                baseEngine, traceWriter, log0);
+        PlannerSession planner = PlannerSession.builder(
+                plannerAgent, urgentAgent, packer, facts, settings)
+                .traceWriter(traceWriter)
+                .timeline(config.timeline())
+                .trace(log0)
+                .build();
+        DecisionPipeline pipeline = DecisionPipeline.builder(
+                new ReflexPolicyImpl(), planner, packer, judgeAgent, settings, facts)
+                .delegate(baseEngine)
+                .traceWriter(traceWriter)
+                .trace(log0)
+                .build();
         log.info("五级流水已启用（model={} wait-decision={}ms wait-turn={}ms 卡库 {}）",
                 settings.model(), settings.waitPerDecisionMs(),
                 settings.waitPerTurnMs(), facts.knownCount());
@@ -218,6 +222,74 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
                          int comboContextLimit,
                          LightRagSettings lightRag,
                          DuelTimeline timeline) {
+
+        /** 全字段可选（缺省 = 同名 record 语义：null/0）；宿主按需逐项声明，替代 9 参位置传参。 */
+        public static Builder builder() {
+            return new Builder();
+        }
+
+        /** 字段收集器：与 {@link Config} 组件一一对应。 */
+        public static final class Builder {
+            private CardFacts facts;
+            private DecisionTraceWriter traceWriter;
+            private String archetype;
+            private String deckStrategy;
+            private List<Long> deckPasscodes;
+            private RecordedComboSource combos;
+            private int comboContextLimit;
+            private LightRagSettings lightRag;
+            private DuelTimeline timeline;
+
+            public Builder facts(CardFacts value) {
+                this.facts = value;
+                return this;
+            }
+
+            public Builder traceWriter(DecisionTraceWriter value) {
+                this.traceWriter = value;
+                return this;
+            }
+
+            public Builder archetype(String value) {
+                this.archetype = value;
+                return this;
+            }
+
+            public Builder deckStrategy(String value) {
+                this.deckStrategy = value;
+                return this;
+            }
+
+            public Builder deckPasscodes(List<Long> value) {
+                this.deckPasscodes = value;
+                return this;
+            }
+
+            public Builder combos(RecordedComboSource value) {
+                this.combos = value;
+                return this;
+            }
+
+            public Builder comboContextLimit(int value) {
+                this.comboContextLimit = value;
+                return this;
+            }
+
+            public Builder lightRag(LightRagSettings value) {
+                this.lightRag = value;
+                return this;
+            }
+
+            public Builder timeline(DuelTimeline value) {
+                this.timeline = value;
+                return this;
+            }
+
+            public Config build() {
+                return new Config(facts, traceWriter, archetype, deckStrategy, deckPasscodes,
+                        combos, comboContextLimit, lightRag, timeline);
+            }
+        }
     }
 
 }

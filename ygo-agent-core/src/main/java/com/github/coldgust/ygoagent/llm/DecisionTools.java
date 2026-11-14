@@ -15,14 +15,6 @@ public record DecisionTools(RulebookTool rulebook, ComboTool combo, CardTool car
 
     public static final DecisionTools NONE = new DecisionTools(null, null, null, null, null);
 
-    public DecisionTools(RulebookTool rulebook, ComboTool combo, CardTool card) {
-        this(rulebook, combo, card, null, null);
-    }
-
-    public DecisionTools(RulebookTool rulebook, ComboTool combo, CardTool card, DuelRecallTool duel) {
-        this(rulebook, combo, card, duel, null);
-    }
-
     /** 可注册给模型的 @Tool 工具对象（按可用性挑选）。 */
     public List<Object> providers() {
         List<Object> out = new ArrayList<>();

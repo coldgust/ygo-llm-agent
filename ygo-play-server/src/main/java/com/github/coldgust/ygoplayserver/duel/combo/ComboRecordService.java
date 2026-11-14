@@ -10,7 +10,6 @@ import com.github.coldgust.ygoagent.llm.LightRagContentRetriever;
 import com.github.coldgust.ygoagent.llm.LightRagSettings;
 import com.github.coldgust.ygoagent.llm.LlmEndpoint;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
-import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
 
 import com.github.coldgust.ygoplay.ComboRecording;
 import com.github.coldgust.ygoplayserver.config.ComboProperties;
@@ -59,7 +58,7 @@ public class ComboRecordService {
         this.apiKey = llm.apiKey();
         this.baseUrl = llm.baseUrl();
         this.model = combo.summaryModel() == null ? llm.model() : combo.summaryModel();
-        this.trace = trace == null ? new VerboseLog(VerboseLogSettings.off()) : trace;
+        this.trace = VerboseLog.offOr(trace);
         // combo 摘要的规则检索增强：LightRAG 未配置时为 null（narrate 退化为无检索）
         this.rulebookRetriever = lightRag == null || lightRag.url() == null || lightRag.url().isBlank()
                 ? null

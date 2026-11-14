@@ -25,7 +25,7 @@ public final class RuleBasedEngine implements DecisionEngine {
         this.reflex = reflex;
         this.tactical = tactical;
         this.arbiter = arbiter;
-        this.traceWriter = traceWriter == null ? DecisionTraceWriter.NOOP : traceWriter;
+        this.traceWriter = DecisionTraceWriter.noopOr(traceWriter);
     }
 
     @Override

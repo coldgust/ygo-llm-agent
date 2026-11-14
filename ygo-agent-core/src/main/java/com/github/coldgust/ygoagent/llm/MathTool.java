@@ -60,7 +60,7 @@ public final class MathTool {
     public MathTool(CardFacts facts, List<Long> deckPasscodes, DecisionTraceWriter traceWriter) {
         this.facts = facts;
         this.deckPasscodes = deckPasscodes == null ? List.of() : List.copyOf(deckPasscodes);
-        this.traceWriter = traceWriter == null ? DecisionTraceWriter.NOOP : traceWriter;
+        this.traceWriter = DecisionTraceWriter.noopOr(traceWriter);
     }
 
     /** 每个决策点绑定最新局面快照（调用线程先于任何工具调用，程序序保证可见）。 */

@@ -46,10 +46,11 @@ class PipelineCharacterizationTest {
     private static PipelineSettings cfg() {
         PipelineSettings d = PipelineSettings.defaults(Path.of("data/card_rag/cards.jsonl"),
                 "https://api.deepseek.com", "test-key", "deepseek-chat");
-        return new PipelineSettings(true, d.baseUrl(), d.apiKey(), d.model(),
-                0, 0, 20_000, 6, 0.80, 300,
-                d.plannerCallTimeoutMs(), d.plannerCooldownMs(),
-                d.cardRagPath(), d.judgeMaxTokens(), true, true);
+        return PipelineSettings.builder(d)
+                .waitPerDecisionMs(0).firstJudgeWaitMs(0)
+                .waitPerTurnMs(20_000).judgeTimeoutMs(300)
+                .pathPlanning(true)
+                .build();
     }
 
     private record Agents(PlannerAgent planner, PlannerUrgentAgent urgent, JudgeAgent judge) {
@@ -103,15 +104,19 @@ class PipelineCharacterizationTest {
     void execDecisionPayloadKeysAndPlanStepAreStable() {
         EventCatcher catcher = new EventCatcher();
         FakeChatModel chat = new FakeChatModel(planJson("activate", TestDuels.ENGAGE), "{\"keep\": true}");
-        PlannerSession planner = new PlannerSession(agents(chat, cfg()).planner(), agents(chat, cfg()).urgent(),
+        PlannerSession planner = PlannerSession.builder(agents(chat, cfg()).planner(), agents(chat, cfg()).urgent(),
                 new ContextPackBuilder(TestDuels.facts()),
-                TestDuels.facts(), cfg(), trace);
-        DecisionPipeline port = new DecisionPipeline(point -> Optional.empty(), planner,
+                TestDuels.facts(), cfg())
+                .trace(trace)
+                .build();
+        DecisionPipeline port = DecisionPipeline.builder(point -> Optional.empty(), planner,
                 new ContextPackBuilder(TestDuels.facts()),
-                agents(chat, cfg()).judge(), cfg(), TestDuels.facts(),
-                (p, d) -> new DuelDecision(new ChoiceIntent.EndTurn(), PathKind.TACTICAL, 0.5,
-                        DecisionExplanation.of("delegate"), Timing.ZERO),
-                catcher, trace);
+                agents(chat, cfg()).judge(), cfg(), TestDuels.facts())
+                .delegate((p, d) -> new DuelDecision(new ChoiceIntent.EndTurn(), PathKind.TACTICAL, 0.5,
+                        DecisionExplanation.of("delegate"), Timing.ZERO))
+                .traceWriter(catcher)
+                .trace(trace)
+                .build();
 
         var point = mainPoint();
         planner.observePoint(point);
@@ -133,15 +138,19 @@ class PipelineCharacterizationTest {
     void judgePayloadOmitsPlanFieldsWhenNoPlan() {
         EventCatcher catcher = new EventCatcher();
         FakeChatModel chat = new FakeChatModel("{\"choice\": \"C1\", \"rationale\": \"r\", \"confidence\": 0.5}");
-        PlannerSession planner = new PlannerSession(agents(chat, cfg()).planner(), agents(chat, cfg()).urgent(),
+        PlannerSession planner = PlannerSession.builder(agents(chat, cfg()).planner(), agents(chat, cfg()).urgent(),
                 new ContextPackBuilder(TestDuels.facts()),
-                TestDuels.facts(), cfg(), trace);
-        DecisionPipeline port = new DecisionPipeline(point -> Optional.empty(), planner,
+                TestDuels.facts(), cfg())
+                .trace(trace)
+                .build();
+        DecisionPipeline port = DecisionPipeline.builder(point -> Optional.empty(), planner,
                 new ContextPackBuilder(TestDuels.facts()),
-                agents(chat, cfg()).judge(), cfg(), TestDuels.facts(),
-                (p, d) -> new DuelDecision(new ChoiceIntent.EndTurn(), PathKind.TACTICAL, 0.5,
-                        DecisionExplanation.of("delegate"), Timing.ZERO),
-                catcher, trace);
+                agents(chat, cfg()).judge(), cfg(), TestDuels.facts())
+                .delegate((p, d) -> new DuelDecision(new ChoiceIntent.EndTurn(), PathKind.TACTICAL, 0.5,
+                        DecisionExplanation.of("delegate"), Timing.ZERO))
+                .traceWriter(catcher)
+                .trace(trace)
+                .build();
 
         port.decide(mainPoint(), DecisionDeadline.of(3000));
 

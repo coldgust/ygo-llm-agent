@@ -5,7 +5,6 @@ import com.github.coldgust.ygoagent.context.DuelTimeline;
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
 import com.github.coldgust.ygoagent.llm.LlmChatException;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
-import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
 import com.github.coldgust.ygoagent.llm.service.PlannerAgent;
 import com.github.coldgust.ygoagent.llm.service.PlannerUrgentAgent;
 import com.github.coldgust.ygoagent.model.ChoiceIntent;
@@ -82,24 +81,71 @@ public final class PlannerSession implements AutoCloseable {
     /** 当前回合键（"回合数:回合方"）：锚点触发、每回合配额与 keep 恢复的键。 */
     private String turnKey = "";
 
-    public PlannerSession(PlannerAgent plannerAgent, PlannerUrgentAgent urgentAgent,
-                          ContextPackBuilder packer, CardFacts facts,
-                          PipelineSettings settings, VerboseLog trace) {
-        this(plannerAgent, urgentAgent, packer, facts, settings, null, null, trace);
+    /**
+     * 可选依赖用 Builder 逐项声明（原来的 6 参望远镜构造器已删除——
+     * 每加一个可选依赖就加一条重载链的做法在 {@link ContextPackBuilder} 已有失控教训）。
+     */
+    public static Builder builder(PlannerAgent plannerAgent, PlannerUrgentAgent urgentAgent,
+                                  ContextPackBuilder packer, CardFacts facts, PipelineSettings settings) {
+        return new Builder(plannerAgent, urgentAgent, packer, facts, settings);
     }
 
-    public PlannerSession(PlannerAgent plannerAgent, PlannerUrgentAgent urgentAgent,
-                          ContextPackBuilder packer, CardFacts facts,
-                          PipelineSettings settings, DecisionTraceWriter traceWriter,
-                          DuelTimeline timeline, VerboseLog trace) {
+    /** 依赖收集器：必填五件套 + 可选轨迹/时间线/日志（缺省走静默默认）。 */
+    public static final class Builder {
+        private final PlannerAgent plannerAgent;
+        private final PlannerUrgentAgent urgentAgent;
+        private final ContextPackBuilder packer;
+        private final CardFacts facts;
+        private final PipelineSettings settings;
+        private DecisionTraceWriter traceWriter;
+        private DuelTimeline timeline;
+        private VerboseLog trace;
+
+        private Builder(PlannerAgent plannerAgent, PlannerUrgentAgent urgentAgent,
+                        ContextPackBuilder packer, CardFacts facts, PipelineSettings settings) {
+            this.plannerAgent = plannerAgent;
+            this.urgentAgent = urgentAgent;
+            this.packer = packer;
+            this.facts = facts;
+            this.settings = settings;
+        }
+
+        /** 决策轨迹落点（缺省 NOOP）。 */
+        public Builder traceWriter(DecisionTraceWriter value) {
+            this.traceWriter = value;
+            return this;
+        }
+
+        /** 决斗过程记录端口（缺省 = 不注入记录段）。 */
+        public Builder timeline(DuelTimeline value) {
+            this.timeline = value;
+            return this;
+        }
+
+        /** 全链路日志（缺省全关）。 */
+        public Builder trace(VerboseLog value) {
+            this.trace = value;
+            return this;
+        }
+
+        public PlannerSession build() {
+            return new PlannerSession(plannerAgent, urgentAgent, packer, facts, settings,
+                    traceWriter, timeline, trace);
+        }
+    }
+
+    private PlannerSession(PlannerAgent plannerAgent, PlannerUrgentAgent urgentAgent,
+                           ContextPackBuilder packer, CardFacts facts,
+                           PipelineSettings settings, DecisionTraceWriter traceWriter,
+                           DuelTimeline timeline, VerboseLog trace) {
         this.plannerAgent = plannerAgent;
         this.urgentAgent = urgentAgent;
         this.packer = packer;
         this.facts = facts;
         this.settings = settings;
         this.timeline = timeline;
-        this.trace = trace == null ? new VerboseLog(VerboseLogSettings.off()) : trace;
-        this.traceWriter = traceWriter == null ? DecisionTraceWriter.NOOP : traceWriter;
+        this.trace = VerboseLog.offOr(trace);
+        this.traceWriter = DecisionTraceWriter.noopOr(traceWriter);
         this.describer = new AnswerDescriber(facts);
     }
 

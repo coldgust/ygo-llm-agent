@@ -40,10 +40,11 @@ class PlannerSessionTrimTest {
         PipelineSettings d = PipelineSettings.defaults(Path.of("data/card_rag/cards.jsonl"),
                 "https://api.deepseek.com", "test-key", "deepseek-chat");
         // checkpoint 配额放到 30，才能在测试里把历史推过 24 条触发修剪
-        return new PipelineSettings(true, d.baseUrl(), d.apiKey(), d.model(),
-                0, 0, 20_000, 30, 0.80, 300,
-                d.plannerCallTimeoutMs(), d.plannerCooldownMs(),
-                d.cardRagPath(), d.judgeMaxTokens(), true, true);
+        return PipelineSettings.builder(d)
+                .waitPerDecisionMs(0).firstJudgeWaitMs(0)
+                .waitPerTurnMs(20_000).maxCheckpointsPerTurn(30).judgeTimeoutMs(300)
+                .pathPlanning(true)
+                .build();
     }
 
     private static DecisionPoint pointOf(int turn) {
@@ -69,11 +70,13 @@ class PlannerSessionTrimTest {
                 new ResilientChatModel(chat.baked(cfg().checkpointOptions(), true)),
                 PlannerPrompts.PLANNER_SYSTEM, memory, List.of(),
                 packer.plannerStaticMaterial(), trace);
-        PlannerSession planner = new PlannerSession(plannerAgent,
+        PlannerSession planner = PlannerSession.builder(plannerAgent,
                 new PlannerUrgentAgent(new ResilientChatModel(chat.baked(
                         ChatOptions.decision(cfg().judgeMaxTokens()).withReasoning(cfg().reasoningDecision()), true)),
                         PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), trace),
-                packer, TestDuels.facts(), cfg(), trace);
+                packer, TestDuels.facts(), cfg())
+                .trace(trace)
+                .build();
 
         var point = pointOf(2);
         planner.observePoint(point);
@@ -165,11 +168,13 @@ class PlannerSessionTrimTest {
                 new ResilientChatModel(chat.baked(cfg().checkpointOptions(), true)),
                 PlannerPrompts.PLANNER_SYSTEM, memory, List.of(),
                 packer.plannerStaticMaterial(), trace);
-        PlannerSession planner = new PlannerSession(plannerAgent,
+        PlannerSession planner = PlannerSession.builder(plannerAgent,
                 new PlannerUrgentAgent(new ResilientChatModel(chat.baked(
                         ChatOptions.decision(cfg().judgeMaxTokens()).withReasoning(cfg().reasoningDecision()), true)),
                         PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), trace),
-                packer, TestDuels.facts(), cfg(), trace);
+                packer, TestDuels.facts(), cfg())
+                .trace(trace)
+                .build();
 
         planner.observePoint(pointOf(1));
         planner.drainForTests();

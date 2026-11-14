@@ -31,6 +31,11 @@ public final class VerboseLog {
         this.maxChars = settings.maxChars();
     }
 
+    /** null → 全关日志：可选 trace 的统一默认化（各组装点共用，替代三元样板）。 */
+    public static VerboseLog offOr(VerboseLog trace) {
+        return trace == null ? new VerboseLog(VerboseLogSettings.off()) : trace;
+    }
+
     public boolean enabled() {
         return enabled;
     }

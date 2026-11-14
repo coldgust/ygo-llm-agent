@@ -3,7 +3,6 @@ package com.github.coldgust.ygoagent.trace;
 import com.github.coldgust.ygoagent.model.DecisionPoint;
 import com.github.coldgust.ygoagent.model.DuelDecision;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
-import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
 import com.github.coldgust.ygoagent.trace.DecisionTraceWriter;
 
 import java.util.LinkedHashMap;
@@ -21,7 +20,7 @@ public final class TraceLogWriter implements DecisionTraceWriter {
     private final VerboseLog trace;
 
     public TraceLogWriter(VerboseLog trace) {
-        this.trace = trace == null ? new VerboseLog(VerboseLogSettings.off()) : trace;
+        this.trace = VerboseLog.offOr(trace);
     }
 
     /** 这些事件对"看流程"没有增量，跳过。 */

@@ -115,25 +115,17 @@ public record RuntimeConfig(
         PipelineSettings defaults = PipelineSettings.defaults(
                 Path.of(Texts.firstNonBlank(lookup.apply("CARD_RAG_PATH"), "data/card_rag/cards.jsonl")),
                 baseUrl, apiKey, model);
-        return Optional.of(new PipelineSettings(
-                true,
-                defaults.baseUrl(),
-                defaults.apiKey(),
-                defaults.model(),
-                lookup.apply("LLM_REASONING_PLANNER"),
-                lookup.apply("LLM_REASONING_DECISION"),
-                intOf(lookup.apply("PLANNER_WAIT_DECISION_MS"), defaults.waitPerDecisionMs()),
-                intOf(lookup.apply("PLANNER_FIRST_WAIT_MS"), defaults.firstJudgeWaitMs()),
-                intOf(lookup.apply("PLANNER_WAIT_TURN_MS"), defaults.waitPerTurnMs()),
-                intOf(lookup.apply("PLANNER_MAX_CHECKPOINTS"), defaults.maxCheckpointsPerTurn()),
-                doubleOf(lookup.apply("PLANNER_SIMILARITY_THRESHOLD"), defaults.similarityThreshold()),
-                intOf(lookup.apply("JUDGE_TIMEOUT_MS"), defaults.judgeTimeoutMs()),
-                defaults.plannerCallTimeoutMs(),
-                defaults.plannerCooldownMs(),
-                defaults.cardRagPath(),
-                defaults.judgeMaxTokens(),
-                truthy(lookup.apply("PLANNER_PATH_PLANNING")),
-                rushAnswer(lookup.apply("PLANNER_RUSH_ANSWER"), defaults.plannerRushAnswer())));
+        return Optional.of(PipelineSettings.builder(defaults)
+                .reasoningPlanner(lookup.apply("LLM_REASONING_PLANNER"))
+                .reasoningDecision(lookup.apply("LLM_REASONING_DECISION"))
+                .waitPerDecisionMs(intOf(lookup.apply("PLANNER_WAIT_DECISION_MS")))
+                .firstJudgeWaitMs(intOf(lookup.apply("PLANNER_FIRST_WAIT_MS")))
+                .waitPerTurnMs(intOf(lookup.apply("PLANNER_WAIT_TURN_MS")))
+                .maxCheckpointsPerTurn(intOf(lookup.apply("PLANNER_MAX_CHECKPOINTS")))
+                .similarityThreshold(doubleOf(lookup.apply("PLANNER_SIMILARITY_THRESHOLD")))
+                .judgeTimeoutMs(intOf(lookup.apply("JUDGE_TIMEOUT_MS")))
+                .plannerRushAnswer(rushAnswer(lookup.apply("PLANNER_RUSH_ANSWER")))
+                .build());
     }
 
     /** 三态布尔：true/1/on/yes → true，false/0/off/no → false，其余（含 null/空白/乱写）→ 未配置。 */
@@ -150,9 +142,9 @@ public record RuntimeConfig(
                 : null;
     }
 
-    /** 两态布尔：键存在时，非真值一律 false（与旧 rush-answer 语义一致）。 */
-    private static boolean rushAnswer(String raw, boolean fallback) {
-        return raw == null ? fallback : rushTrue(raw);
+    /** 两态布尔：键存在时，非真值一律 false（与旧 rush-answer 语义一致）；未配置 = null。 */
+    private static Boolean rushAnswer(String raw) {
+        return raw == null ? null : rushTrue(raw);
     }
 
     private static boolean rushTrue(String raw) {
@@ -164,19 +156,21 @@ public record RuntimeConfig(
         return raw != null && rushTrue(raw);
     }
 
-    private static int intOf(String raw, int fallback) {
+    /** 容错整数解析：未配置或写错 = null（继承 core 默认）。 */
+    private static Integer intOf(String raw) {
         try {
-            return raw == null || raw.isBlank() ? fallback : Integer.parseInt(raw.trim());
+            return raw == null || raw.isBlank() ? null : Integer.valueOf(raw.trim());
         } catch (NumberFormatException e) {
-            return fallback;
+            return null;
         }
     }
 
-    private static double doubleOf(String raw, double fallback) {
+    /** 容错小数解析：未配置或写错 = null（继承 core 默认）。 */
+    private static Double doubleOf(String raw) {
         try {
-            return raw == null || raw.isBlank() ? fallback : Double.parseDouble(raw.trim());
+            return raw == null || raw.isBlank() ? null : Double.valueOf(raw.trim());
         } catch (NumberFormatException e) {
-            return fallback;
+            return null;
         }
     }
 

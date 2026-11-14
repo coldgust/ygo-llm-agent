@@ -85,7 +85,7 @@ public final class DuelRunner {
         this.extraListener = extraListener;
         this.cardFactsOverride = cardFactsOverride;
         this.lightRag = lightRag;
-        this.verbose = verbose == null ? new VerboseLog(VerboseLogSettings.off()) : verbose;
+        this.verbose = VerboseLog.offOr(verbose);
     }
 
     public DuelRunResult run(DuelRunSpec spec, AtomicReference<DuelSession> sessionRef,
@@ -165,18 +165,18 @@ public final class DuelRunner {
                         && !spec.comboRecord() ? planExecSettings : null;
                 // 决斗过程记录：session 内的对局事件流（含对手动作）经适配器供给上下文渲染
                 DuelLogTimeline timeline = new DuelLogTimeline(session.duelLog());
-                DuelAgent agent = DuelAgent.open(llmSettings, new DuelAgent.Config(
-                        cardFactsOverride,
-                        traceWriter,
-                        spec.archetype(),
-                        spec.deckStrategy(),
+                DuelAgent agent = DuelAgent.open(llmSettings, DuelAgent.Config.builder()
+                        .facts(cardFactsOverride)
+                        .traceWriter(traceWriter)
+                        .archetype(spec.archetype())
+                        .deckStrategy(spec.deckStrategy())
                         // 己方卡组全清单：规划器据此判断能检索/特召什么，不必现查
-                        deckPasscodes(deck),
-                        webHooks.recordedCombos(),
-                        spec.tuning().comboContextLimit(),
-                        lightRag,
-                        timeline),
-                        verbose);
+                        .deckPasscodes(deckPasscodes(deck))
+                        .combos(webHooks.recordedCombos())
+                        .comboContextLimit(spec.tuning().comboContextLimit())
+                        .lightRag(lightRag)
+                        .timeline(timeline)
+                        .build(), verbose);
                 try {
                     DecisionEngine decisionEngine = agent;
                     RunnerConfig runnerConfig = RunnerConfig.defaults();

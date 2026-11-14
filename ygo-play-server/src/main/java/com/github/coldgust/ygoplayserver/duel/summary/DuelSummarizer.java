@@ -3,7 +3,6 @@ package com.github.coldgust.ygoplayserver.duel.summary;
 import com.github.coldgust.ygoagent.llm.service.NarratorAgent;
 import com.github.coldgust.ygoagent.llm.LlmEndpoint;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
-import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,7 +23,7 @@ public final class DuelSummarizer {
 
     public DuelSummarizer(NarratorAgent narratorAgent, VerboseLog trace) {
         this.narratorAgent = narratorAgent;
-        this.trace = trace == null ? new VerboseLog(VerboseLogSettings.off()) : trace;
+        this.trace = VerboseLog.offOr(trace);
     }
 
     public Optional<Review> summarize(String facts, String timeline) {
