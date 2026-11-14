@@ -25,7 +25,7 @@ import com.github.coldgust.ygoagent.pipeline.TestDuels;
 class PromptCardTextInvariantTest {
 
     private final CardFacts facts = TestDuels.facts();
-    private final ContextPackBuilder builder = new ContextPackBuilder(facts, new DuelMathService());
+    private final ContextPackBuilder builder = new ContextPackBuilder(facts);
     private final CardText cardText = new CardText(facts);
 
     /** 四种会渲染效果文本的决策点，逐一扫不变量。 */

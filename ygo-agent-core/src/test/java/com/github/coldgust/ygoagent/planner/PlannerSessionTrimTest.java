@@ -1,7 +1,6 @@
 package com.github.coldgust.ygoagent.planner;
 
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
-import com.github.coldgust.ygoagent.context.DuelMathService;
 import com.github.coldgust.ygoagent.context.RuleDigest;
 import com.github.coldgust.ygoagent.llm.ResilientChatModel;
 import com.github.coldgust.ygoagent.llm.service.PlannerAgent;
@@ -61,7 +60,7 @@ class PlannerSessionTrimTest {
         FakeChatModel chat = new FakeChatModel(planJson(), "{\"keep\": true}");
         var trace = new VerboseLog(VerboseLogSettings.off());
         // 带规则速查 → 整局静态资料非空 → 构造时种入 memory（钉住前缀的一部分）
-        ContextPackBuilder packer = ContextPackBuilder.builder(TestDuels.facts(), new DuelMathService())
+        ContextPackBuilder packer = ContextPackBuilder.builder(TestDuels.facts())
                 .ruleDigest(RuleDigest.TEXT)
                 .advisory(true)
                 .build();
@@ -157,7 +156,7 @@ class PlannerSessionTrimTest {
     void 连续对话_跨回合交换保留且静态只种一次() {
         FakeChatModel chat = new FakeChatModel(planJson(), "{\"keep\": true}");
         var trace = new VerboseLog(VerboseLogSettings.off());
-        ContextPackBuilder packer = ContextPackBuilder.builder(TestDuels.facts(), new DuelMathService())
+        ContextPackBuilder packer = ContextPackBuilder.builder(TestDuels.facts())
                 .ruleDigest(RuleDigest.TEXT)
                 .advisory(true)
                 .build();

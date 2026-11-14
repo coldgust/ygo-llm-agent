@@ -1,7 +1,6 @@
 package com.github.coldgust.ygoagent.pipeline;
 
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
-import com.github.coldgust.ygoagent.context.DuelMathService;
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
 import com.github.coldgust.ygoagent.llm.ChatOptions;
 import com.github.coldgust.ygoagent.llm.ResilientChatModel;
@@ -123,8 +122,7 @@ class DecisionPipelineTest {
     private Rig rig(PipelineSettings cfg, String... chatReplies) {
         FakeChatModel chat = new FakeChatModel(chatReplies);
         Agents agents = agents(chat, cfg);
-        PlannerSession planner = plannerSession(agents, new ContextPackBuilder(TestDuels.facts(),
-                new DuelMathService()), TestDuels.facts(), cfg, trace);
+        PlannerSession planner = plannerSession(agents, new ContextPackBuilder(TestDuels.facts()), TestDuels.facts(), cfg, trace);
         AtomicInteger delegateCalls = new AtomicInteger();
         DecisionEngine delegate = (point, deadline) -> {
             delegateCalls.incrementAndGet();
@@ -134,7 +132,7 @@ class DecisionPipelineTest {
         };
         var port = new DecisionPipeline(new ReflexPolicyImpl(),
                 planner,
-                new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
+                new ContextPackBuilder(TestDuels.facts()),
                 agents.judge(), cfg, TestDuels.facts(), delegate,
                 DecisionTraceWriter.NOOP, trace);
         return new Rig(port, planner, chat, delegateCalls);
@@ -417,8 +415,7 @@ class DecisionPipelineTest {
                 settings().cardRagPath(), settings().judgeMaxTokens(), true, true);
         FakeChatModel chat = new FakeChatModel(replies);
         Agents agents = agents(chat, cfg);
-        PlannerSession planner = plannerSession(agents, new ContextPackBuilder(TestDuels.facts(),
-                new DuelMathService()), TestDuels.facts(), cfg, trace);
+        PlannerSession planner = plannerSession(agents, new ContextPackBuilder(TestDuels.facts()), TestDuels.facts(), cfg, trace);
         AtomicInteger calls = new AtomicInteger();
         DecisionEngine delegate = (point, deadline) -> {
             calls.incrementAndGet();
@@ -427,7 +424,7 @@ class DecisionPipelineTest {
                     Timing.ZERO);
         };
         var port = new DecisionPipeline(point -> Optional.empty(), planner,
-                new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
+                new ContextPackBuilder(TestDuels.facts()),
                 agents.judge(), cfg, TestDuels.facts(), delegate, tracer, trace);
         return new Rig(port, planner, chat, calls);
     }
@@ -567,13 +564,13 @@ class DecisionPipelineTest {
                 new ResilientChatModel(new SlowModel(600, "{\"choice\": \"C1\", \"confidence\": 0.5}")),
                 PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), trace);
         PlannerSession planner = new PlannerSession(plannerAgent, urgentAgent,
-                new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
+                new ContextPackBuilder(TestDuels.facts()),
                 TestDuels.facts(), longer, trace);
         DecisionEngine delegate = (point, deadline) -> {
             throw new AssertionError("不该落到 ⑤ 兜底");
         };
         var port = new DecisionPipeline(new ReflexPolicyImpl(),
-                planner, new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
+                planner, new ContextPackBuilder(TestDuels.facts()),
                 new JudgeAgent(new ResilientChatModel(new LateAnswerModel()), List.of(), trace),
                 longer, TestDuels.facts(), delegate,
                 DecisionTraceWriter.NOOP, trace);
@@ -620,11 +617,11 @@ class DecisionPipelineTest {
                 new ResilientChatModel(new LateAnswerModel()),
                 PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), trace);
         PlannerSession planner = new PlannerSession(plannerAgent, urgentAgent,
-                new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
+                new ContextPackBuilder(TestDuels.facts()),
                 TestDuels.facts(), cfg, trace);
         var port = new DecisionPipeline(
                 new ReflexPolicyImpl(), planner,
-                new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
+                new ContextPackBuilder(TestDuels.facts()),
                 new JudgeAgent(new ResilientChatModel(new SlowModel(700,
                         "{\"choice\":\"C1\",\"rationale\":\"断检索\",\"confidence\":0.8}")), List.of(), trace),
                 cfg, TestDuels.facts(), (p, d) -> {
@@ -667,11 +664,11 @@ class DecisionPipelineTest {
                 new ResilientChatModel(new SlowModel(500, "{\"choice\": \"C1\"}")),
                 PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), trace);
         PlannerSession planner = new PlannerSession(plannerAgent, urgentAgent,
-                new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
+                new ContextPackBuilder(TestDuels.facts()),
                 TestDuels.facts(), cfg, trace);
         var port = new DecisionPipeline(
                 new ReflexPolicyImpl(), planner,
-                new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
+                new ContextPackBuilder(TestDuels.facts()),
                 new JudgeAgent(new ResilientChatModel(new LateAnswerModel()), List.of(), trace),
                 cfg, TestDuels.facts(), (p, d) -> {
                     throw new AssertionError("不该落到 ⑤ 兜底");
@@ -726,7 +723,7 @@ class DecisionPipelineTest {
                         PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), "", trace),
                 new PlannerUrgentAgent(new ResilientChatModel(chat.baked(decisionTier(tight), true)),
                         PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), trace),
-                new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
+                new ContextPackBuilder(TestDuels.facts()),
                 TestDuels.facts(), tight, trace);
         AtomicInteger delegateCalls = new AtomicInteger();
         DecisionEngine delegate = (point, deadline) -> {
@@ -736,7 +733,7 @@ class DecisionPipelineTest {
                     Timing.ZERO);
         };
         var port = new DecisionPipeline(point -> Optional.empty(), planner,
-                new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
+                new ContextPackBuilder(TestDuels.facts()),
                 new JudgeAgent(new ResilientChatModel(chat.baked(decisionTier(tight), false)),
                         List.of(), trace),
                 tight, TestDuels.facts(), delegate,
@@ -760,7 +757,7 @@ class DecisionPipelineTest {
                         PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), "", trace),
                 new PlannerUrgentAgent(new ResilientChatModel(chat.baked(decisionTier(settings()), true)),
                         PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), trace),
-                new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
+                new ContextPackBuilder(TestDuels.facts()),
                 TestDuels.facts(), settings(), trace);
         DecisionPoint point = mainPoint();
         chat.fail = true;
@@ -779,7 +776,7 @@ class DecisionPipelineTest {
                         PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), "", trace),
                 new PlannerUrgentAgent(new ResilientChatModel(chat.baked(decisionTier(settings()), true)),
                         PlannerPrompts.PLANNER_SYSTEM, memory, List.of(), trace),
-                new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
+                new ContextPackBuilder(TestDuels.facts()),
                 TestDuels.facts(), settings(), trace);
         DecisionPoint point = mainPoint();
         planner.observePoint(point);

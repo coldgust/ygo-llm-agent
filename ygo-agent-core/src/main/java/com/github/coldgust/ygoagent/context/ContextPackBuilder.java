@@ -34,7 +34,6 @@ public final class ContextPackBuilder {
     private final CardFacts facts;
     /** 卡面文本的唯一出口：名字/条款/本次发动的是哪一条，全走它。 */
     private final CardText cardText;
-    private final DuelMathService math;
     private final String deckStrategy;
     private final String ruleDigest;
     private final String selfArchetype;
@@ -52,22 +51,21 @@ public final class ContextPackBuilder {
     private final DuelRecordSections recordSections;
 
     /** 最小构造：可选依赖（思路/规则速查/主题/卡组清单/连招/记录端口）全部缺席。 */
-    public ContextPackBuilder(CardFacts facts, DuelMathService math) {
-        this(facts, math, null, null, null, false, null, null, null);
+    public ContextPackBuilder(CardFacts facts) {
+        this(facts, null, null, null, false, null, null, null);
     }
 
     /**
      * 可选依赖用 Builder 逐项声明（原来的 3–9 参望远镜重载已删除——
      * 每加一个依赖就加一条重载链的做法在 8 个构造器时已经失控）。
      */
-    public static Builder builder(CardFacts facts, DuelMathService math) {
-        return new Builder(facts, math);
+    public static Builder builder(CardFacts facts) {
+        return new Builder(facts);
     }
 
     /** 依赖收集器：字段与 {@link ContextPackBuilder} 的可选参数一一对应。 */
     public static final class Builder {
         private final CardFacts facts;
-        private final DuelMathService math;
         private String deckStrategy;
         private String ruleDigest;
         private String selfArchetype;
@@ -76,9 +74,8 @@ public final class ContextPackBuilder {
         private String comboReference;
         private DuelTimeline timeline;
 
-        private Builder(CardFacts facts, DuelMathService math) {
+        private Builder(CardFacts facts) {
             this.facts = facts;
-            this.math = math;
         }
 
         /** 用户为本卡组写的打法思路（可为空）。人给的策略知识，优先级高于通用战术常识。 */
@@ -124,17 +121,16 @@ public final class ContextPackBuilder {
         }
 
         public ContextPackBuilder build() {
-            return new ContextPackBuilder(facts, math, deckStrategy, ruleDigest, selfArchetype,
+            return new ContextPackBuilder(facts, deckStrategy, ruleDigest, selfArchetype,
                     advisoryPlan, deckPasscodes, comboReference, timeline);
         }
     }
 
-    private ContextPackBuilder(CardFacts facts, DuelMathService math, String deckStrategy,
-                              String ruleDigest, String selfArchetype, boolean advisoryPlan,
-                              List<Long> deckPasscodes, String comboReference, DuelTimeline timeline) {
+    private ContextPackBuilder(CardFacts facts, String deckStrategy,
+                               String ruleDigest, String selfArchetype, boolean advisoryPlan,
+                               List<Long> deckPasscodes, String comboReference, DuelTimeline timeline) {
         this.facts = facts;
         this.cardText = new CardText(facts);
-        this.math = math;
         this.deckStrategy = deckStrategy == null || deckStrategy.isBlank() ? null : deckStrategy.trim();
         this.ruleDigest = ruleDigest == null || ruleDigest.isBlank() ? null : ruleDigest.trim();
         this.selfArchetype = selfArchetype == null || selfArchetype.isBlank()
@@ -201,7 +197,9 @@ public final class ContextPackBuilder {
     }
 
     /**
-     * 动态局面段：局面行 / 双方手牌与场面 / 墓地·除外 / 场地槽位 / 约束计数。
+     * 动态局面段：局面行 / 双方手牌与场面 / 墓地·除外 / 场地槽位。
+     * 计数（卡组剩余/场面张数/墓地类型）内联在战场行里；战斗结算由 llm.MathTool 按需提供，
+     * 这里不再注入 [约束]/[数学] 静态段。
      * 每次决策都可能变，不能进缓存前缀。
      */
     public String dynamicBoardPack(DuelState state) {
@@ -210,7 +208,12 @@ public final class ContextPackBuilder {
                 .append(state.isMyTurn() ? "我方回合" : "对方回合")
                 .append("，阶段 ").append(state.phase())
                 .append("；LP 我 ").append(state.self().lifePoints())
-                .append(" / 对 ").append(state.opponent().lifePoints()).append("\n");
+                .append(" / 对 ").append(state.opponent().lifePoints())
+                .append("；卡组剩余 我 主").append(state.self().mainDeckCount())
+                .append("/额").append(state.self().extraDeckCount())
+                .append("，对 主").append(state.opponent().mainDeckCount())
+                .append("/额").append(state.opponent().extraDeckCount())
+                .append("\n");
         sb.append("[我方手牌] ").append(board.handLine(state, PlayerSide.SELF)).append("\n");
         board.appendHandSpellUsability(sb, state);
         sb.append("[我方场面] ").append(board.fieldLine(state, PlayerSide.SELF)).append("\n");
@@ -220,8 +223,6 @@ public final class ContextPackBuilder {
         sb.append("[对手手牌] ").append(state.opponent().handCount())
                 .append(" 张（身份不可见）\n");
         sb.append(board.boardSlotsSection(state));
-        // 只注入确定性计数；斩杀判定已停用（回合开始时必然"不可斩杀"，无信息量且误导）
-        sb.append(math.constraintsSection(state, facts));
         return sb.toString();
     }
 
@@ -276,10 +277,6 @@ public final class ContextPackBuilder {
         if (plan != null && (!plan.steps().isEmpty() || !plan.branches().isEmpty()
                 || !Texts.isBlank(plan.goal()) || !Texts.isBlank(plan.thinking()))) {
             sb.append(planSection(point, plan)).append("\n");
-        }
-        // 只在对战阶做攻击选择时补攻击结算表（照样不给"可斩杀"结论）
-        if (point.request() instanceof ChoiceRequest.BattlePhaseRequest) {
-            sb.append(math.battleTableSection(point.state(), facts));
         }
         if (point.kind() == RequestKind.POSITION) {
             sb.append(positionSection());

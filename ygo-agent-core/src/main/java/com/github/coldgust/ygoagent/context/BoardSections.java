@@ -129,7 +129,7 @@ final class BoardSections {
         } else {
             StringJoiner mj = new StringJoiner("、");
             monsters.forEach(c -> mj.add(monsterLabel(state, c)));
-            sj.add("怪兽：" + mj);
+            sj.add("怪兽（" + monsters.size() + "）：" + mj);
         }
         List<CardInstance> backrow = state.spellTraps(side);
         if (backrow.isEmpty()) {
@@ -148,7 +148,7 @@ final class BoardSections {
                     bj.add(known ? name + "(里侧)" : "盖卡");
                 }
             });
-            sj.add("魔陷：" + bj);
+            sj.add("魔陷（" + backrow.size() + "）：" + bj);
         }
         state.fieldSpell(side).ifPresent(field ->
                 sj.add("场地：" + CardLabels.labelOf(field, facts)));
@@ -218,11 +218,45 @@ final class BoardSections {
     String graveLine(DuelState state, PlayerSide side) {
         List<CardIdentity> gy = state.player(side).graveyard();
         String grave = gy.isEmpty() ? "墓地（空）"
-                : "墓地：" + identities(gy);
+                : "墓地：" + identities(gy) + typeCounts(gy);
         List<CardIdentity> banished = state.player(side).banished();
         String removed = banished.isEmpty() ? "除外（空）"
-                : "除外：" + identities(banished);
+                : "除外：" + identities(banished) + typeCounts(banished);
         return grave + "；" + removed;
+    }
+
+    /**
+     * 墓地/除外的类型计数，内联在列表后（原 [约束] 段的 selfGySpellCount 等计数归位到战场行）：
+     * 模型数一长串名字容易错，确定性计数直接给。
+     */
+    private String typeCounts(List<CardIdentity> identities) {
+        int spells = 0;
+        int traps = 0;
+        int monsters = 0;
+        int unknown = 0;
+        for (CardIdentity identity : identities) {
+            if (identity == null || identity.isUnknown()) {
+                unknown++;
+                continue;
+            }
+            CardFact fact = facts.byPasscode(identity.passcode()).orElse(null);
+            if (fact == null) {
+                unknown++;
+            } else if (fact.isMonster()) {
+                monsters++;
+            } else if (fact.cardType() != null && fact.cardType().contains("陷阱")) {
+                traps++;
+            } else {
+                spells++;
+            }
+        }
+        StringBuilder sb = new StringBuilder("（魔法 ").append(spells)
+                .append("、陷阱 ").append(traps)
+                .append("、怪兽 ").append(monsters);
+        if (unknown > 0) {
+            sb.append("、未知 ").append(unknown);
+        }
+        return sb.append("）").toString();
     }
 
     private String identities(List<CardIdentity> identities) {

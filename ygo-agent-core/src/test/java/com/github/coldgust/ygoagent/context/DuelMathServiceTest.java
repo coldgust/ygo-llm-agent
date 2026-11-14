@@ -111,13 +111,4 @@ class DuelMathServiceTest {
                 math.attackTable(state, facts).getFirst().outcome());
         assertFalse(math.lethalScan(state, facts).directLethal());
     }
-
-    @Test
-    void constraintsCountGySpellsAndEmptyZones() {
-        var state = TestDuels.state(2, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
-        var constraints = math.constraints(state, facts);
-        assertEquals(true, constraints.get("selfMainMonsterZoneEmpty"));
-        assertEquals(0, constraints.get("selfGySpellCount"));
-        assertEquals(3, constraints.get("opponentHandCount"));
-    }
 }

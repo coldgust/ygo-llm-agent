@@ -2,7 +2,6 @@ package com.github.coldgust.ygoplay;
 
 import com.github.coldgust.ygoagent.selection.SelectionDescriber;
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
-import com.github.coldgust.ygoagent.context.DuelMathService;
 import com.github.coldgust.ygoagent.DuelAgent;
 import com.github.coldgust.ygoagent.llm.LightRagSettings;
 import com.github.coldgust.ygoagent.pipeline.PipelineSettings;

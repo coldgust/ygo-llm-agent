@@ -13,6 +13,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Queue;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -23,7 +24,8 @@ public class FakeChatModel implements ChatModel {
 
     private final List<String> replies;
     private final AtomicInteger index = new AtomicInteger();
-    public final List<ChatRequest> requests = new ArrayList<>();
+    /** 规划器 worker 与 ④ 竞速线程并发追加，断言线程同时流式读——必须并发安全（CI 出过 CME）。 */
+    public final List<ChatRequest> requests = new CopyOnWriteArrayList<>();
     public boolean fail = false;
 
     public FakeChatModel(String... replies) {

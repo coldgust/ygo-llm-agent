@@ -1,7 +1,6 @@
 package com.github.coldgust.ygoagent.planner;
 
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
-import com.github.coldgust.ygoagent.context.DuelMathService;
 import com.github.coldgust.ygoagent.context.DuelTimeline;
 import com.github.coldgust.ygoagent.llm.ChatOptions;
 import com.github.coldgust.ygoagent.llm.ResilientChatModel;
@@ -96,8 +95,7 @@ class PlannerSessionRecordBatchTest {
                 }
             }
         };
-        ContextPackBuilder packer = ContextPackBuilder.builder(
-                TestDuels.facts(), new DuelMathService())
+        ContextPackBuilder packer = ContextPackBuilder.builder(TestDuels.facts())
                 .advisory(true)
                 .timeline(timeline)
                 .build();

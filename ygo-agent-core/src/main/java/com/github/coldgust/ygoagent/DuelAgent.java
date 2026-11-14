@@ -1,7 +1,6 @@
 package com.github.coldgust.ygoagent;
 
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
-import com.github.coldgust.ygoagent.context.DuelMathService;
 import com.github.coldgust.ygoagent.context.RuleDigest;
 import com.github.coldgust.ygoagent.context.DuelTimeline;
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
@@ -13,6 +12,7 @@ import com.github.coldgust.ygoagent.llm.ComboTool;
 import com.github.coldgust.ygoagent.llm.DecisionTools;
 import com.github.coldgust.ygoagent.llm.DuelRecallTool;
 import com.github.coldgust.ygoagent.llm.LightRagSettings;
+import com.github.coldgust.ygoagent.llm.MathTool;
 import com.github.coldgust.ygoagent.llm.RulebookTool;
 import com.github.coldgust.ygoagent.llm.VerboseLog;
 import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
@@ -56,10 +56,13 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
 
     private final DecisionEngine engine;
     private final CardFacts facts;
+    /** 数学工具（纯规则链为 null）：decide() 入口绑定当前局面快照，供 LLM 按需调用。 */
+    private final MathTool math;
 
-    private DuelAgent(DecisionEngine engine, CardFacts facts) {
+    private DuelAgent(DecisionEngine engine, CardFacts facts, MathTool math) {
         this.engine = engine;
         this.facts = facts;
+        this.math = math;
     }
 
     /**
@@ -78,7 +81,7 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
                 new ReflexPolicyImpl(), new TacticalPlannerImpl(), new SimpleArbiter(), traceWriter);
         boolean llm = settings != null && settings.enabled();
         if (!llm) {
-            return new DuelAgent(baseEngine, config.facts());
+            return new DuelAgent(baseEngine, config.facts(), null);
         }
         CardFacts facts = config.facts();
         if (facts == null) {
@@ -90,7 +93,7 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
         }
         String comboReference = ComboReferenceText.render(config.combos(), config.archetype(),
                 config.comboContextLimit());
-        ContextPackBuilder packer = ContextPackBuilder.builder(facts, new DuelMathService())
+        ContextPackBuilder packer = ContextPackBuilder.builder(facts)
                 .deckStrategy(config.deckStrategy())
                 .ruleDigest(RuleDigest.TEXT)
                 .archetype(config.archetype())
@@ -125,10 +128,12 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
         // 查卡工具：规划器也要有——判断"这张卡和那张能不能配合"必须有卡面原文，
         // 只给卡名等于让它凭训练记忆猜效果（实测就会退化成逐张单卡评价）。
         CardTool cardTool = new CardTool(facts);
-        // 规划器的工具集：规则 + 查卡 + 连招（不含历史对局检索，那是执行器的事）
-        DecisionTools plannerTools = new DecisionTools(rulebook, comboTool, cardTool);
+        // 数学工具：战斗结算/伤害投影/抽卡概率/素材核对，局面快照由 decide() 入口绑定
+        MathTool mathTool = new MathTool(facts, config.deckPasscodes(), traceWriter);
+        // 规划器的工具集：规则 + 查卡 + 连招 + 数学（不含历史对局检索，那是执行器的事）
+        DecisionTools plannerTools = new DecisionTools(rulebook, comboTool, cardTool, null, mathTool);
         DuelRecallTool duelRecall = knowledge ? new DuelRecallTool(config.lightRag(), "mix", 4) : null;
-        DecisionTools decisionTools = new DecisionTools(rulebook, comboTool, cardTool, duelRecall);
+        DecisionTools decisionTools = new DecisionTools(rulebook, comboTool, cardTool, duelRecall, mathTool);
         // 四个固定 agent：档位与超时在构造期固定（决策侧调用方另有 deadline 预算兜底）
         String plannerSystem = settings.pathPlanning() ? PlannerPrompts.PLANNER_SYSTEM
                 : PlannerPrompts.ADVISOR_SYSTEM;
@@ -159,7 +164,7 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
         log.info("五级流水已启用（model={} wait-decision={}ms wait-turn={}ms 卡库 {}）",
                 settings.model(), settings.waitPerDecisionMs(),
                 settings.waitPerTurnMs(), facts.knownCount());
-        return new DuelAgent(pipeline, facts);
+        return new DuelAgent(pipeline, facts, mathTool);
     }
 
     /** 本局实际用的卡牌事实（宿主可能要复用，如把候选编号翻译成卡名）。纯规则链且未注入时为 null。 */
@@ -169,6 +174,11 @@ public final class DuelAgent implements DecisionEngine, AutoCloseable {
 
     @Override
     public DuelDecision decide(DecisionPoint point, DecisionDeadline deadline) {
+        if (math != null) {
+            // 每个决策点换最新局面快照：DuelState 不可变，换引用即换状态；
+            // 本线程先于任何工具调用（含规划器线程），程序序保证可见
+            math.bind(point.state());
+        }
         return engine.decide(point, deadline);
     }
 

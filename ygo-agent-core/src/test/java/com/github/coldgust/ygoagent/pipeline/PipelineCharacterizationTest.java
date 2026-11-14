@@ -1,7 +1,6 @@
 package com.github.coldgust.ygoagent.pipeline;
 
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
-import com.github.coldgust.ygoagent.context.DuelMathService;
 import com.github.coldgust.ygoagent.llm.ChatOptions;
 import com.github.coldgust.ygoagent.llm.ResilientChatModel;
 import com.github.coldgust.ygoagent.llm.service.JudgeAgent;
@@ -105,10 +104,10 @@ class PipelineCharacterizationTest {
         EventCatcher catcher = new EventCatcher();
         FakeChatModel chat = new FakeChatModel(planJson("activate", TestDuels.ENGAGE), "{\"keep\": true}");
         PlannerSession planner = new PlannerSession(agents(chat, cfg()).planner(), agents(chat, cfg()).urgent(),
-                new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
+                new ContextPackBuilder(TestDuels.facts()),
                 TestDuels.facts(), cfg(), trace);
         DecisionPipeline port = new DecisionPipeline(point -> Optional.empty(), planner,
-                new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
+                new ContextPackBuilder(TestDuels.facts()),
                 agents(chat, cfg()).judge(), cfg(), TestDuels.facts(),
                 (p, d) -> new DuelDecision(new ChoiceIntent.EndTurn(), PathKind.TACTICAL, 0.5,
                         DecisionExplanation.of("delegate"), Timing.ZERO),
@@ -135,10 +134,10 @@ class PipelineCharacterizationTest {
         EventCatcher catcher = new EventCatcher();
         FakeChatModel chat = new FakeChatModel("{\"choice\": \"C1\", \"rationale\": \"r\", \"confidence\": 0.5}");
         PlannerSession planner = new PlannerSession(agents(chat, cfg()).planner(), agents(chat, cfg()).urgent(),
-                new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
+                new ContextPackBuilder(TestDuels.facts()),
                 TestDuels.facts(), cfg(), trace);
         DecisionPipeline port = new DecisionPipeline(point -> Optional.empty(), planner,
-                new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
+                new ContextPackBuilder(TestDuels.facts()),
                 agents(chat, cfg()).judge(), cfg(), TestDuels.facts(),
                 (p, d) -> new DuelDecision(new ChoiceIntent.EndTurn(), PathKind.TACTICAL, 0.5,
                         DecisionExplanation.of("delegate"), Timing.ZERO),

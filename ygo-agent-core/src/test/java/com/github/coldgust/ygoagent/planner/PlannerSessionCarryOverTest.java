@@ -1,7 +1,6 @@
 package com.github.coldgust.ygoagent.planner;
 
 import com.github.coldgust.ygoagent.context.ContextPackBuilder;
-import com.github.coldgust.ygoagent.context.DuelMathService;
 import com.github.coldgust.ygoagent.llm.ChatOptions;
 import com.github.coldgust.ygoagent.llm.ResilientChatModel;
 import com.github.coldgust.ygoagent.llm.service.JudgeAgent;
@@ -111,7 +110,7 @@ class PlannerSessionCarryOverTest {
         recorder.script(planJson()); // 第一次给真计划（避免触发 keep 恢复路径），之后 keep
         var stack = stack(trace, recorder);
         PlannerSession planner = new PlannerSession(stack.planner(), stack.urgent(),
-                new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
+                new ContextPackBuilder(TestDuels.facts()),
                 TestDuels.facts(), settings(), trace);
 
         planner.observePoint(pointOf(1));
@@ -161,7 +160,7 @@ class PlannerSessionCarryOverTest {
         recorder.script(planJson());
         var stack = stack(trace, recorder);
         PlannerSession planner = new PlannerSession(stack.planner(), stack.urgent(),
-                new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
+                new ContextPackBuilder(TestDuels.facts()),
                 TestDuels.facts(), settings(), trace);
 
         planner.observePoint(pointOf(1));
@@ -196,7 +195,7 @@ class PlannerSessionCarryOverTest {
         recorder.script(planJson());
         var stack = stack(trace, recorder);
         PlannerSession planner = new PlannerSession(stack.planner(), stack.urgent(),
-                new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
+                new ContextPackBuilder(TestDuels.facts()),
                 TestDuels.facts(), settings(), trace);
 
         planner.observePoint(pointOf(1));
@@ -214,7 +213,7 @@ class PlannerSessionCarryOverTest {
         recorder.script(planJson());
         var stack = stack(trace, recorder);
         PlannerSession planner = new PlannerSession(stack.planner(), stack.urgent(),
-                new ContextPackBuilder(TestDuels.facts(), new DuelMathService()),
+                new ContextPackBuilder(TestDuels.facts()),
                 TestDuels.facts(), settings(), trace);
 
         planner.observePoint(pointOf(1));

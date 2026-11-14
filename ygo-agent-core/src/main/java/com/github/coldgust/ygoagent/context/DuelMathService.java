@@ -1,24 +1,19 @@
 package com.github.coldgust.ygoagent.context;
 
-import com.github.coldgust.ygodomain.card.CardIdentity;
 import com.github.coldgust.ygodomain.duel.CardInstance;
 import com.github.coldgust.ygodomain.duel.DuelState;
 import com.github.coldgust.ygodomain.duel.PlayerSide;
 import com.github.coldgust.ygodomain.duel.Position;
-import com.github.coldgust.ygodomain.zone.ZoneKind;
-
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
 import com.github.coldgust.ygoagent.knowledge.CardFact;
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
 
 /**
- * 确定性数学与计数（v6 §3.4）：battleCalc / lethalScan / stateCount。
+ * 确定性战斗数学（v6 §3.4）：attackTable / lethalScan。
  * <p>全部纯函数：输入 DuelState + 卡牌事实，输出人类与 LLM 都可读的结算结果。
- * LLM 输出里的数字必须来自这里（引用校验强制）。
+ * 消费者是 {@code llm.MathTool}（按需注册给 LLM 的工具）；局面计数归 BoardSections
+ * 的战场行渲染，本类不再承担任何 prompt 注入职责。
  */
 public final class DuelMathService {
 
@@ -28,6 +23,7 @@ public final class DuelMathService {
             String attackerName,
             int attackerAtk,
             String targetName,      // null = 直接攻击
+            Long targetInstanceId,  // null = 直接攻击
             Integer targetValue,    // 对方 ATK 或 DEF（未知为 null）
             boolean targetDefense,
             Outcome outcome,
@@ -46,13 +42,14 @@ public final class DuelMathService {
         public String describe() {
             String target = targetName == null ? "直接攻击" : targetName + (targetDefense ? "(守备)" : "(攻击)");
             String base = attackerName + "(" + attackerAtk + ") → " + target;
+            // 视角中性：威胁表（对方视角）也复用同一文案，不写死"我方/对方"
             String tail = switch (outcome) {
                 case DESTROY_AND_DAMAGE -> "破坏并造成 " + damageToOpponent + " 伤害";
                 case DIRECT_ATTACK -> "直接攻击造成 " + damageToOpponent + " 伤害";
                 case TRADE -> "同归于尽" + (damageToOpponent > 0 ? "，双方各受 " + damageToOpponent : "");
-                case ATTACKER_DESTROYED -> "攻击方被破坏" + (damageToSelf > 0 ? "，我方受 " + damageToSelf : "");
-                case NO_EFFECT -> "无法破坏（对方 " + targetValue + " ≥ 我方 " + attackerAtk + "），无伤害";
-                case UNRESOLVED -> "结算未知（对方身份不可见）";
+                case ATTACKER_DESTROYED -> "攻击方被破坏" + (damageToSelf > 0 ? "，攻击方受 " + damageToSelf : "");
+                case NO_EFFECT -> "无法破坏（目标 " + targetValue + " ≥ 攻击方 " + attackerAtk + "），无伤害";
+                case UNRESOLVED -> "结算未知（目标身份不可见）";
             };
             return base + "：" + tail;
         }
@@ -61,37 +58,18 @@ public final class DuelMathService {
     public record LethalScan(boolean directLethal, int totalAvailableDamage, int opponentLp, String summary) {
     }
 
-    public Map<String, Object> constraints(DuelState state, CardFacts facts) {
-        Map<String, Object> out = new LinkedHashMap<>();
-        int selfGySpells = 0;
-        for (CardIdentity identity : state.self().graveyard()) {
-            if (facts.byPasscode(identity.passcode()).map(CardFact::isMonster).map(b -> !b).orElse(false)) {
-                selfGySpells++;
-            }
-        }
-        out.put("selfLp", state.self().lifePoints());
-        out.put("opponentLp", state.opponent().lifePoints());
-        out.put("selfHandCount", state.self().handCount());
-        out.put("selfMainMonsterZoneEmpty", state.freeMainMonsterZones(PlayerSide.SELF).size() == 5);
-        out.put("selfMonsters", state.monsters(PlayerSide.SELF).size());
-        out.put("selfBackrow", state.spellTraps(PlayerSide.SELF).size());
-        out.put("selfGySpellCount", selfGySpells);
-        out.put("selfMainDeckLeft", state.self().mainDeckCount());
-        out.put("selfExtraDeckLeft", state.self().extraDeckCount());
-        out.put("opponentMonsters", state.monsters(PlayerSide.OPPONENT).size());
-        out.put("opponentBackrow", state.spellTraps(PlayerSide.OPPONENT).size());
-        out.put("opponentHandCount", state.opponent().handCount());
-        out.put("opponentMainDeckLeft", state.opponent().mainDeckCount());
-        out.put("opponentExtraDeckLeft", state.opponent().extraDeckCount());
-        return out;
+    public List<AttackLine> attackTable(DuelState state, CardFacts facts) {
+        return attackTable(state, facts, PlayerSide.SELF);
     }
 
-    public List<AttackLine> attackTable(DuelState state, CardFacts facts) {
+    /** 双方通用攻击结算表：attackerSide 的表侧攻击怪兽 × 对面全场（威胁评估传 OPPONENT）。 */
+    public List<AttackLine> attackTable(DuelState state, CardFacts facts, PlayerSide attackerSide) {
         List<AttackLine> lines = new ArrayList<>();
-        List<CardInstance> attackers = state.monsters(PlayerSide.SELF).stream()
+        List<CardInstance> attackers = state.monsters(attackerSide).stream()
                 .filter(c -> c.position() == Position.FACE_UP_ATTACK)
                 .toList();
-        List<CardInstance> defenders = state.monsters(PlayerSide.OPPONENT);
+        List<CardInstance> defenders = state.monsters(attackerSide == PlayerSide.SELF
+                ? PlayerSide.OPPONENT : PlayerSide.SELF);
         for (CardInstance attacker : attackers) {
             CardFact attackerFact = facts.byPasscode(attacker.passcode()).orElse(null);
             if (attackerFact == null || attackerFact.atk() == null) {
@@ -100,7 +78,7 @@ public final class DuelMathService {
             int atk = attackerFact.atk();
             if (defenders.isEmpty()) {
                 lines.add(new AttackLine(attacker.instanceId(), attacker.passcode(), attackerFact.name(),
-                        atk, null, null, false, AttackLine.Outcome.DIRECT_ATTACK, atk, 0));
+                        atk, null, null, null, false, AttackLine.Outcome.DIRECT_ATTACK, atk, 0));
                 continue;
             }
             for (CardInstance target : defenders) {
@@ -115,14 +93,15 @@ public final class DuelMathService {
         String attackerName = attackerFact.name();
         if (target.isUnknown() || target.position() == null || !target.position().isFaceUp()) {
             return new AttackLine(attacker.instanceId(), attacker.passcode(), attackerName, atk,
-                    "盖卡/未知", null, target.position() != null && target.position().isDefense(),
+                    "盖卡/未知", target.instanceId(), null,
+                    target.position() != null && target.position().isDefense(),
                     AttackLine.Outcome.UNRESOLVED, 0, 0);
         }
         CardFact targetFact = facts.byPasscode(target.passcode()).orElse(null);
         if (targetFact == null) {
             return new AttackLine(attacker.instanceId(), attacker.passcode(), attackerName, atk,
-                    "未知(" + target.passcode() + ")", null, target.position().isDefense(),
-                    AttackLine.Outcome.UNRESOLVED, 0, 0);
+                    "未知(" + target.passcode() + ")", target.instanceId(), null,
+                    target.position().isDefense(), AttackLine.Outcome.UNRESOLVED, 0, 0);
         }
         boolean targetDefense = target.position().isDefense();
         Integer value = targetDefense ? targetFact.defense() : targetFact.atk();
@@ -133,19 +112,25 @@ public final class DuelMathService {
         return switch (target.position()) {
             case FACE_UP_ATTACK -> diff > 0
                     ? new AttackLine(attacker.instanceId(), attacker.passcode(), attackerName, atk,
-                            targetFact.name(), value, false, AttackLine.Outcome.DESTROY_AND_DAMAGE, diff, 0)
+                            targetFact.name(), target.instanceId(), value, false,
+                            AttackLine.Outcome.DESTROY_AND_DAMAGE, diff, 0)
                     : diff == 0
                             ? new AttackLine(attacker.instanceId(), attacker.passcode(), attackerName, atk,
-                                    targetFact.name(), value, false, AttackLine.Outcome.TRADE, 0, 0)
+                                    targetFact.name(), target.instanceId(), value, false,
+                                    AttackLine.Outcome.TRADE, 0, 0)
                             : new AttackLine(attacker.instanceId(), attacker.passcode(), attackerName, atk,
-                                    targetFact.name(), value, false, AttackLine.Outcome.ATTACKER_DESTROYED, 0, -diff);
+                                    targetFact.name(), target.instanceId(), value, false,
+                                    AttackLine.Outcome.ATTACKER_DESTROYED, 0, -diff);
             case FACE_UP_DEFENSE -> diff > 0
                     ? new AttackLine(attacker.instanceId(), attacker.passcode(), attackerName, atk,
-                            targetFact.name(), value, true, AttackLine.Outcome.DESTROY_AND_DAMAGE, 0, 0)
+                            targetFact.name(), target.instanceId(), value, true,
+                            AttackLine.Outcome.DESTROY_AND_DAMAGE, 0, 0)
                     : new AttackLine(attacker.instanceId(), attacker.passcode(), attackerName, atk,
-                            targetFact.name(), value, true, AttackLine.Outcome.NO_EFFECT, 0, 0);
+                            targetFact.name(), target.instanceId(), value, true,
+                            AttackLine.Outcome.NO_EFFECT, 0, 0);
             default -> new AttackLine(attacker.instanceId(), attacker.passcode(), attackerName, atk,
-                    targetFact.name(), value, targetDefense, AttackLine.Outcome.UNRESOLVED, 0, 0);
+                    targetFact.name(), target.instanceId(), value, targetDefense,
+                    AttackLine.Outcome.UNRESOLVED, 0, 0);
         };
     }
 
@@ -167,26 +152,6 @@ public final class DuelMathService {
         String summary = "确定伤害合计 " + certain + " / 对方 LP " + opponentLp
                 + (hasUnknown ? "（含未解明的盖卡目标，实际可能更高）" : "");
         return new LethalScan(directLethal, certain, opponentLp, summary);
-    }
-
-    /** 约束计数段（锚点常驻）：只放确定性计数，不做任何"能不能赢"的判断。 */
-    public String constraintsSection(DuelState state, CardFacts facts) {
-        return "[约束] " + constraints(state, facts) + "\n";
-    }
-
-    /**
-     * 攻击结算表段（仅战阶决策注入）：给出确定的攻击/伤害结算，不做斩杀结论。
-     */
-    public String battleTableSection(DuelState state, CardFacts facts) {
-        List<AttackLine> lines = attackTable(state, facts);
-        if (lines.isEmpty()) {
-            return "";
-        }
-        StringBuilder sb = new StringBuilder("[数学] 攻击结算表：");
-        for (AttackLine line : lines) {
-            sb.append("\n- ").append(line.describe());
-        }
-        return sb.append("\n").toString();
     }
 
     public DuelMathService() {
