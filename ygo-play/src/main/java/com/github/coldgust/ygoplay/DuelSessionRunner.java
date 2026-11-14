@@ -58,7 +58,11 @@ public final class DuelSessionRunner {
         this.port = port;
         this.mapper = new SelectionMapperImpl();
         this.factory = new DecisionPointFactory();
-        this.config = config == null ? RunnerConfig.defaults() : config;
+        if (config == null) {
+            throw new IllegalArgumentException("DuelSessionRunner.config 未提供"
+                    + "（决策器预算表由装配层解析传入：CLI 的 RUNNER_* env 键 / server 的 ygo.play.runner-*）");
+        }
+        this.config = config;
         this.submitted = submitted;
         this.describer = describer == null
                 ? new SelectionDescriber()

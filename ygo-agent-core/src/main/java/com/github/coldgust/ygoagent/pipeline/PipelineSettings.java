@@ -65,8 +65,34 @@ public record PipelineSettings(
         similarityThreshold = Math.max(0.0, Math.min(1.0, similarityThreshold));
         judgeTimeoutMs = Math.max(500, judgeTimeoutMs);
         plannerCallTimeoutMs = Math.max(1_000, plannerCallTimeoutMs);
+        if (plannerCooldownMs <= 0) {
+            throw new IllegalArgumentException("plannerCooldownMs 必须为正数"
+                    + "（CLI：.env 的 PLANNER_COOLDOWN_MS；server：application.yaml 的 ygo.plan-exec.planner-cooldown-ms）");
+        }
+        if (judgeMaxTokens <= 0) {
+            throw new IllegalArgumentException("judgeMaxTokens 必须为正数"
+                    + "（CLI：.env 的 JUDGE_MAX_TOKENS；server：application.yaml 的 ygo.plan-exec.judge-max-tokens）");
+        }
     }
 
+    /** apiKey 不进日志（record 自动 toString 会原样打印敏感字段，这里遮蔽；其余字段值如常）。 */
+    @Override
+    public String toString() {
+        return "PipelineSettings[enabled=" + enabled + ", baseUrl=" + baseUrl + ", apiKey=***, model=" + model
+                + ", reasoningPlanner=" + reasoningPlanner + ", reasoningDecision=" + reasoningDecision
+                + ", waitPerDecisionMs=" + waitPerDecisionMs + ", firstJudgeWaitMs=" + firstJudgeWaitMs
+                + ", waitPerTurnMs=" + waitPerTurnMs + ", maxCheckpointsPerTurn=" + maxCheckpointsPerTurn
+                + ", similarityThreshold=" + similarityThreshold + ", judgeTimeoutMs=" + judgeTimeoutMs
+                + ", plannerCallTimeoutMs=" + plannerCallTimeoutMs + ", plannerCooldownMs=" + plannerCooldownMs
+                + ", cardRagPath=" + cardRagPath + ", judgeMaxTokens=" + judgeMaxTokens
+                + ", pathPlanning=" + pathPlanning + ", plannerRushAnswer=" + plannerRushAnswer + "]";
+    }
+
+    /**
+     * 调优参数的推荐默认（机器无关：等待预算/阈值/超时/配额——环境相关参数
+     * baseUrl/apiKey/model/cardRagPath 由宿主必填传入，缺失由调用方抛异常点名）。
+     * 宿主以此为基础做可选覆盖（{@link #builder(PipelineSettings)} 种子式）。
+     */
     public static PipelineSettings defaults(Path cardRagPath, String baseUrl, String apiKey, String model) {
         return new PipelineSettings(true, baseUrl, apiKey, model, null, null,
                 4_000, 7_000, 30_000, 6, 0.80, 10_000, 45_000, 60_000,
@@ -74,9 +100,8 @@ public record PipelineSettings(
     }
 
     /**
-     * 种子式 Builder：从既有设置出发逐项覆盖，默认值唯一定义在 {@link #defaults}。
-     * 宿主解析出自己的配置源后，用它做"默认值 + 局部覆盖"的级联，替代
-     * 18 参位置传参（原来的 16 参"思考强度未配置"望远镜重载已删除）。
+     * 种子式 Builder：从既有设置出发逐项覆盖，未显式设置（null）的字段继承种子——
+     * 调优参数不配 = 用 defaults() 的代码默认，环境相关参数由宿主在种子处必填。
      */
     public static Builder builder(PipelineSettings seed) {
         return new Builder(seed);

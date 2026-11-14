@@ -11,6 +11,7 @@ import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import com.github.coldgust.ygoplay.DuelRunSpec;
+import com.github.coldgust.ygoplay.DuelTuning;
 import com.github.coldgust.ygoplayserver.duel.summary.DuelNarrative;
 import com.github.coldgust.ygoplayserver.duel.summary.DuelTraceReader;
 import org.junit.jupiter.api.Test;
@@ -36,7 +37,13 @@ class DuelSummaryServiceTest {
 
     private static DuelRunSpec spec(Path log, Path trace) {
         return new DuelRunSpec("127.0.0.1", 7911, "n", "second",
-                null, null, "SKY_STRIKER", false, log, trace, null);
+                null, null, "SKY_STRIKER", false, log, trace, null,
+                DuelTuning.defaults());
+    }
+
+    /** 原 DuelSummaryProperties.defaults()（已删除：yaml 承载默认值）；测试显式传同值。 */
+    private static DuelSummaryProperties summaryDefaults() {
+        return new DuelSummaryProperties(true, "llm", null, 60_000L, 2_000, 8_000);
     }
 
     private static DuelSummaryService service(DuelSummaryProperties props, NarratorAgent chat) {
@@ -79,7 +86,7 @@ class DuelSummaryServiceTest {
 
     @Test
     void summaryContainsDomainAndIdentity() throws Exception {
-        DuelSummaryService service = service(DuelSummaryProperties.defaults(), null);
+        DuelSummaryService service = service(summaryDefaults(), null);
         Path log = Files.createTempFile("duel-summary", ".jsonl");
         try {
             Files.writeString(log, "");
@@ -114,7 +121,7 @@ class DuelSummaryServiceTest {
                         T2 对手第一次特召时没有可用的手坑，此后场面彻底失控。
                         """);
 
-            String summary = service(DuelSummaryProperties.defaults(), fake)
+            String summary = service(summaryDefaults(), fake)
                     .build("d2", spec(log, trace), null);
 
             assertTrue(summary.startsWith("domain: duel\n"), summary);
@@ -138,7 +145,7 @@ class DuelSummaryServiceTest {
             Files.writeString(log, "");
             NarratorAgent rambling = markdownService(null, null, "这局打得还行，下次注意资源。");
 
-            String summary = service(DuelSummaryProperties.defaults(), rambling)
+            String summary = service(summaryDefaults(), rambling)
                     .build("d3", spec(log, trace), null);
 
             assertTrue(summary.contains("由模板生成"), summary);
@@ -158,7 +165,7 @@ class DuelSummaryServiceTest {
             Files.writeString(log, "");
             boolean[] called = new boolean[1];
             NarratorAgent fake = markdownService(null, called, "## 一句话结论\nxx\n\n## 局面走向\nxx\n");
-            DuelSummaryProperties props = new DuelSummaryProperties(null, "template", null, null, null, null);
+            DuelSummaryProperties props = new DuelSummaryProperties(true, "template", null, 60_000L, 2_000, 8_000);
 
             String summary = service(props, fake).build("d4", spec(log, trace), null);
 
@@ -179,7 +186,7 @@ class DuelSummaryServiceTest {
             Files.writeString(log, "");
             NarratorAgent broken = brokenService();
 
-            String summary = service(DuelSummaryProperties.defaults(), broken)
+            String summary = service(summaryDefaults(), broken)
                     .build("d5", spec(log, trace), null);
 
             assertTrue(summary.contains("由模板生成"), summary);
@@ -240,7 +247,7 @@ class DuelSummaryServiceTest {
                     全程无失误、无罕见局面，没有可沉淀的经验。
                     """);
 
-            DuelSummaryService.Draft draft = service(DuelSummaryProperties.defaults(), fake)
+            DuelSummaryService.Draft draft = service(summaryDefaults(), fake)
                     .draft("d8", spec(log, trace), null);
 
             assertFalse(draft.worth(), "判定不值得入库");
@@ -269,7 +276,7 @@ class DuelSummaryServiceTest {
                     T2 对手续攻未果，我方抽到关键牌后一回合完成翻盘。
                     """);
 
-            DuelSummaryService.Draft draft = service(DuelSummaryProperties.defaults(), fake)
+            DuelSummaryService.Draft draft = service(summaryDefaults(), fake)
                     .draft("d9", spec(log, trace), null);
 
             assertTrue(draft.worth());
@@ -284,7 +291,7 @@ class DuelSummaryServiceTest {
         Path log = Files.createTempFile("duel-log", ".jsonl");
         try {
             Files.writeString(log, "");
-            DuelSummaryService.Draft draft = service(DuelSummaryProperties.defaults(), null)
+            DuelSummaryService.Draft draft = service(summaryDefaults(), null)
                     .draft("d10", spec(log, Path.of("/tmp/none.jsonl")), null);
 
             assertFalse(draft.fromLlm());

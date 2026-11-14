@@ -42,50 +42,27 @@ public final class DuelRunner {
     /** 规则/历史对局检索的连接配置：由组装根注入（CLI 从 env+dotenv 解析；server 由 Spring 配置绑定）。 */
     private final LightRagSettings lightRag;
     private final VerboseLog verbose;
+    /** 决策器预算表：由组装根注入（CLI 从 RUNNER_* env 键解析；server 从 ygo.play.runner-* 绑定）。 */
+    private final RunnerConfig runnerConfig;
 
-    public DuelRunner(PipelineSettings planExecSettings) {
-        this(planExecSettings, null);
-    }
-
-    public DuelRunner(PipelineSettings planExecSettings,
-                      DuelWebHooks webHooks) {
-        this(planExecSettings, webHooks, null);
-    }
-
-    public DuelRunner(PipelineSettings planExecSettings,
-                      DuelWebHooks webHooks,
-                      DuelListener extraListener) {
-        this(planExecSettings, webHooks, extraListener, null);
-    }
-
-    public DuelRunner(PipelineSettings planExecSettings,
-                      DuelWebHooks webHooks,
-                      DuelListener extraListener,
-                      CardFacts cardFactsOverride) {
-        this(planExecSettings, webHooks, extraListener, cardFactsOverride, null);
-    }
-
-    public DuelRunner(PipelineSettings planExecSettings,
-                      DuelWebHooks webHooks,
-                      DuelListener extraListener,
-                      CardFacts cardFactsOverride,
-                      LightRagSettings lightRag) {
-        this(planExecSettings, webHooks, extraListener, cardFactsOverride, lightRag,
-                new VerboseLog(VerboseLogSettings.off()));
-    }
-
+    /**
+     * 全参构造（原 1–5 参望远镜链已删——组装根一律显式给全依赖；
+     * {@code runnerConfig} 缺失会在 {@link RunnerConfig} 构造期抛出点名）。
+     */
     public DuelRunner(PipelineSettings planExecSettings,
                       DuelWebHooks webHooks,
                       DuelListener extraListener,
                       CardFacts cardFactsOverride,
                       LightRagSettings lightRag,
-                      VerboseLog verbose) {
+                      VerboseLog verbose,
+                      RunnerConfig runnerConfig) {
         this.planExecSettings = planExecSettings;
         this.webHooks = webHooks == null ? DuelWebHooks.none() : webHooks;
         this.extraListener = extraListener;
         this.cardFactsOverride = cardFactsOverride;
         this.lightRag = lightRag;
         this.verbose = VerboseLog.offOr(verbose);
+        this.runnerConfig = runnerConfig;
     }
 
     public DuelRunResult run(DuelRunSpec spec, AtomicReference<DuelSession> sessionRef,
@@ -179,7 +156,6 @@ public final class DuelRunner {
                         .build(), verbose);
                 try {
                     DecisionEngine decisionEngine = agent;
-                    RunnerConfig runnerConfig = RunnerConfig.defaults();
                     // 提交内容也要进轨迹/前端：只看"决策路径"看不出到底放了哪个区、发动了哪张卡
                     var factsForNames = agent.cardFacts();
                     var describer = new SelectionDescriber(

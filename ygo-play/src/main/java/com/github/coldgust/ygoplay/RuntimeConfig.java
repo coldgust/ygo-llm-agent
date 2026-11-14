@@ -1,8 +1,8 @@
 package com.github.coldgust.ygoplay;
 
 import com.github.coldgust.ygoagent.llm.LightRagSettings;
+import com.github.coldgust.ygoagent.llm.VerboseLogSettings;
 import com.github.coldgust.ygoagent.pipeline.PipelineSettings;
-import com.github.coldgust.ygoagent.support.Texts;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -10,27 +10,31 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Map;
-import java.util.Optional;
-import java.util.function.Function;
 
 /**
- * CLI 的配置对象（组装根 {@link DuelRunnerMain} 从 OS env + .env 一次性解析，此后全走本对象）。
- * server 不用这里：server 由 Spring 的 @ConfigurationProperties 直接绑定（见 ygo-play-server/config）。
+ * CLI 的配置对象（本类是全进程唯一的 OS env + .env 读取点：键名经 {@link EnvSettings} 类型化读取，
+ * 合并优先级由 dotenv-java 保证）。server 不用这里：server 由 Spring 的 @ConfigurationProperties 直接绑定
+ * （见 ygo-play-server/config）。
  *
- * @param host         YGOPro 服务地址（默认 127.0.0.1）
- * @param port         YGOPro 服务端口（默认 7911）
- * @param name         房间内玩家名（默认 ygo-play-runner）
+ * <p>默认值分级：调优参数（机器无关）用代码默认（{@code PipelineSettings.defaults}/{@code DuelTuning.defaults}/
+ * {@code RunnerConfig.defaults()} 与 port/name/move 内联默认）；环境相关项（host/地址/路径/凭据）
+ * 无代码默认，缺失 → 抛异常点名键。推荐值见 .env.example（cp .env.example .env）。
+ *
+ * @param host         YGOPro 服务地址（YGO_HOST，CLI 参数覆盖；环境相关必填）
+ * @param port         YGOPro 服务端口（YGO_PORT 可覆盖；代码默认 7911）
+ * @param name         房间内玩家名（YGO_PLAYER_NAME 可覆盖；代码默认 ygo-play-runner）
  * @param ydkPath      卡组 .ydk 文件路径（与粘贴文本二选一）
- * @param move         先后手：first / second（默认后手）
+ * @param move         先后手：first / second（YGO_MOVE 可覆盖；代码默认 second）
  * @param archetype    卡组主题（combo 注入与检索的键；可空）
- * @param duelLogPath  对局记录 JSONL 落盘路径
- * @param tracePath    决策轨迹 JSONL 落盘路径
- * @param lightRag     LightRAG 知识栈连接（规则/历史对局检索；url 缺省 localhost:9621）
- * @param battleReport 实况战场播报输出目标；null/0 = 关闭，"1" = /tmp/ygo-live/battlefield.log，其余 = 文件路径
+ * @param duelLogPath  对局记录 JSONL 落盘路径（DUEL_LOG_DIR 目录 + 时间戳文件名；环境相关必填）
+ * @param tracePath    决策轨迹 JSONL 落盘路径（TRACE_DIR 目录 + 时间戳文件名；环境相关必填）
+ * @param lightRag     LightRAG 知识栈连接；null = LIGHTRAG_URL 未配置，检索停用
+ * @param battleReport 实况战场播报输出目标；空/0 = 关闭，其余 = 文件路径
  * @param deckStrategy 用户手写的卡组打法思路（注入规划器/决策器上下文；可空）
- * @param tuning       一局对局的运行调参（原始帧/看门狗/进房等待/combo 注入上限）
+ * @param tuning       一局对局的运行调参（原始帧/看门狗/进房等待/combo 注入上限；代码默认 + env 覆盖）
  * @param planner      v6 规划器/执行器设置；null = 未启用（走 Reflex/Tactical 快路径）
+ * @param verbose      全链路日志设置（缺席 = 关）
+ * @param runner       决策器预算表（代码默认 + RUNNER_* 覆盖）
  */
 public record RuntimeConfig(
         String host, int port, String name, String ydkPath, String move,
@@ -40,47 +44,59 @@ public record RuntimeConfig(
         String battleReport,
         String deckStrategy,
         DuelTuning tuning,
-        PipelineSettings planner) {
+        PipelineSettings planner,
+        VerboseLogSettings verbose,
+        RunnerConfig runner) {
 
     private static final Logger log = LoggerFactory.getLogger(RuntimeConfig.class);
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
     public static RuntimeConfig resolve(CliOptions cli) {
-        String host = cli.host() != null ? cli.host() : "127.0.0.1";
-        int port = cli.port() != null ? cli.port() : 7911;
-        String name = cli.name() != null ? cli.name() : "ygo-play-runner";
-        String move = cli.move() != null ? cli.move() : "second";
         String envPath = cli.envPath() != null ? cli.envPath() : ".env";
-
-        Map<String, String> dotenv = DotEnv.load(Path.of(envPath));
-        Function<String, String> lookup = setting(dotenv);
-
+        EnvSettings env = EnvSettings.load(Path.of(envPath));
         String stamp = LocalDateTime.now().format(TS);
+
+        // 连接参数：CLI 参数覆盖 env；host 环境相关必填，port/name/move 有代码默认
+        String host = cli.host() != null ? cli.host() : required(env.ygoHost(), "YGO_HOST");
+        int port = cli.port() != null ? cli.port() : orDefault(env.ygoPort(), 7911);
+        String name = cli.name() != null ? cli.name() : orDefault(env.ygoPlayerName(), "ygo-play-runner");
+        String move = cli.move() != null ? cli.move() : orDefault(env.ygoMove(), "second");
+
         Path duelLog = cli.duelLogPath() != null
-                ? Path.of(cli.duelLogPath()) : Path.of("/tmp/ygo-duel-log/" + stamp + ".jsonl");
+                ? Path.of(cli.duelLogPath())
+                : Path.of(required(env.duelLogDir(), "DUEL_LOG_DIR") + "/" + stamp + ".jsonl");
         Path trace = cli.tracePath() != null
-                ? Path.of(cli.tracePath()) : Path.of("/tmp/ygo-trace/" + stamp + ".jsonl");
+                ? Path.of(cli.tracePath())
+                : Path.of(required(env.traceDir(), "TRACE_DIR") + "/" + stamp + ".jsonl");
 
-        LightRagSettings lightRag = new LightRagSettings(
-                Texts.firstNonBlank(lookup.apply("LIGHTRAG_URL"), "http://localhost:9621"),
-                lookup.apply("LIGHTRAG_API_KEY"),
-                parseLong(lookup.apply("LIGHTRAG_TIMEOUT_MS"), 8_000L));
+        // LightRAG：URL 未配置 = 检索停用（core 语义：null → 工具不注册）；超时为调优参数（默认 8s）
+        String lightRagUrl = env.lightRagUrl();
+        LightRagSettings lightRag = isBlank(lightRagUrl) ? null
+                : new LightRagSettings(lightRagUrl, env.lightRagApiKey(),
+                        orDefault(env.lightRagTimeoutMs(), 8_000L));
+
+        // 实况播报：空/0 = 关，其余 = 输出文件路径（原 "1" 简写已取消）
+        String battleReport = env.battleReport();
+        battleReport = isBlank(battleReport) || "0".equals(battleReport.trim()) ? null : battleReport.trim();
+
+        // 运行调参：默认值在 DuelTuning.defaults()，env 未配置的键继承默认
+        DuelTuning base = DuelTuning.defaults();
+        DuelTuning tuning = new DuelTuning(
+                Boolean.TRUE.equals(env.duelRawFrames()),
+                orDefault(env.duelChoiceTimeoutMs(), base.choiceTimeoutMillis()),
+                orDefault(env.duelStartWaitMs(), base.startWaitMillis()),
+                orDefault(env.comboContextLimit(), base.comboContextLimit()));
+
         return new RuntimeConfig(host, port, name, cli.ydkPath(), move, cli.archetype(),
-                duelLog, trace, lightRag,
-                lookup.apply("BATTLE_REPORT"),
-                deckStrategy(lookup),
-                tuning(lookup),
-                planner(lookup).orElse(null));
-    }
-
-    /** OS env 优先、.env 并入的合并查表。 */
-    private static Function<String, String> setting(Map<String, String> dotenv) {
-        return key -> Texts.firstNonBlank(System.getenv(key), dotenv.get(key));
+                duelLog, trace, lightRag, battleReport,
+                deckStrategy(env), tuning, planner(env),
+                VerboseLogSettings.parse(env.verboseLog(), env.verboseMaxChars()),
+                RunnerConfig.fromEnv(env));
     }
 
     /** 卡组思路：优先读文件（DECK_STRATEGY_FILE），其次内联文本（DECK_STRATEGY）。 */
-    private static String deckStrategy(Function<String, String> lookup) {
-        String file = lookup.apply("DECK_STRATEGY_FILE");
+    private static String deckStrategy(EnvSettings env) {
+        String file = env.deckStrategyFile();
         if (file != null && !file.isBlank()) {
             try {
                 return Files.readString(Path.of(file)).strip();
@@ -88,97 +104,80 @@ public record RuntimeConfig(
                 log.warn("读取 DECK_STRATEGY_FILE 失败: {}", e.toString());
             }
         }
-        return lookup.apply("DECK_STRATEGY");
-    }
-
-    private static DuelTuning tuning(Function<String, String> lookup) {
-        return new DuelTuning(
-                truthy(lookup.apply("DUEL_RAW_FRAMES")),
-                parseLong(lookup.apply("DUEL_CHOICE_TIMEOUT_MS"), 25_000L),
-                parseLong(lookup.apply("DUEL_START_WAIT_MS"), 180_000L),
-                (int) parseLong(lookup.apply("COMBO_CONTEXT_LIMIT"), 10L));
+        return env.deckStrategy();
     }
 
     /**
-     * v6 规划器/执行器设置：覆盖值与 core 默认级联；api-key 为空或显式 false → 未启用。
-     * 数值/布尔解析容错（实机调参场景，写错一个值不该让对局起不来）。
+     * v6 规划器/执行器设置：未显式开启且 LLM_API_KEY 未配置 → null（走 Reflex 快路径）；
+     * 显式开启（PLAN_EXEC_ENABLED=true）但缺 key → 抛点名。环境相关项（地址/模型/卡库路径）必填，
+     * 调优旋钮默认值在 {@link PipelineSettings#defaults}，env 未配置的键继承默认。
      */
-    static Optional<PipelineSettings> planner(Function<String, String> lookup) {
-        Boolean enabled = triBool(lookup.apply("PLAN_EXEC_ENABLED"));
-        String apiKey = lookup.apply("LLM_API_KEY");
-        if (Boolean.FALSE.equals(enabled) || apiKey == null || apiKey.isBlank()) {
-            return Optional.empty();
+    static PipelineSettings planner(EnvSettings env) {
+        Boolean enabled = env.planExecEnabled();
+        String apiKey = env.llmApiKey();
+        boolean explicitOn = Boolean.TRUE.equals(enabled);
+        if (!explicitOn && (Boolean.FALSE.equals(enabled) || isBlank(apiKey))) {
+            return null;
         }
-        String baseUrl = Texts.firstNonBlank(lookup.apply("LLM_BASE_URL"), "https://api.deepseek.com");
-        String model = Texts.firstNonBlank(lookup.apply("PLANNER_MODEL"),
-                lookup.apply("LLM_MODEL"), "deepseek-chat");
+        if (explicitOn && isBlank(apiKey)) {
+            throw new IllegalStateException("PLAN_EXEC_ENABLED=true 但 LLM_API_KEY 未配置："
+                    + "填入网关凭据，或去掉显式开启（缺席 = 有 key 才启用）");
+        }
+        String model = firstNonBlank(env.plannerModel(), env.llmModel());
         PipelineSettings defaults = PipelineSettings.defaults(
-                Path.of(Texts.firstNonBlank(lookup.apply("CARD_RAG_PATH"), "data/card_rag/cards.jsonl")),
-                baseUrl, apiKey, model);
-        return Optional.of(PipelineSettings.builder(defaults)
-                .reasoningPlanner(lookup.apply("LLM_REASONING_PLANNER"))
-                .reasoningDecision(lookup.apply("LLM_REASONING_DECISION"))
-                .waitPerDecisionMs(intOf(lookup.apply("PLANNER_WAIT_DECISION_MS")))
-                .firstJudgeWaitMs(intOf(lookup.apply("PLANNER_FIRST_WAIT_MS")))
-                .waitPerTurnMs(intOf(lookup.apply("PLANNER_WAIT_TURN_MS")))
-                .maxCheckpointsPerTurn(intOf(lookup.apply("PLANNER_MAX_CHECKPOINTS")))
-                .similarityThreshold(doubleOf(lookup.apply("PLANNER_SIMILARITY_THRESHOLD")))
-                .judgeTimeoutMs(intOf(lookup.apply("JUDGE_TIMEOUT_MS")))
-                .plannerRushAnswer(rushAnswer(lookup.apply("PLANNER_RUSH_ANSWER")))
-                .build());
+                Path.of(required(env.cardRagPath(), "CARD_RAG_PATH")),
+                required(env.llmBaseUrl(), "LLM_BASE_URL"),
+                apiKey,
+                required(model, "PLANNER_MODEL / LLM_MODEL"));
+        return PipelineSettings.builder(defaults)
+                .reasoningPlanner(env.reasoningPlanner())
+                .reasoningDecision(env.reasoningDecision())
+                .waitPerDecisionMs(env.plannerWaitDecisionMs())
+                .firstJudgeWaitMs(env.plannerFirstWaitMs())
+                .waitPerTurnMs(env.plannerWaitTurnMs())
+                .maxCheckpointsPerTurn(env.plannerMaxCheckpoints())
+                .similarityThreshold(env.plannerSimilarityThreshold())
+                .judgeTimeoutMs(env.judgeTimeoutMs())
+                .plannerCallTimeoutMs(env.plannerCallTimeoutMs())
+                .plannerCooldownMs(env.plannerCooldownMs())
+                .judgeMaxTokens(env.judgeMaxTokens())
+                .pathPlanning(env.plannerPathPlanning())
+                .plannerRushAnswer(env.plannerRushAnswer())
+                .build();
     }
 
-    /** 三态布尔：true/1/on/yes → true，false/0/off/no → false，其余（含 null/空白/乱写）→ 未配置。 */
-    private static Boolean triBool(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return null;
+    // ---- 环境相关必填校验（调优参数有代码默认，不走此路径）----
+
+    private static String required(String value, String key) {
+        if (isBlank(value)) {
+            throw new IllegalStateException("缺少必填配置 " + key
+                    + "（复制 .env.example 为 .env 并填写，或以 OS env 提供）");
         }
-        String v = raw.trim();
-        if (v.equalsIgnoreCase("true") || v.equals("1") || v.equalsIgnoreCase("on") || v.equalsIgnoreCase("yes")) {
-            return true;
+        return value;
+    }
+
+    private static int orDefault(Integer value, int fallback) {
+        return value == null ? fallback : value;
+    }
+
+    private static long orDefault(Long value, long fallback) {
+        return value == null ? fallback : value;
+    }
+
+    private static String orDefault(String value, String fallback) {
+        return isBlank(value) ? fallback : value;
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
         }
-        return v.equalsIgnoreCase("false") || v.equals("0") || v.equalsIgnoreCase("off") || v.equalsIgnoreCase("no")
-                ? Boolean.FALSE
-                : null;
-    }
-
-    /** 两态布尔：键存在时，非真值一律 false（与旧 rush-answer 语义一致）；未配置 = null。 */
-    private static Boolean rushAnswer(String raw) {
-        return raw == null ? null : rushTrue(raw);
-    }
-
-    private static boolean rushTrue(String raw) {
-        String v = raw.trim();
-        return v.equalsIgnoreCase("true") || v.equals("1") || v.equalsIgnoreCase("on") || v.equalsIgnoreCase("yes");
-    }
-
-    private static boolean truthy(String raw) {
-        return raw != null && rushTrue(raw);
-    }
-
-    /** 容错整数解析：未配置或写错 = null（继承 core 默认）。 */
-    private static Integer intOf(String raw) {
-        try {
-            return raw == null || raw.isBlank() ? null : Integer.valueOf(raw.trim());
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    /** 容错小数解析：未配置或写错 = null（继承 core 默认）。 */
-    private static Double doubleOf(String raw) {
-        try {
-            return raw == null || raw.isBlank() ? null : Double.valueOf(raw.trim());
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    private static long parseLong(String raw, long fallback) {
-        try {
-            return raw == null || raw.isBlank() ? fallback : Long.parseLong(raw.trim());
-        } catch (NumberFormatException e) {
-            return fallback;
-        }
+        return null;
     }
 }

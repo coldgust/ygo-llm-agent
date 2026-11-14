@@ -48,11 +48,13 @@ public class DuelSummaryService {
 
     public DuelSummaryService(LightRagProperties lightRag, DuelSummaryProperties properties,
                               NarratorAgent chat, VerboseLog trace) {
-        String base = lightRag.url().trim();
-        if (base.endsWith("/")) {
+        // LIGHTRAG_URL 未配置 = 复盘无处写入：endpoint 为 null，写入时告警跳过（对局不受影响）
+        String base = lightRag.url();
+        base = base == null || base.isBlank() ? null : base.trim();
+        if (base != null && base.endsWith("/")) {
             base = base.substring(0, base.length() - 1);
         }
-        this.endpoint = base + "/documents/text";
+        this.endpoint = base == null ? null : base + "/documents/text";
         this.apiKey = lightRag.apiKey();
         this.enabled = properties.enabled();
         String mode = properties.mode().toLowerCase(Locale.ROOT);
@@ -250,6 +252,9 @@ public class DuelSummaryService {
     }
 
     private void post(String text, String source) {
+        if (endpoint == null) {
+            throw new IllegalStateException("LightRAG 未配置（LIGHTRAG_URL 缺失），复盘无处写入");
+        }
         try {
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("text", text);

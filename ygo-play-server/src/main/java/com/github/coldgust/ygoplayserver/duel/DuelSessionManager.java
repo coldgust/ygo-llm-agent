@@ -216,12 +216,12 @@ public class DuelSessionManager implements DuelService {
     }
 
     private DuelRunSpec toSpec(String id, DuelRequest request) {
-        String host = blank(request.host()) ? "127.0.0.1" : request.host();
-        int port = request.port() == null ? 7911 : request.port();
+        String host = blank(request.host()) ? properties.host() : request.host();
+        int port = request.port() == null ? properties.port() : request.port();
         if (port < 1 || port > 65_535) {
             throw new DuelExceptions.ValidationException("port 非法: " + port);
         }
-        String name = blank(request.name()) ? "ygo-play-server" : request.name();
+        String name = blank(request.name()) ? properties.playerName() : request.name();
         String move = blank(request.move()) ? properties.defaultMove() : request.move();
         if (!"first".equalsIgnoreCase(move) && !"second".equalsIgnoreCase(move)) {
             throw new DuelExceptions.ValidationException("move 只能是 first/second: " + move);
@@ -238,10 +238,10 @@ public class DuelSessionManager implements DuelService {
         // 主题允许"建新的"（combo 录入以它命名产物文件），所以必须挡住路径穿越与文件名非法字符
         String archetype = normalizeArchetype(request.archetype());
         Path duelLog = blank(request.duelLogPath())
-                ? Path.of("/tmp/ygo-duel-log/server-" + id + ".jsonl")
+                ? Path.of(properties.duelLogDir(), "server-" + id + ".jsonl")
                 : Path.of(request.duelLogPath());
         Path trace = blank(request.tracePath())
-                ? Path.of("/tmp/ygo-trace/server-" + id + ".jsonl")
+                ? Path.of(properties.traceDir(), "server-" + id + ".jsonl")
                 : Path.of(request.tracePath());
         boolean comboRecord = Boolean.TRUE.equals(request.comboRecord());
         if (comboRecord && blank(archetype)) {

@@ -20,16 +20,25 @@ spring:
 
 ygo:
   play:
+    # YGOPro 连接（DuelRequest 未提供时的回落；键来自 .env / 环境变量）
+    host: ${YGO_HOST:127.0.0.1}
+    port: ${YGO_PORT:7911}
+    player-name: ${YGO_PLAYER_NAME:ygo-play-server}
     default-move: second
+    # 对局记录/决策轨迹 JSONL 目录（文件名自动带对局 id）
+    duel-log-dir: ${DUEL_LOG_DIR:/tmp/ygo-duel-log}
+    trace-dir: ${TRACE_DIR:/tmp/ygo-trace}
     max-concurrent-duels: 1
-    # 原始协议帧写入对局记录（审计解码问题用，体积大；默认关）
-    duel-log-raw-frames: ${DUEL_RAW_FRAMES:false}
-    # 看门狗：决策点未拿到应答时由 SDK 提交保底应答的等待 ms（默认 25000）
-    choice-timeout-ms: ${DUEL_CHOICE_TIMEOUT_MS:25000}
-    # 等待对手进房时长 ms（实机调试需放宽；默认 180000，下限 10000）
-    start-wait-ms: ${DUEL_START_WAIT_MS:180000}
-    # 己方主题注入规划器上下文的录入条数上限（1–30，默认 10）
-    combo-context-limit: ${COMBO_CONTEXT_LIMIT:10}
+    # 原始协议帧写入对局记录（审计解码问题用，体积大；留空/未设 = 代码默认关）
+    duel-log-raw-frames: ${DUEL_RAW_FRAMES:}
+    # 看门狗：决策点未拿到应答时由 SDK 提交保底应答的等待 ms（留空/未设 = 代码默认 25000）
+    choice-timeout-ms: ${DUEL_CHOICE_TIMEOUT_MS:}
+    # 等待对手进房时长 ms（实机调试需放宽；留空/未设 = 代码默认 180000）
+    start-wait-ms: ${DUEL_START_WAIT_MS:}
+    # 己方主题注入规划器上下文的录入条数上限（1–30；留空/未设 = 代码默认 10）
+    combo-context-limit: ${COMBO_CONTEXT_LIMIT:}
+    # 决策器预算默认在 RunnerConfig.defaults（RUNNER_* 键，与 .env.example 注释一致）；
+    # server 需覆盖时在此加桥接行，如 runner-poll-ms: ${RUNNER_POLL_MS:} / runner-budgets.MAIN_PHASE: ${RUNNER_BUDGET_MAIN_PHASE_MS:}
   # OpenAI 兼容网关凭据（复盘 / combo 摘要等旁路叙事任务用；决策热路径在 ygo.plan-exec）
   llm:
     api-key: ${LLM_API_KEY:}
@@ -83,22 +92,28 @@ ygo:
     reasoning-planner: ${LLM_REASONING_PLANNER:}
     # 决策器思考强度；留空 = off（开思考会把 max_tokens 花在思维链上，吃满决策超时）
     reasoning-decision: ${LLM_REASONING_DECISION:}
-    # 决策一次最多等待规划器 ms（紧急重规划回复）；留空 = 4000
-    wait-decision-ms: ${PLANNER_WAIT_DECISION_MS:4000}
-    # 本回合首次决策器判断（④）前等计划的上限 ms（推理档下经常等不到，首动作退回决策器判断）；留空 = 7000
-    first-wait-ms: ${PLANNER_FIRST_WAIT_MS:7000}
-    # 一回合内「为等规划器」的累计上限 ms（留空 = 30000）
-    wait-turn-ms: ${PLANNER_WAIT_TURN_MS:30000}
-    # 每回合后台 checkpoint 次数上限（成本闸；留空 = 6）
-    max-checkpoints: ${PLANNER_MAX_CHECKPOINTS:6}
-    # 执行器相似分支匹配阈值 0–1（防假相似；留空 = 0.80）
-    similarity-threshold: ${PLANNER_SIMILARITY_THRESHOLD:0.80}
-    # 决策器判断（④）硬超时 ms（留空 = 10000）
-    judge-timeout-ms: ${JUDGE_TIMEOUT_MS:10000}
+    # 决策一次最多等待规划器 ms（紧急重规划回复；留空/未设 = 代码默认 4000，与 PipelineSettings.defaults 同值）
+    wait-decision-ms: ${PLANNER_WAIT_DECISION_MS:}
+    # 本回合首次决策器判断（④）前等计划的上限 ms（推理档下经常等不到，首动作退回决策器判断；留空 = 代码默认 7000）
+    first-wait-ms: ${PLANNER_FIRST_WAIT_MS:}
+    # 一回合内「为等规划器」的累计上限 ms（留空 = 代码默认 30000）
+    wait-turn-ms: ${PLANNER_WAIT_TURN_MS:}
+    # 每回合后台 checkpoint 次数上限（成本闸；留空 = 代码默认 6）
+    max-checkpoints: ${PLANNER_MAX_CHECKPOINTS:}
+    # 执行器相似分支匹配阈值 0–1，防假相似（留空 = 代码默认 0.80）
+    similarity-threshold: ${PLANNER_SIMILARITY_THRESHOLD:}
+    # 决策器判断（④）硬超时 ms（留空 = 代码默认 10000）
+    judge-timeout-ms: ${JUDGE_TIMEOUT_MS:}
+    # 规划器后台 checkpoint 单次调用超时 ms（留空 = 代码默认 45000）
+    planner-call-timeout-ms: ${PLANNER_CALL_TIMEOUT_MS:}
+    # 规划器连续失败后的降级冷却 ms（留空 = 代码默认 60000）
+    planner-cooldown-ms: ${PLANNER_COOLDOWN_MS:}
+    # 直答输出上限 tokens（留空 = 代码默认 3000）
+    judge-max-tokens: ${JUDGE_MAX_TOKENS:}
     # true = 规划器产出可执行路径；留空/false = 顾问模式（只给场面分析/战术/combo）
-    path-planning: ${PLANNER_PATH_PLANNING:false}
-    # ④升级竞速里规划器抢答；false/0 = 升级只跑直答（留空 = 开）
-    rush-answer: ${PLANNER_RUSH_ANSWER:true}
+    path-planning: ${PLANNER_PATH_PLANNING:}
+    # ④升级竞速里规划器抢答；false/0 = 升级只跑直答（留空 = 代码默认开）
+    rush-answer: ${PLANNER_RUSH_ANSWER:}
 
 management:
   endpoints:

@@ -6,6 +6,7 @@ import com.github.coldgust.ygoplay.DuelRunResult;
 import com.github.coldgust.ygoplay.DuelRunSpec;
 import com.github.coldgust.ygoplay.RunStats;
 import com.github.coldgust.ygoplay.DuelRunner;
+import com.github.coldgust.ygoplayserver.config.DuelSummaryProperties;
 import com.github.coldgust.ygoplayserver.config.LightRagProperties;
 import com.github.coldgust.ygoplayserver.config.PlayServerProperties;
 import com.github.coldgust.ygoplayserver.duel.DuelExceptions;
@@ -37,7 +38,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DuelSessionManagerTest {
 
     private static PlayServerProperties props() {
-        return new PlayServerProperties("second", 1, null, null, null, null);
+        return new PlayServerProperties("127.0.0.1", 7911, "ygo-server-test", "second", 1,
+                "/tmp/ygo-duel-log", "/tmp/ygo-trace", false, null, null, null,
+                null, null, null);
+    }
+
+    /** 原 DuelSummaryProperties.defaults()（已删除：yaml 承载默认值）；测试显式传同值。 */
+    private static DuelSummaryProperties summaryDefaults() {
+        return new DuelSummaryProperties(true, "llm", null, 60_000L, 2_000, 8_000);
     }
 
     @Test
@@ -105,7 +113,7 @@ class DuelSessionManagerTest {
                 new DuelRunResult(new RunStats(3, 0), null)),
                 new DuelEventHub(),
                 new DuelSummaryService(new LightRagProperties(null, null, 8_000L),
-                        com.github.coldgust.ygoplayserver.config.DuelSummaryProperties.defaults(), null, new VerboseLog(VerboseLogSettings.off())));
+                        summaryDefaults(), null, new VerboseLog(VerboseLogSettings.off())));
 
         DuelView view = manager.start(request("ask"));
         DuelView done = awaitStatus(manager, view.id(), DuelStatus.FINISHED);
@@ -125,7 +133,7 @@ class DuelSessionManagerTest {
                 new DuelRunResult(new RunStats(1, 0), null)),
                 new DuelEventHub(),
                 new DuelSummaryService(new LightRagProperties(null, null, 8_000L),
-                        com.github.coldgust.ygoplayserver.config.DuelSummaryProperties.defaults(), null, new VerboseLog(VerboseLogSettings.off())));
+                        summaryDefaults(), null, new VerboseLog(VerboseLogSettings.off())));
 
         DuelView view = manager.start(request("ask"));
         awaitStatus(manager, view.id(), DuelStatus.FINISHED);
@@ -139,7 +147,7 @@ class DuelSessionManagerTest {
                 new DuelRunResult(new RunStats(1, 0), null)),
                 new DuelEventHub(),
                 new DuelSummaryService(new LightRagProperties(null, null, 8_000L),
-                        com.github.coldgust.ygoplayserver.config.DuelSummaryProperties.defaults(), null, new VerboseLog(VerboseLogSettings.off())));
+                        summaryDefaults(), null, new VerboseLog(VerboseLogSettings.off())));
 
         DuelView view = manager.start(request("never"));
         DuelView done = awaitStatus(manager, view.id(), DuelStatus.FINISHED);

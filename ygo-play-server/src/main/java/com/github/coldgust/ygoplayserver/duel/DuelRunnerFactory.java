@@ -8,9 +8,11 @@ import com.github.coldgust.ygoagent.trace.CallbackTraceWriter;
 import com.github.coldgust.ygoplay.DuelRunSpec;
 import com.github.coldgust.ygoplay.DuelRunner;
 import com.github.coldgust.ygoplay.DuelWebHooks;
+import com.github.coldgust.ygoplay.RunnerConfig;
 import com.github.coldgust.ygoplayserver.card.PgCardFacts;
 import com.github.coldgust.ygoplayserver.config.LightRagProperties;
 import com.github.coldgust.ygoplayserver.config.PlanExecProperties;
+import com.github.coldgust.ygoplayserver.config.PlayServerProperties;
 import com.github.coldgust.ygoplayserver.duel.combo.ComboRecordService;
 import com.github.coldgust.ygoplayserver.duel.combo.PgRecordedComboSource;
 import com.github.coldgust.ygoplayserver.web.DuelEventHub;
@@ -32,23 +34,25 @@ public class DuelRunnerFactory {
     private final DuelEventHub eventHub;
     private final ObjectProvider<JdbcClient> jdbc;
     private final ObjectProvider<ComboRecordService> comboRecords;
+    private final PlayServerProperties playProps;
     private final PlanExecProperties planExecProps;
     private final LightRagProperties lightRagProps;
     private final VerboseLog trace;
     private volatile PgRecordedComboSource recordedSource;
 
     public DuelRunnerFactory(DuelEventHub eventHub) {
-        this(eventHub, null, null, null, null, null);
+        this(eventHub, null, null, null, null, null, null);
     }
 
     @Autowired
     public DuelRunnerFactory(DuelEventHub eventHub, ObjectProvider<JdbcClient> jdbc,
                              ObjectProvider<ComboRecordService> comboRecords,
-                             PlanExecProperties planExecProps, LightRagProperties lightRagProps,
-                             VerboseLog trace) {
+                             PlayServerProperties playProps, PlanExecProperties planExecProps,
+                             LightRagProperties lightRagProps, VerboseLog trace) {
         this.eventHub = eventHub;
         this.jdbc = jdbc;
         this.comboRecords = comboRecords;
+        this.playProps = playProps;
         this.planExecProps = planExecProps;
         this.lightRagProps = lightRagProps;
         this.trace = VerboseLog.offOr(trace);
@@ -60,8 +64,9 @@ public class DuelRunnerFactory {
         var planExec = planExecProps == null || !planExecProps.v6Enabled()
                 ? null : planExecProps.toSettings();
         String duelId = traceId(spec);
-        // 卡牌事实优先走 PG（find_combos 的卡名解析与录入描述共用）；表不存在/库不可达时回退本地 jsonl
-        CardFacts cardFacts = resolveCardFacts();
+        // 卡牌事实优先走 PG（find_combos 的卡名解析与录入描述共用）；表不存在/库不可达时回退
+        // card-rag-path（planner 关闭时无该路径 → 录入描述退化为"未知卡(编号)"，对局照常）
+        CardFacts cardFacts = resolveCardFacts(planExec == null ? null : planExec.cardRagPath());
         ComboRecordService recordService = comboRecords == null ? null : comboRecords.getIfAvailable();
         DuelWebHooks hooks = new DuelWebHooks(
                 new CallbackTraceWriter(
@@ -71,13 +76,17 @@ public class DuelRunnerFactory {
                         : null,
                 recordedSource(),
                 (id, eventName, payload) -> eventHub.publish(id, eventName, payload));
-        LightRagSettings lightRag = new LightRagSettings(lightRagProps.url(),
-                lightRagProps.apiKey(), lightRagProps.timeoutMs());
-        DuelRunner runner = new DuelRunner(planExec, hooks, null, cardFacts, lightRag, trace);
+        // LIGHTRAG_URL 未配置 = 检索停用（core 语义：null → 工具不注册）
+        LightRagSettings lightRag = lightRagProps == null || lightRagProps.url() == null ? null
+                : new LightRagSettings(lightRagProps.url(), lightRagProps.apiKey(), lightRagProps.timeoutMs());
+        DuelRunner runner = new DuelRunner(planExec, hooks, null, cardFacts, lightRag, trace,
+                RunnerConfig.from(playProps == null ? null : playProps.runnerPollMs(),
+                        playProps == null ? null : playProps.runnerDefaultBudgetMs(),
+                        playProps == null ? null : playProps.runnerBudgets()));
         return runner::run;
     }
 
-    private CardFacts resolveCardFacts() {
+    private CardFacts resolveCardFacts(Path cardRagPath) {
         JdbcClient client = jdbc == null ? null : jdbc.getIfAvailable();
         if (client != null) {
             CardFacts pg = PgCardFacts.tryCreate(client);
@@ -86,10 +95,14 @@ public class DuelRunnerFactory {
                 return pg;
             }
         }
-        log.info("卡牌事实：PG 不可用，回退 data/card_rag/cards.jsonl");
+        if (cardRagPath == null) {
+            log.info("卡牌事实：PG 不可用且未配置 card-rag-path（planner 未启用），录入描述退化为\"未知卡(编号)\"");
+            return null;
+        }
+        log.info("卡牌事实：PG 不可用，回退 {}", cardRagPath);
         try {
             return JsonlCardFacts
-                    .load(Path.of("data/card_rag/cards.jsonl"));
+                    .load(cardRagPath);
         } catch (Exception e) {
             return null; // 本地卡库也没有：录入描述退化为"未知卡(编号)"，对局照常
         }

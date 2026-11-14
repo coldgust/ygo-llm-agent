@@ -9,8 +9,11 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * CLI 组装根的 .env 读取（dotenv-java 解析）：剥引号、跳过 `#` 注释行、剥离行内注释
+ * CLI 组装根的配置源读取（dotenv-java 解析）：返回"OS env 优先、.env 兜底"的合并表——
+ * 优先级由 dotenv-java 内置保证（host env 覆盖 .env，除非 .ignoreEnvVar()），本项目不再手动处理 OS env。
+ * 另有：剥单引号（旧自研解析兼容，dotenv-java 只剥双引号）、跳过 `#` 注释行、剥离行内注释
  * （`KEY=value # 说明` 的注释部分不再混进值里）、坏行忽略；文件不存在静默返回空表。
+ * 合并表会混入全部 OS env 变量（不只 .env 声明项）——调用方只按已知键读取，无功能影响。
  * 只有这里（和 server 的 spring.config.import）允许读 .env；core 不读环境变量。
  */
 public final class DotEnv {
@@ -27,7 +30,7 @@ public final class DotEnv {
                     .ignoreIfMalformed()
                     .load();
             Map<String, String> values = new LinkedHashMap<>();
-            for (DotenvEntry entry : dotenv.entries(Dotenv.Filter.DECLARED_IN_ENV_FILE)) {
+            for (DotenvEntry entry : dotenv.entries()) {
                 values.put(entry.getKey(), stripSingleQuotes(entry.getValue()));
             }
             return Map.copyOf(values);
