@@ -215,12 +215,15 @@ class AgentServicesSpikeTest {
     }
 
     /**
-     * 钉子（planner-judge 记忆化重构的前提 2）：工具轮每轮重读 memory.messages()，
-     * 且新 user 消息先 add 进 memory 再读——快照槽（messages() 末尾追加）因此全程可见、
-     * 且落在最新请求行之后（提示词"随后的 [决策快照]"措辞的机制依据）。
+     * 钉子（planner-judge 记忆化重构的前提 2）：工具轮每轮重读 memory.messages()——
+     * 快照槽内容因此在工具轮全程可见（ephemeral 字段直到 finally 才 drop）。
+     * 位置事实（DefaultAiServices#assembleMessages，LangChain4j 1.23.0 源码核实，2026-11-15
+     * 实机 wire 日志佐证）：框架<b>先读 messages() 再 append 本次 user 消息</b>——
+     * 首轮 wire 上快照位于请求行之前，工具轮重读时快照垫底（在最新工具对之后）。
+     * 快照与请求行相对顺序的真钉子在 AiServiceTemplateRenderTest（真实 DuelChatMemory）。
      */
     @Test
-    void 工具轮每轮重读messages_新user消息先add后读() {
+    void 工具轮每轮重读messages_快照全程可见() {
         CountingMemory memory = new CountingMemory();
         FakeModel model = new FakeModel();
         model.enqueueToolCall("call-1", "echo_tool", "{\"text\":\"x\"}");

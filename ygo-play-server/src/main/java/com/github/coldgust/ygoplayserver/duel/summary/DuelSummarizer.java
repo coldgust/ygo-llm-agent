@@ -27,12 +27,12 @@ public final class DuelSummarizer {
     }
 
     public Optional<Review> summarize(String facts, String timeline) {
-        String prompt = DuelSummaryPrompts.user(facts, timeline);
         try {
-            // 作用域标签让日志能分清"这次请求是赛后复盘还是对局决策"
+            // 作用域标签让日志能分清"这次请求是赛后复盘还是对局决策"；
+            // 请求行模板在 NarrativeAi 注解里，这里只传数据段
             String raw;
             try (var ignored = trace.scope("赛后复盘")) {
-                raw = narratorAgent.write(prompt);
+                raw = narratorAgent.duelSummary(facts, timeline);
             }
             String body = DuelSummaryPrompts.stripWrapper(raw);
             if (!DuelSummaryPrompts.looksUsable(body)) {

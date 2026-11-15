@@ -58,17 +58,7 @@ public final class DuelSummaryPrompts {
             【长度】正文控制在 800 字以内。宁可少写一条，也不要注水。
             """;
 
-    public static String user(String facts, String timeline) {
-        return """
-                【对局材料 · 固定事实】
-                %s
-
-                【对局材料 · 逐回合记录】
-                %s
-
-                请按系统提示里的 8 个小节写复盘。
-                """.formatted(facts, timeline);
-    }
+    // 请求行模板已迁入 NarrativeAi#duelSummary 注解（2026-11-15 模板化）。
 
     public static String stripWrapper(String raw) {
         if (raw == null) {

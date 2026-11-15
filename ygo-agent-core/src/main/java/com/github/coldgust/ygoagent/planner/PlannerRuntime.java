@@ -39,7 +39,7 @@ import java.util.concurrent.atomic.AtomicReference;
  *       （{@link AdvisorKeeper} 持有最新快照）。<b>每回合规划一次</b>：回合内不再主动修订，
  *       keep 也随之废止——每次 checkpoint 都必须产出全量建议（2026-11-14 用户指令）；</li>
  *   <li>重规划：决策器判决 needReplan=true 触发（每回合一次配额），请求行原样带决策器给出的
- *       重规划原因（ADVISOR_REPLAN_TEMPLATE）；发起即作废旧建议（{@link AdvisorKeeper#retire}）——
+ *       重规划原因（模板在 {@code PlannerAi#replan} 注解）；发起即作废旧建议（{@link AdvisorKeeper#retire}）——
  *       新建议没来得及发布前，决策器不带旧规划；</li>
  *   <li>降级：LLM 失败进入冷却期，期间请求快速返回空（决策器靠记忆与快照自行判断）。</li>
  * </ul>
@@ -232,7 +232,7 @@ public final class PlannerRuntime implements AutoCloseable {
             memory.stageOnce(UserMessage.from(packer.plannerSnapshot(point.state())));
             AdvisorAnswer answer;
             try (var ignored = trace.scope("规划器 anchor")) {
-                answer = plannerAgent.checkpoint(anchorRequest(point));
+                answer = anchorRequest(point);
             }
             completeCheckpoint("anchor", answer, startedAt, point);
         } catch (RuntimeException e) {
@@ -242,14 +242,12 @@ public final class PlannerRuntime implements AutoCloseable {
         }
     }
 
-    /** 锚点请求行（A.2）：每回合规划一次、只此一次，必须产出全量建议（keep 已废止）。 */
-    private String anchorRequest(DecisionPoint point) {
-        int turn = point.turn();
-        boolean oppTurn = !point.state().isMyTurn();
-        String side = point.state().isMyTurn() ? "我方回合" : "对方回合";
-        return oppTurn
-                ? PlannerPrompts.ADVISOR_ANCHOR_OPP_TEMPLATE.formatted(turn)
-                : PlannerPrompts.ADVISOR_ANCHOR_TEMPLATE.formatted(turn, side);
+    /** 锚点请求行（A.2）：每回合规划一次、只此一次，必须产出全量建议（keep 已废止）。
+     *  请求行模板全文在 {@code PlannerAi} 注解里（2026-11-15 模板化），这里只按回合归属选方法。 */
+    private AdvisorAnswer anchorRequest(DecisionPoint point) {
+        return point.state().isMyTurn()
+                ? plannerAgent.anchorMyTurn(point.turn())
+                : plannerAgent.anchorOppTurn(point.turn());
     }
 
     /**
@@ -299,7 +297,7 @@ public final class PlannerRuntime implements AutoCloseable {
                     memory.stageOnce(UserMessage.from(packer.plannerSnapshot(point.state())));
                     AdvisorAnswer answer;
                     try (var ignored = trace.scope("规划器 replan")) {
-                        answer = plannerAgent.checkpoint(replanRequest(reason));
+                        answer = plannerAgent.replan(replanReason(reason));
                     }
                     completeCheckpoint("replan", answer, startedAt, point);
                 } catch (RuntimeException e) {
@@ -314,10 +312,10 @@ public final class PlannerRuntime implements AutoCloseable {
         });
     }
 
-    /** 重规划请求行（A.2 同构）：决策器的原因原样转达（截断防护），空白给占位说明。 */
-    private static String replanRequest(String reason) {
-        String why = Texts.isBlank(reason) ? "（决策器未给出原因）" : Texts.flattenClip(reason, 200);
-        return PlannerPrompts.ADVISOR_REPLAN_TEMPLATE.formatted(why);
+    /** 重规划原因清洗（A.2 同构）：决策器的原因原样转达（截断防护），空白给占位说明；
+     *  请求行模板全文在 {@code PlannerAi#replan} 注解里（2026-11-15 模板化）。 */
+    private static String replanReason(String reason) {
+        return Texts.isBlank(reason) ? "（决策器未给出原因）" : Texts.flattenClip(reason, 200);
     }
 
     /**

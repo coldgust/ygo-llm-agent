@@ -5,12 +5,13 @@ import com.github.coldgust.ygoplayserver.duel.DuelExceptions;
 import com.github.coldgust.ygoplayserver.duel.DuelRequest;
 import com.github.coldgust.ygoplayserver.duel.DuelService;
 import com.github.coldgust.ygoplayserver.duel.DuelView;
+import com.github.coldgust.ygoplayserver.duel.combo.ComboRecordRepository;
 import com.github.coldgust.ygoplayserver.duel.combo.ComboRecordService;
+import com.github.coldgust.ygoplayserver.duel.combo.ComboRecordView;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -23,7 +24,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.nio.file.Path;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/api/duels")
@@ -31,7 +31,7 @@ public class DuelController {
 
     private final DuelService duels;
     private final DuelEventHub eventHub;
-    private final ObjectProvider<JdbcClient> jdbc;
+    private final ObjectProvider<ComboRecordRepository> comboRepositories;
     private final ObjectProvider<ComboRecordService> comboRecords;
 
     public DuelController(DuelService duels) {
@@ -40,11 +40,11 @@ public class DuelController {
 
     @Autowired
     public DuelController(DuelService duels, DuelEventHub eventHub,
-                          ObjectProvider<JdbcClient> jdbc,
+                          ObjectProvider<ComboRecordRepository> comboRepositories,
                           ObjectProvider<ComboRecordService> comboRecords) {
         this.duels = duels;
         this.eventHub = eventHub;
-        this.jdbc = jdbc;
+        this.comboRepositories = comboRepositories;
         this.comboRecords = comboRecords;
     }
 
@@ -62,7 +62,8 @@ public class DuelController {
 
     @GetMapping("/archetypes")
     public List<String> archetypes() {
-        return ComboCatalog.archetypes(jdbc == null ? null : jdbc.getIfAvailable());
+        return ComboCatalog.archetypes(
+                comboRepositories == null ? null : comboRepositories.getIfAvailable());
     }
 
     @GetMapping
@@ -86,7 +87,7 @@ public class DuelController {
     }
 
     @GetMapping("/{id}/combo")
-    public Map<String, Object> comboRecord(@PathVariable String id) {
+    public ComboRecordView comboRecord(@PathVariable String id) {
         DuelView view = duels.get(id);
         ComboRecordService service = comboRecords == null ? null : comboRecords.getIfAvailable();
         if (service == null) {

@@ -4,39 +4,43 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.coldgust.ygoagent.knowledge.CardFact;
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
-import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.data.domain.Limit;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
+/**
+ * 卡牌事实的 PG 适配器:查询走 {@link CardRepository},行 → 领域对象的推导在
+ * {@link CardEntity#toCardFact()}。
+ *
+ * <p>保留迁移前的两条语义:
+ * <ul>
+ *   <li>D3:一局几百次按 passcode 查名全走 Caffeine,{@code Optional.empty()} 也缓存(防穿透);</li>
+ *   <li>D1:{@code tryCreate} 探活失败(表不存在/库不可达)返回 null,由装配方回退 jsonl。</li>
+ * </ul>
+ */
 public final class PgCardFacts implements CardFacts {
 
-    private static final String COLUMNS =
-            "passcode, name, name_en, card_type, race, attribute, atk, def, level, "
-                    + "monster_effect, pendulum_effect";
-
-    private final JdbcClient jdbc;
+    private final CardRepository repository;
     private final long count;
-    /** card 表对局期间不变：热路径（labelOf/候选卡面）一局几百次按 passcode 查名，全走缓存；
-     *  空 Optional 也缓存（防穿透），过期与 cards-pg 再入库节奏对齐。 */
+    /** card 表对局期间不变:热路径(labelOf/候选卡面)一局几百次按 passcode 查名,全走缓存;
+     *  空 Optional 也缓存(防穿透),过期与 cards-pg 再入库节奏对齐。 */
     private final Cache<Long, Optional<CardFact>> byPasscodeCache = Caffeine.newBuilder()
             .maximumSize(20_000)
             .expireAfterWrite(Duration.ofHours(1))
             .build();
 
-    private PgCardFacts(JdbcClient jdbc, long count) {
-        this.jdbc = jdbc;
+    private PgCardFacts(CardRepository repository, long count) {
+        this.repository = repository;
         this.count = count;
     }
 
-    public static PgCardFacts tryCreate(JdbcClient jdbc) {
+    /** 运行期探活:表不存在/库不可达时返回 null(不抛),调用方据此回退本地 jsonl。 */
+    public static PgCardFacts tryCreate(CardRepository repository) {
         try {
-            Long total = jdbc.sql("SELECT count(*) FROM card").query(Long.class).single();
-            return new PgCardFacts(jdbc, total == null ? 0 : total);
+            return new PgCardFacts(repository, repository.count());
         } catch (RuntimeException e) {
             return null;
         }
@@ -48,12 +52,7 @@ public final class PgCardFacts implements CardFacts {
     }
 
     private Optional<CardFact> loadByPasscode(long passcode) {
-        return jdbc.sql("SELECT " + COLUMNS + " FROM card WHERE passcode = :p")
-                .param("p", passcode)
-                .query(this::map)
-                .list()
-                .stream()
-                .findFirst();
+        return repository.findByPasscode(passcode).map(CardEntity::toCardFact);
     }
 
     @Override
@@ -63,65 +62,13 @@ public final class PgCardFacts implements CardFacts {
         }
         int max = limit <= 0 ? 5 : Math.min(limit, 20);
         String pattern = "%" + keyword.trim().toLowerCase(Locale.ROOT) + "%";
-        return jdbc.sql("SELECT " + COLUMNS + " FROM card "
-                        + "WHERE lower(name) LIKE :q OR lower(name_en) LIKE :q "
-                        + "ORDER BY name LIMIT :n")
-                .param("q", pattern)
-                .param("n", max)
-                .query(this::map)
-                .list();
+        return repository.searchByName(pattern, Limit.of(max)).stream()
+                .map(CardEntity::toCardFact)
+                .toList();
     }
 
     @Override
     public long knownCount() {
         return count;
-    }
-
-    private CardFact map(ResultSet rs, int rowNum) throws SQLException {
-        String cardType = rs.getString("card_type");
-        return new CardFact(
-                rs.getLong("passcode"),
-                rs.getString("name"),
-                nullToEmpty(rs.getString("name_en")),
-                kindOf(cardType),
-                nullToEmpty(cardType),
-                nullToEmpty(rs.getString("race")),
-                nullToEmpty(rs.getString("attribute")),
-                (Integer) rs.getObject("atk"),
-                (Integer) rs.getObject("def"),
-                (Integer) rs.getObject("level"),
-                mergeEffect(rs.getString("monster_effect"), rs.getString("pendulum_effect")));
-    }
-
-    private static String mergeEffect(String monster, String pendulum) {
-        boolean hasPendulum = pendulum != null && !pendulum.isBlank();
-        boolean hasMonster = monster != null && !monster.isBlank();
-        if (hasPendulum && hasMonster) {
-            return "【灵摆】" + pendulum + "\n【怪兽】" + monster;
-        }
-        if (hasPendulum) {
-            return "【灵摆】" + pendulum;
-        }
-        return hasMonster ? monster : "";
-    }
-
-    private static String kindOf(String cardType) {
-        if (cardType == null) {
-            return "UNKNOWN";
-        }
-        if (cardType.contains("怪兽")) {
-            return "MONSTER";
-        }
-        if (cardType.contains("陷阱")) {
-            return "TRAP";
-        }
-        if (cardType.contains("魔法")) {
-            return "SPELL";
-        }
-        return "UNKNOWN";
-    }
-
-    private static String nullToEmpty(String value) {
-        return value == null ? "" : value;
     }
 }

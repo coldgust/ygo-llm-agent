@@ -8,7 +8,8 @@ import dev.langchain4j.service.AiServices;
  * 叙事任务（赛后复盘、连招摘要）的 agent：无状态单轮、String 返回（Markdown 无 schema，
  * 框架不注入格式指令）。与决策侧 agent（{@code PlannerAgent}/{@code JudgeAgent}）同构：
  * 档位参数 bake 在模型上、system 提示与可选的 ContentRetriever（LightRAG 规则检索增强）
- * 构造期给定、调用点只传 prompt——提示词常量留在 server 域。
+ * 构造期给定；请求行模板全文在 {@code NarrativeAi} 注解里（2026-11-15 模板化），
+ * 调用点只传数据段变量。
  */
 public final class NarratorAgent {
 
@@ -24,7 +25,11 @@ public final class NarratorAgent {
         this.proxy = builder.build();
     }
 
-    public String write(String prompt) {
-        return proxy.write(prompt);
+    public String duelSummary(String facts, String timeline) {
+        return proxy.duelSummary(facts, timeline);
+    }
+
+    public String comboSummary(String archetype, String steps) {
+        return proxy.comboSummary(archetype, steps);
     }
 }

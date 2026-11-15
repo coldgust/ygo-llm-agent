@@ -634,6 +634,7 @@ final class CandidateSections {
 
     /**
      * {@code [收尾审计]}：这一步可以结束回合时，把"还摆着哪几类可选动作"逐类摊开。
+     * 放弃理由写入 rationale（2026-11-14 输出契约对齐：verify 字段已删，不留写而不读的键）。
      */
     private void appendEndTurnAudit(StringJoiner sj, DecisionPoint point, ChoiceRequest.MainPhaseRequest m) {
         boolean canEndTurn = point.candidatesOf(Candidate.FlagC.class).stream()
@@ -657,7 +658,7 @@ final class CandidateSections {
         }
         sj.add("[收尾审计] 这一步仍可以结束回合；结束前请逐类确认你已经评估并主动放弃：");
         groups.forEach(group -> sj.add("  - " + group));
-        sj.add("  哪一类你还没看过 → 先回去看，不要直接结束回合；都看过的，在 verify 里逐类写一句放弃理由。");
+        sj.add("  哪一类你还没看过 → 先回去看，不要直接结束回合；都看过的，在 rationale 里逐类写一句放弃理由。");
     }
 
     private void addGroupLine(List<String> out, String title, List<ChoiceRequest.CardChoice> cards) {

@@ -14,14 +14,33 @@ import dev.langchain4j.service.V;
  * <p>档位参数 bake 在模型 defaultRequestParameters 里（plain 带 json、tools 变体不带），
  * 方法不带 wire 参数。重答共用同一 memory：坏回复已入史（框架行为，见 AgentServicesSpikeTest
  * 钉子），更正行只需引用 badChoice 与候选编号。
+ *
+ * <p><b>请求行/更正行的固定句式全部在下面的模板注解里</b>（2026-11-15 用户指令：
+ * 提示词用 LangChain4j 模板承载，不在 Java 里拼接，接口即提示词全文）。
+ * LangChain4j 模板没有条件指令，段的有无由调用方决定——分段变量约定：
+ * 空段传 {@code ""}（占位符变量缺失框架会抛错），非空段以 {@code "\n"} 收尾，
+ * 渲染结果与旧的手工拼接逐字节一致（入史行形态不变）。
+ * "候选 N 项："这类绑定运行时计数的引导句留在 {@code LlmJudge} 的段渲染器里，紧邻取数处。
  */
 interface JudgeAi {
 
+    /**
+     * 请求行：chain/candidates/effects 三段为空时整行缺席（由空段变量实现）。
+     */
     @SystemMessage(JudgePrompts.SYSTEM)
-    @UserMessage("{{requestLine}}")
-    JudgeAnswer decide(@V("requestLine") String requestLine);
+    @UserMessage("""
+            ===决策请求=== {{headline}}
+            {{chainSection}}{{candidatesSection}}{{effectsSection}}请读 [决策快照] 的完整卡面与对象信息，输出单个选择 JSON。""")
+    JudgeAnswer decide(@V("headline") String headline,
+                       @V("chainSection") String chainSection,
+                       @V("candidatesSection") String candidatesSection,
+                       @V("effectsSection") String effectsSection);
 
+    /**
+     * 更正行：全量无条件变量，整行文案都在模板里。
+     */
     @SystemMessage(JudgePrompts.SYSTEM)
-    @UserMessage("{{correctionLine}}")
-    JudgeAnswer retry(@V("correctionLine") String correctionLine);
+    @UserMessage("""
+            ===更正=== 你上一答 choice={{badChoice}} 不在候选集内。本请求可选编号：{{codes}}。请重读 [决策快照]，只输出 JSON，choice 必须是其中之一。""")
+    JudgeAnswer retry(@V("badChoice") String badChoice, @V("codes") String codes);
 }

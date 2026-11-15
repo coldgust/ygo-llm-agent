@@ -10,15 +10,18 @@ package com.github.coldgust.ygoagent.pipeline.judge;
  *   <li>"发动≠生效"按一级事故源处理：已结算的链以记录流结算标签为准
  *       （〔连锁 N 效果无效〕在〔连锁 N 效果处理〕之前=处理时被无效），
  *       本手窗口的链未结算、无标签可看，必须先做结算预演；</li>
- *   <li>快照位置措辞按 spike 钉子统一为"随后的 [决策快照]"
- *       （AgentServicesSpikeTest：快照槽追加在 messages() 末尾，落在最新请求行之后）；</li>
+ *   <li>快照位置机制（2026-11-15 以 wire 日志 + LangChain4j 1.23.0 源码核实）：
+ *       DefaultAiServices#assembleMessages 先读 messages() 再 append 本次 user 消息——
+ *       首轮 wire 上快照位于请求行**之前**（工具轮重读时垫底）。请求行措辞不写方向词
+ *       （2026-11-15 用户指令删去"随后的"），system 用中性措辞"本次请求随附"；</li>
  *   <li>输出契约唯一源 = JudgeAnswer POJO 的 @Description 注解（2026-11-14 用户指令：
  *       契约用 LangChain4j 注解实现，不写在提示词里）——system 只保留行为纪律，
  *       字段语义（choice/rationale/confidence/zone/needReplan/replanReason）全部在注解里，
  *       由框架生成格式指令追加到每条请求（JudgePromptsContractTest 反射钉住）。</li>
  * </ul>
  * 硬纪律：system 整局逐字节不变；记忆叙事与快照叙事不混说；不含具体卡名示例。
- * 请求模板（DECIDE/RETRY 各一行）见 {@code LlmJudge#requestLine}/{@code #correctionLine}。
+ * 请求行/更正行模板全文在 {@code llm.service.JudgeAi} 的 @UserMessage 注解里
+ * （2026-11-15 模板化），{@code LlmJudge} 只渲染分段变量。
  */
 public final class JudgePrompts {
 
@@ -36,7 +39,7 @@ public final class JudgePrompts {
               → 你最近几手的选择与理由（窗口内可回看；更早的会被裁掉）。
               记录里没有"你当时放弃了什么/还能选什么"——那是决策信息，不进记录流；
               你自己的选择以你历史回复里的 choice 为准。
-            - 本请求行下方是**随后的 [决策快照]**：[局面]/[场地槽位]、[规划器情报]、
+            - 本次请求随附 **[决策快照]**：[局面]/[场地槽位]、[规划器情报]、
               （从属决策点时）[当前效果]/[本次请求]、[候选]/[候选卡面]、（位置请求时）[表示形式决策]。
               **快照不入记忆，用完即弃**：候选编号、格子、LP 等即时数据只能来自它。
             - 请求行里已给出这一手的时点（回合/阶段）、连锁（逐环列出卡名与本次发动那条效果的全文）、

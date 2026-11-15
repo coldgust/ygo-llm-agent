@@ -24,8 +24,11 @@ import java.util.List;
  *       （推理的近期性靠它，事实账本靠 RECORD）。</li>
  * </ul>
  *
- * <p>一次性快照槽：{@link #stageOnce} 放入的内容在 {@link #messages()} 里追加在 durable 末尾
- * （最靠近生成点），绝不进 durable——战场信息/候选/建议"只用一次、不入 memory"的机制载体。
+ * <p>一次性快照槽：{@link #stageOnce} 放入的内容在 {@link #messages()} 里追加在 durable 末尾，
+ * 绝不进 durable——战场信息/候选/建议"只用一次、不入 memory"的机制载体。
+ * 与 wire 的相对位置（DefaultAiServices#assembleMessages，1.23.0）：框架先读 messages()
+ * 再 append 本次 user 消息——首轮请求里快照位于本次请求行**之前**；
+ * 工具轮重读 messages() 时快照垫底（在最新工具对之后）。
  * 生命周期由编排代码显式管理（stage → 调用含工具轮/重答 → finally {@link #dropEphemeral}）；
  * 只允许拥有本 memory 的调用线程操作（决策器每时刻至多一次在途调用，规划器 worker 单线程）。
  *

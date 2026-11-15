@@ -104,7 +104,8 @@ public final class LlmJudge implements AutoCloseable {
                 // 工具按需注册：规则 / 连招 / 查卡 / 历史对局，模型自己决定要不要调用（工具轮对上层透明）
                 JudgeAnswer answer;
                 try (var ignored = trace.scope("决策器判断 T" + point.turn() + " " + point.kind())) {
-                    answer = judgeAgent.decide(requestLine(point));
+                    answer = judgeAgent.decide(packer.requestHeadline(point),
+                            chainSection(point), candidatesSection(point), effectSection(point));
                 } catch (RuntimeException e) {
                     notes.add(callFailure(e) ? "判断调用失败：" + rootCause(e)
                             : "判断输出不可解析：" + rootCause(e));
@@ -124,7 +125,7 @@ public final class LlmJudge implements AutoCloseable {
                         + "（候选 " + point.candidates().size() + " 个），已要求重答");
                 JudgeAnswer second;
                 try (var ignored = trace.scope("决策器判断重答 T" + point.turn() + " " + point.kind())) {
-                    second = judgeAgent.retry(correctionLine(point, answer));
+                    second = judgeAgent.retry(answer.choice(), candidateCodes(point));
                 } catch (RuntimeException e) {
                     notes.add(callFailure(e) ? "重答调用失败：" + rootCause(e)
                             : "重答仍不可解析：" + rootCause(e));
@@ -184,39 +185,35 @@ public final class LlmJudge implements AutoCloseable {
     }
 
     /**
-     * 请求行（入 memory）：局面与卡面在快照里，但<b>这一手在判什么</b>必须随请求入史——
-     * 抬头给回合/阶段/性质，连锁链（谁在第几环发动了什么效果）与候选的条款正文都写进来。
+     * 请求行分段变量（入 memory）：局面与卡面在快照里，但<b>这一手在判什么</b>必须随请求入史——
+     * 抬头给回合/阶段/性质，连锁链（谁在第几环发动了什么效果）与候选的条款正文都写进来
+     * （链、候选、效果三段，见下方各渲染器；骨架固定句在 {@code JudgeAi} 模板注解里）。
      *
      * <p>2026-11-14 实测三条：① 只写"连锁响应"时，记忆里看不出当时在响应对手的什么效果，
      * 模型复盘时只能靠猜；② 候选只有卡名（"C1 发动 连刀、C2 发动 连刀"）时，
-     * 同一张多效果卡的两个选项长得一模一样，连"发动的是哪一条"都判断不了；
+     * 同一张多效果卡的选项长得一模一样，连"发动的是哪一条"都判断不了；
      * ③ 链上没东西时曾写成"连锁：空"——游戏王里没有这种说法，那是"此时可发动效果"的
      * 优先权窗口，抬头按玩家的话写（{@link ContextPackBuilder#requestHeadline}）。
      */
-    private String requestLine(DecisionPoint point) {
-        String chain = packer.compactChain(point);
-        String candidates = packer.compactCandidates(point);
-        String effects = packer.compactEffectDigest(point);
-        StringBuilder sb = new StringBuilder("===决策请求=== ")
-                .append(packer.requestHeadline(point)).append("\n");
-        if (!chain.isEmpty()) {
-            sb.append(chain).append("\n");
-        }
-        if (!candidates.isEmpty()) {
-            sb.append("候选 ").append(point.candidates().size()).append(" 项：")
-                    .append(candidates).append("\n");
-        }
-        if (!effects.isEmpty()) {
-            sb.append("候选效果：").append(effects).append("\n");
-        }
-        return sb.append("请读随后的 [决策快照] 的完整卡面与对象信息，输出单个选择 JSON。").toString();
+    private String chainSection(DecisionPoint point) {
+        return section(packer.compactChain(point));
     }
 
-    /** 更正行（入 memory）：坏 choice 与候选编号清单；快照仍在槽内可见。 */
-    private static String correctionLine(DecisionPoint point, JudgeAnswer bad) {
-        return "===更正=== 你上一答 choice=" + bad.choice() + " 不在候选集内。本请求可选编号："
-                + candidateCodes(point) + "。请重读随后的 [决策快照]，只输出 JSON，"
-                + "choice 必须是其中之一。";
+    /** "候选 N 项："引导句绑定运行时计数，留在段渲染器（模板没有条件指令）。 */
+    private String candidatesSection(DecisionPoint point) {
+        String list = packer.compactCandidates(point);
+        return list.isEmpty() ? "" : "候选 " + point.candidates().size() + " 项：" + list + "\n";
+    }
+
+    /** "候选效果："引导句同理留在段渲染器（与"候选 N 项："对称）。 */
+    private String effectSection(DecisionPoint point) {
+        String digest = packer.compactEffectDigest(point);
+        return digest.isEmpty() ? "" : "候选效果：" + digest + "\n";
+    }
+
+    /** 段约定：空段 = ""（模板占位符要求全量变量，缺了框架会抛错）；非空段以 "\n" 收尾。 */
+    private static String section(String text) {
+        return text.isEmpty() ? "" : text + "\n";
     }
 
     private static String candidateCodes(DecisionPoint point) {

@@ -26,7 +26,7 @@ run_psql() {
 }
 
 echo "建表：$DB"
-run_psql < "$ROOT/infra/postgres/init/02-cards.sql"
+run_psql < "$ROOT/ygo-play-server/src/main/resources/db/migration/V1__card.sql"
 
 CSV="$(mktemp)"
 trap 'rm -f "$CSV"' EXIT

@@ -24,16 +24,16 @@ public final class ComboSummaryPrompts {
             关键卡牌：这套连招的核心卡名，3–6 张，用顿号（、）分隔；只写记录里实际出现过的卡名
             备注：起手条件、风险或记录局限（没有就写"无"）""";
 
-    static String user(String archetype, List<String> stepDescriptions) {
+    /**
+     * 步骤编号段（每行 "n. desc" 且以 \n 收尾，空列表 → ""）：
+     * 请求行模板在 NarrativeAi#comboSummary 注解里，这里只渲染数据段。
+     */
+    static String steps(List<String> stepDescriptions) {
         StringBuilder sb = new StringBuilder();
-        sb.append("卡组主题：").append(archetype == null || archetype.isBlank() ? "未归类" : archetype)
-                .append('\n');
-        sb.append("该玩家回合的逐步操作记录（按时间顺序）：\n");
         int n = 1;
         for (String step : stepDescriptions) {
             sb.append(n++).append(". ").append(step).append('\n');
         }
-        sb.append("\n请按系统提示的五行格式输出摘要（关键卡牌行必须给，实在没有就写“无”）。");
         return sb.toString();
     }
 

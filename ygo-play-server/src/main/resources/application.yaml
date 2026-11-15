@@ -17,6 +17,25 @@ spring:
   threads:
     virtual:
       enabled: true
+  jpa:
+    # 无 OSIV:仓储查询都在各自短事务内完成,返回的是已映射的实体/值对象
+    open-in-view: false
+    hibernate:
+      # schema 归 Flyway;card 表归 ingest 脚本,绝不让 Hibernate 改表
+      ddl-auto: none
+    properties:
+      # 关闭启动期 JDBC 元数据访问,是「无 PG 也能启动」的关键开关
+      hibernate.boot.allow_jdbc_metadata_access: false
+      # 元数据访问关闭时,按 Hibernate 7 官方指南用 JPA 标准属性显式声明库名与版本,
+      # 方言据此自动选择(不设 hibernate.dialect,避开 HHH90000025);版本与 compose.yaml 的 pg18 对应
+      jakarta.persistence.database-product-name: PostgreSQL
+      jakarta.persistence.database-major-version: 18
+      jakarta.persistence.database-minor-version: 6
+  flyway:
+    # 存量库(init 脚本/ensureTable 时代建过表,无 flyway_schema_history)自动 baseline,
+    # 之后只补跑版本 > 1 的迁移;全新空库则完整跑 V1+V2
+    baseline-on-migrate: true
+    baseline-version: 1
 
 ygo:
   play:

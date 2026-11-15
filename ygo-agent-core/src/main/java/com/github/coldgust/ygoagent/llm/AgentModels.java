@@ -9,6 +9,7 @@ import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
 import dev.langchain4j.service.AiServices;
+import dev.langchain4j.service.tool.ToolArgumentsErrorHandler;
 import dev.langchain4j.service.tool.ToolErrorHandlerResult;
 
 import java.time.Duration;
@@ -50,6 +51,8 @@ public final class AgentModels {
                                           List<Object> tools) {
         if (tools != null && !tools.isEmpty()) {
             builder.tools(tools).maxToolCallingRoundTrips(MAX_TOOL_ROUNDS);
+            // 参数错误多源于模型自身（坏 JSON/缺字段），把错误发回让模型改参重试，而不是整轮报废
+            builder.toolArgumentsErrorHandler(ToolArgumentsErrorHandler.sendExceptionMessageToLlm());
         }
         return builder
                 .beforeToolExecution(before -> trace.toolCall(trace.nextId(),
