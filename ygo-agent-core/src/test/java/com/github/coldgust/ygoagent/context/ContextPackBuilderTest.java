@@ -6,6 +6,7 @@ import com.github.coldgust.ygodomain.card.CardIdentity;
 import com.github.coldgust.ygodomain.decision.ChoiceRequest;
 import com.github.coldgust.ygodomain.duel.CardInstance;
 import com.github.coldgust.ygodomain.duel.ChainNode;
+import com.github.coldgust.ygodomain.duel.ChainTargetRef;
 import com.github.coldgust.ygodomain.duel.DuelState;
 import com.github.coldgust.ygodomain.duel.Phase;
 import com.github.coldgust.ygodomain.duel.PlayerSide;
@@ -569,7 +570,8 @@ class ContextPackBuilderTest {
 
         ChainNode withTarget = new ChainNode(1, TestDuels.known(targeter),
                 targeter << 4, ZoneRef.spellTrap(PlayerSide.OPPONENT, 2), PlayerSide.OPPONENT,
-                false, List.of(ZoneRef.spellTrap(PlayerSide.SELF, 2)));
+                false, List.of(new ChainTargetRef(ZoneRef.spellTrap(PlayerSide.SELF, 2),
+                        TestDuels.known(TestDuels.WIDOW_ANCHOR))));
         String withTargetSection = targetingBuilder.candidatesSection(
                 chainPoint(state, List.of(withTarget)));
         assertTrue(withTargetSection.contains("对象："), "链路要给出对象:\n" + withTargetSection);

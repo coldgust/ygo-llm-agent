@@ -27,6 +27,7 @@ import java.util.List;
         @JsonSubTypes.Type(value = DuelEventPayload.CounterChanged.class, name = "COUNTER_CHANGED"),
         @JsonSubTypes.Type(value = DuelEventPayload.CardRevealed.class, name = "CARD_REVEALED"),
         @JsonSubTypes.Type(value = DuelEventPayload.EffectActivated.class, name = "EFFECT_ACTIVATED"),
+        @JsonSubTypes.Type(value = DuelEventPayload.ChainTargeted.class, name = "CHAIN_TARGETED"),
         @JsonSubTypes.Type(value = DuelEventPayload.AttackDeclared.class, name = "ATTACK_DECLARED"),
         @JsonSubTypes.Type(value = DuelEventPayload.StateSnapshot.class, name = "STATE_SNAPSHOT"),
         @JsonSubTypes.Type(value = DuelEventPayload.RawFrame.class, name = "RAW_FRAME"),
@@ -50,6 +51,7 @@ public sealed interface DuelEventPayload permits
         DuelEventPayload.CounterChanged,
         DuelEventPayload.CardRevealed,
         DuelEventPayload.EffectActivated,
+        DuelEventPayload.ChainTargeted,
         DuelEventPayload.AttackDeclared,
         DuelEventPayload.StateSnapshot,
         DuelEventPayload.RawFrame {
@@ -197,6 +199,21 @@ public sealed interface DuelEventPayload permits
             implements DuelEventPayload {
         public EffectActivated(String player, long passcode, long desc, Integer chainIndex) {
             this(player, passcode, desc, chainIndex, null);
+        }
+    }
+
+    /**
+     * 连锁对象确定（MSG_BECOME_TARGET）：MDPRO3 的「对象」块——这一环要动谁。
+     * chainIndex = 对象所属的连锁环（null = 链尚未建立）；zone 为
+     * {@code DuelLogBridge#zoneOf} 格式，passcode 解不出为 0。
+     */
+    record ChainTargeted(String player, Integer chainIndex, List<TargetRef> targets)
+            implements DuelEventPayload {
+        public ChainTargeted {
+            targets = targets == null ? List.of() : List.copyOf(targets);
+        }
+
+        public record TargetRef(String zone, long passcode) {
         }
     }
 

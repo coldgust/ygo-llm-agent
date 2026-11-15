@@ -37,8 +37,10 @@ import java.util.concurrent.atomic.AtomicReference;
  *       历次建议），修剪由 memory 承载；</li>
  *   <li>锚点：回合切换时记录流拉取（入史）+ 局面快照 stage（不入史）+ 薄请求行，请求本回合建议
  *       （{@link AdvisorKeeper} 持有最新快照）。<b>每回合规划一次</b>：回合内不再主动修订，
- *       keep 也随之废止——每次 checkpoint 都必须产出全量建议（2026-11-14 用户指令）；</li>
- *   <li>重规划：决策器判决 needReplan=true 触发（每回合一次配额），请求行原样带决策器给出的
+ *       keep 也随之废止——每次 checkpoint 都必须产出全量建议（2026-11-14 用户指令）；
+ *       <b>建议生命周期 = 回合</b>：换回合即作废旧建议，新回合首手等本回合锚点
+ *       （2026-11-15 用户指令，消灭回合边界的"锚点 + 决策器重规划"双规划）；</li>
+ *   <li>重规划：决策器判决 needReplan=true 触发（每回合最多 5 次），请求行原样带决策器给出的
  *       重规划原因（模板在 {@code PlannerAi#replan} 注解）；发起即作废旧建议（{@link AdvisorKeeper#retire}）——
  *       新建议没来得及发布前，决策器不带旧规划；</li>
  *   <li>降级：LLM 失败进入冷却期，期间请求快速返回空（决策器靠记忆与快照自行判断）。</li>
@@ -50,8 +52,8 @@ public final class PlannerRuntime implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(PlannerRuntime.class);
 
-    /** 重规划 checkpoint 的每回合上限：唯一回合内规划；封顶防"决策器每手都判重规划"刷爆配额。 */
-    private static final int REPLAN_CHECKPOINTS_PER_TURN = 1;
+    /** 重规划 checkpoint 的每回合上限：封顶防"决策器每手都判重规划"刷爆配额。 */
+    private static final int REPLAN_CHECKPOINTS_PER_TURN = 5;
 
     private final PlannerAgent plannerAgent;
     private final ContextPackBuilder packer;
@@ -71,7 +73,9 @@ public final class PlannerRuntime implements AutoCloseable {
     private final AtomicLong checkpointCount = new AtomicLong();
     private final VerboseLog trace;
 
-    /** 当前回合键（"回合数:回合方"）：锚点触发、每回合配额与恢复的键。volatile：决策线程读、worker 写。 */
+    /** 当前回合键（"回合数:回合方"）：锚点触发、每回合配额与恢复的键。
+     *  volatile：决策线程在 {@link #observePoint} 检测到换回合时先行轮换并作废旧建议，
+     *  决策线程（requestReplan 配额闸/segment 快照）与 worker（重规划 segment 校验）读。 */
     private volatile String turnKey = "";
 
     /**
@@ -152,7 +156,14 @@ public final class PlannerRuntime implements AutoCloseable {
     public void observePoint(DecisionPoint point) {
         String key = point.turn() + ":" + point.state().turnPlayer();
         if (!key.equals(turnKey)) {
-            worker.execute(() -> beginTurnAnchor(key, point));
+            // 建议生命周期 = 回合（2026-11-15）：换回合即在决策线程作废旧建议、先行轮换段号——
+            // 新回合首手 currentAdvice() 为空，决策管线走 waitForAdvice 等本回合锚点，
+            // 不再把上回合情报带给决策器（那是"回合切换时决策器判 needReplan → 与锚点
+            // 背靠背双规划"的根源）；段号先行轮换还让 worker 上挂着的旧回合重规划任务
+            // 在 segment 校验处自弃——它规划的是已经结束的回合，产出注定无人消费。
+            keeper.retire();
+            turnKey = key;
+            worker.execute(() -> beginTurnAnchor(point));
         }
     }
 
@@ -219,9 +230,10 @@ public final class PlannerRuntime implements AutoCloseable {
     /**
      * 回合切换：重置回合级计数；对话记忆连续不清——跨回合上下文由
      * DuelChatMemory（pinned 前缀 + 追加记录流 + 历次建议）承载。
+     * 段号（turnKey）与旧建议作废已由 {@link #observePoint} 在决策线程先行完成，
+     * 这里只负责锚点本体：入史 → stage 快照 → 请求建议。
      */
-    private void beginTurnAnchor(String key, DecisionPoint point) {
-        turnKey = key;
+    private void beginTurnAnchor(DecisionPoint point) {
         checkpoints.resetForTurn();
         checkpointCount.set(0);
         checkpoints.resetTurnBudget();
@@ -251,7 +263,7 @@ public final class PlannerRuntime implements AutoCloseable {
     }
 
     /**
-     * 重规划（决策器判决 needReplan=true 触发，唯一的回合内规划）：
+     * 重规划（决策器判决 needReplan=true 触发，每回合最多 5 次；回合内规划全由决策器判决驱动）：
      * <ol>
      *   <li>配额/在途闸通过后<b>立即作废旧建议</b>（{@link AdvisorKeeper#retire}）——
      *       决策器已判定它不可用，新规划发布前不得再带给决策器；</li>

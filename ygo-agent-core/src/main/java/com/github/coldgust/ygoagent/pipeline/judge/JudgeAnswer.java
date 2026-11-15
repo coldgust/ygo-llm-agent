@@ -22,6 +22,7 @@ import dev.langchain4j.model.output.structured.Description;
  * 位置是决策的一部分，但<b>不为它单独发一次请求</b>——没给或给得不合法就按"第一个可放"退。
  *
  * <p>{@code needReplan}/{@code replanReason}：决策器对本回合规划的判决与理由。
+ * 规划失效（不可能实现/不合理/偏离局面）或出现规划不知道的极具价值新情报时 true；
  * true 会触发规划器立即重规划（旧建议作废、新规划发布前决策器不带旧规划）；
  * 本手决策不受影响——choice 仍是必答项。契约语义（何时 true、原因写什么）全部在注解里。
  *
@@ -40,12 +41,14 @@ public record JudgeAnswer(
         @Description("仅当这一步的动作会落场时给出区域位置（按 [场地槽位] 的写法，如 我方主怪兽区3）；"
                 + "说不出就省略，系统取第一个可放置区域。")
         @JsonAlias("zoneCode") String zone,
-        @Description("对当前 [规划器情报] 所载规划的判决：规划已不可能实现、已不合理、"
-                + "或已与最新局面偏离时 true；规划仍适用则省略或 false。"
-                + "true 会触发规划器立即重规划（旧建议作废），但本手决策不受影响——choice 仍是必答项。")
+        @Description("对当前 [规划器情报] 的判决：①规划已不可能实现、不合理或已偏离局面；"
+                + "②出现规划不知道、足以改变本回合打法的新情报——"
+                + "如对手卡组情报更新、我方或对方场面发生大变化——时 true。"
+                + "规划仍适用且无新情报则省略或 false。"
+                + "true 触发立即重规划（旧建议作废），本手决策不受影响——choice 仍是必答项。")
         Boolean needReplan,
-        @Description("needReplan=true 时必填：判决原因（≤60 字，写清哪条线已落空、哪个前提已被破坏、"
-                + "或局面偏离在哪），将原样转达给规划器重规划。needReplan 非 true 时省略。")
+        @Description("needReplan=true 时必填：判决原因（≤60 字）：哪条线落空、哪个前提被破坏、"
+                + "或哪条新情报/场面变化改变了什么判断，原样转达规划器。非 true 时省略。")
         @JsonAlias({"replan_reason", "replanReason"}) String replanReason) {
 
     /** 解析候选编号：接受 "C3"/"3"；解析不了返回 null（上层按越界/弃权处理）。 */

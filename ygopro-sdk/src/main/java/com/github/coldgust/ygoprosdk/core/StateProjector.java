@@ -3,10 +3,12 @@ package com.github.coldgust.ygoprosdk.core;
 import com.github.coldgust.ygodomain.card.CardIdentity;
 import com.github.coldgust.ygodomain.duel.CardInstance;
 import com.github.coldgust.ygodomain.duel.ChainNode;
+import com.github.coldgust.ygodomain.duel.ChainTargetRef;
 import com.github.coldgust.ygodomain.duel.DuelResult;
 import com.github.coldgust.ygodomain.duel.DuelState;
 import com.github.coldgust.ygodomain.duel.Phase;
 import com.github.coldgust.ygodomain.duel.PlayerSide;
+import com.github.coldgust.ygodomain.duel.Position;
 import com.github.coldgust.ygodomain.duel.PlayerState;
 import com.github.coldgust.ygodomain.duel.WinReason;
 import com.github.coldgust.ygodomain.zone.ZoneRef;
@@ -23,6 +25,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.StringJoiner;
 import java.util.TreeMap;
 
 /**
@@ -72,9 +75,19 @@ public final class StateProjector {
     private final Map<Integer, Player> players = new LinkedHashMap<>();
     private final Map<Long, Card> cards = new LinkedHashMap<>();
     private final Map<Long, Long> zoneIndex = new LinkedHashMap<>(); // zoneKey -> instanceId
+    /**
+     * 列表区域（墓地/除外/额外）的实例索引：zoneKey -> instanceId。
+     *
+     * <p>列表区域的卡不占 {@code zoneIndex}，但实例必须可寻址：离开列表区域时
+     * **复用**同一实例（只改位置），否则会新建实例——旧实例成孤儿永久留在
+     * {@code cards} 里，快照 diff 把"墓地→除外"看成"凭空出现在除外"，
+     * 记录层只能渲染「被除外（从 未知区域）」「一张卡 加入额外卡组」
+     * （2026-11-15 实机：虎鲨连锁蒂迈欧的那次除外）。
+     */
+    private final Map<Long, Long> listZoneIndex = new LinkedHashMap<>();
     private final List<ChainNode> chain = new ArrayList<>();
     /** 先到、还没挂到任何一环上的对象（协议顺序不保证先 CHAINING 后 BECOME_TARGET）。 */
-    private final List<ZoneRef> pendingTargets = new ArrayList<>();
+    private final List<ChainTargetRef> pendingTargets = new ArrayList<>();
     private long nextInstanceId = 1;
 
     /**
@@ -98,6 +111,15 @@ public final class StateProjector {
      * 一次批量消息里可能连亮好几张。
      */
     private final Deque<long[]> pendingReveals = new ArrayDeque<>();
+    /**
+     * 协议层移动队列（供会话转发给记录层）：快照 diff 丢来源（卡组/额外卡组的卡无实例）
+     * 与 reason 位，代价/回卡组/额外卡组来源在记录里只能写成"从 未知区域"。
+     * 逐消息 drain，上限防无消费泄漏。
+     */
+    private final Deque<ProtocolEvents.ProtocolMove> pendingMoves = new ArrayDeque<>();
+    /** 连锁对象确定（MSG_BECOME_TARGET）：对象属于最近入链的那一环，记录层渲染「对象」行。 */
+    private final Deque<ProtocolEvents.ChainTargeted> pendingTargetEvents = new ArrayDeque<>();
+    private static final int EVENT_QUEUE_LIMIT = 128;
 
     public StateProjector(CardInfoResolver resolver) {
         this.resolver = resolver;
@@ -110,6 +132,59 @@ public final class StateProjector {
     /** 取一条待转发的亮牌（{@code [seat, passcode]}）；没有返回 null。 */
     public synchronized long[] pollReveal() {
         return pendingReveals.pollFirst();
+    }
+
+    /** 取一条协议层移动（真实 from/to + reason 标签）；没有返回 null。 */
+    public synchronized ProtocolEvents.ProtocolMove pollMove() {
+        return pendingMoves.pollFirst();
+    }
+
+    /** 取一条连锁对象事件；没有返回 null。 */
+    public synchronized ProtocolEvents.ChainTargeted pollTargetEvent() {
+        return pendingTargetEvents.pollFirst();
+    }
+
+    /**
+     * MSG_MOVE 是否值得透传给记录层：只有 diff 拿不到的信息才透传——
+     * ① reason 带代价/丢弃位（diff 完全推不出"这是代价"）；② 来源是卡组/额外卡组
+     * （那里的卡没有实例，diff 只能写"凭空出现"，来源变成"未知区域"）。
+     * 进手牌的检索不透传：亮牌并行的"X 加入手牌"合并逻辑依赖 diff 事件的形态。
+     */
+    private boolean shouldEmitMove(ZoneMapper.Packed from, ZoneMapper.Packed to, int reason) {
+        boolean costish = (reason & (REASON_COST | REASON_DISCARD)) != 0;
+        if (costish) {
+            return true;
+        }
+        boolean lostFrom = from.location() == ZoneMapper.LOC_DECK
+                || from.location() == ZoneMapper.LOC_EXTRA;
+        boolean toHand = to.location() == ZoneMapper.LOC_HAND;
+        return lostFrom && !toHand;
+    }
+
+    /** ygocore common.h 的 reason 位（2026-11-15 核对）。 */
+    private static final int REASON_COST = 0x80;
+    private static final int REASON_DISCARD = 0x4000;
+    private static final int[] REASON_BITS = {
+            0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40, REASON_COST, 0x100, 0x200, 0x400,
+            0x800, 0x1000, 0x2000, REASON_DISCARD, 0x20000, 0x40000, 0x80000,
+            0x100000, 0x200000, 0x1000000, 0x2000000, 0x10000000
+    };
+    private static final String[] REASON_NAMES = {
+            "DESTROY", "RELEASE", "TEMPORARY", "MATERIAL", "SUMMON", "BATTLE", "EFFECT",
+            "COST", "ADJUST", "LOST_TARGET", "RULE", "SPSUMMON", "DISSUMMON", "FLIP",
+            "DISCARD", "RETURN", "FUSION", "SYNCHRO", "RITUAL", "XYZ", "REPLACE",
+            "DRAW", "LINK"
+    };
+
+    /** reason 位 → 可读标签（按位值升序拼接；0 = null）。 */
+    static String reasonLabel(int reason) {
+        StringJoiner sj = new StringJoiner("+");
+        for (int i = 0; i < REASON_BITS.length; i++) {
+            if ((reason & REASON_BITS[i]) != 0) {
+                sj.add(REASON_NAMES[i]);
+            }
+        }
+        return sj.length() == 0 ? null : sj.toString();
     }
 
     /** 学到一张卡的卡号（公开信息）：入队，供会话转发。 */
@@ -356,12 +431,18 @@ public final class StateProjector {
         long code = r.u32();
         ZoneMapper.Packed from = ZoneMapper.unpack(r.u32());
         ZoneMapper.Packed to = ZoneMapper.unpack(r.u32());
-        r.u32(); // reason
+        int reasonBits = (int) r.u32(); // reason 位（代价/破坏/解放…），透传给记录层
+        removeFromSourceListZone(from, code);
         Card card = takeFromZone(from);
         if (card == null && from.location() == ZoneMapper.LOC_HAND) {
             // 手牌不在 zoneIndex 中，takeFromZone 拿不到；必须单独摘出，
             // 否则手牌张数永远不减、同一张卡会同时出现在手牌与场上。
             card = takeFromHand(from.controller(), code);
+        }
+        if (card == null) {
+            // 墓地/除外/额外同样不在 zoneIndex，但实例在 listZoneIndex 里可寻址——
+            // 复用实例，让快照 diff 能看到"同一张卡换了区域"
+            card = takeFromListZone(from, code);
         }
         if (card == null) {
             card = new Card();
@@ -375,10 +456,31 @@ public final class StateProjector {
         card.sequence = to.sequence();
         card.position = to.position();
         place(card);
+        registerListZoneInstance(card);
         adjustZoneLists(from, to, card);
+        if (shouldEmitMove(from, to, reasonBits)) {
+            long passcode = code != 0 ? code
+                    : (card.identity == null ? 0 : card.identity.passcode());
+            Position toPos = ZoneMapper.toPosition(card.position);
+            enqueue(pendingMoves, new ProtocolEvents.ProtocolMove(
+                    to.controller(), passcode,
+                    zoneRef(from.controller(), from.location(), from.sequence()),
+                    zoneRef(to.controller(), to.location(), to.sequence()),
+                    toPos == null ? null : toPos.name(),
+                    reasonLabel(reasonBits),
+                    card.id));
+        }
         if (to.location() == ZoneMapper.LOC_HAND) {
             fillRevealedHandCard(card, to.controller(), code);
         }
+    }
+
+    /** 队列入队（带上限：没人消费时丢最旧的，防泄漏）。 */
+    private static <T> void enqueue(Deque<T> queue, T item) {
+        while (queue.size() >= EVENT_QUEUE_LIMIT) {
+            queue.pollFirst();
+        }
+        queue.addLast(item);
     }
 
     /**
@@ -587,13 +689,20 @@ public final class StateProjector {
 
     /**
      * 某一环的发动对象（BECOME_TARGET）。
+     *
+     * <p>身份必须在解析瞬间按协议下标解出并随目标携带：ZoneRef 对列表区域（墓地等）
+     * 不携带引擎下标，事后按区域回查会在同区域的多张卡里取错（实战事故：
+     * 蒂迈欧对象是墓地毁灭之黑魔术师下标 8，被往返抹成 0 解成了最早进墓的山雀）。
      */
     private void onBecomeTarget(ByteReader r) {
         int count = r.u8();
-        List<ZoneRef> targets = new ArrayList<>(count);
+        List<ChainTargetRef> targets = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             ZoneMapper.Packed loc = ZoneMapper.unpack(r.u32());
-            targets.add(zoneRef(loc.controller(), loc.location(), loc.sequence()));
+            // 协议下标 → 身份当场解出（列表区域也覆盖，identityAt 按引擎同序的镜像列表解析）
+            CardIdentity identity = identityAt(loc.controller(), loc.location(), loc.sequence());
+            targets.add(new ChainTargetRef(
+                    zoneRef(loc.controller(), loc.location(), loc.sequence()), identity));
         }
         if (targets.isEmpty()) {
             return;
@@ -605,6 +714,22 @@ public final class StateProjector {
         }
         int last = chain.size() - 1;
         chain.set(last, chain.get(last).withTargets(targets));
+        queueTargetEvent(chain.get(last), targets);
+    }
+
+    /** 把刚挂上的对象作为「对象」事件入队（身份已在解析瞬间解出，这里直接带卡号）。 */
+    private void queueTargetEvent(ChainNode node, List<ChainTargetRef> targets) {
+        if (node == null || targets.isEmpty()) {
+            return;
+        }
+        int seat = node.controller() == PlayerSide.SELF
+                ? selfSeat : 1 - Math.max(selfSeat, 0);
+        List<ProtocolEvents.ChainTarget> resolved = new ArrayList<>(targets.size());
+        for (ChainTargetRef target : targets) {
+            resolved.add(new ProtocolEvents.ChainTarget(target.zone(), target.passcode()));
+        }
+        enqueue(pendingTargetEvents, new ProtocolEvents.ChainTargeted(
+                node.index(), seat, resolved));
     }
 
     /**
@@ -636,7 +761,9 @@ public final class StateProjector {
                 zoneRef(loc.controller(), loc.location(), loc.sequence()), sideOf(controller));
         if (!pendingTargets.isEmpty()) {
             node = node.withTargets(List.copyOf(pendingTargets));
+            List<ChainTargetRef> attached = List.copyOf(pendingTargets);
             pendingTargets.clear();
+            queueTargetEvent(node, attached);
         }
         chain.add(node);
     }
@@ -656,6 +783,8 @@ public final class StateProjector {
 
     private void onReloadField(ByteReader r) {
         duelRule = r.u8();
+        // 全场重建：列表区域实例索引一并作废（身份列表与实例都由下面的重放重置）
+        listZoneIndex.clear();
         for (int seat = 0; seat <= 1; seat++) {
             Player p = players.computeIfAbsent(seat, k -> new Player());
             p.lp = r.i32();
@@ -793,16 +922,40 @@ public final class StateProjector {
                     }
                 }
             }
-            case ZoneMapper.LOC_GRAVE -> setOrAdd(p.graveyard, seq, identity);
-            case ZoneMapper.LOC_REMOVED -> setOrAdd(p.banished, seq, identity);
-            case ZoneMapper.LOC_EXTRA -> setOrAdd(p.extraDeck, seq, identity);
+            case ZoneMapper.LOC_GRAVE -> setOrInsert(p.graveyard, seq, identity);
+            case ZoneMapper.LOC_REMOVED -> setOrInsert(p.banished, seq, identity);
+            case ZoneMapper.LOC_EXTRA -> setOrInsert(p.extraDeck, seq, identity);
             default -> {
                 // 主卡组不跟踪逐卡身份，无可回填
             }
         }
     }
 
-    private static void setOrAdd(List<CardIdentity> list, int index, CardIdentity identity) {
+    /**
+     * 按引擎列表下标**插入**（MOVE 到达语义）：引擎 vector 在该下标插入、其余卡整体后移。
+     * 有空洞（下标超出当前长度）时补 UNKNOWN 占位——镜像顺序永远以引擎消息为准。
+     */
+    private static void insertAt(List<CardIdentity> list, int index, CardIdentity identity) {
+        if (index < 0) {
+            return;
+        }
+        while (list.size() < index) {
+            list.add(CardIdentity.UNKNOWN);
+        }
+        list.add(Math.min(index, list.size()), identity);
+    }
+
+    /**
+     * 按引擎列表下标**写入**（UPDATE_DATA/UPDATE_CARD 的全量同步语义）：在列表内=覆盖，
+     * 超出末尾=追加（有空洞补 UNKNOWN 占位）。
+     */
+    private static void setOrInsert(List<CardIdentity> list, int index, CardIdentity identity) {
+        if (index < 0) {
+            return;
+        }
+        while (list.size() < index) {
+            list.add(CardIdentity.UNKNOWN);
+        }
         if (index < list.size()) {
             list.set(index, identity);
         } else {
@@ -857,11 +1010,11 @@ public final class StateProjector {
                 }
                 if (p != null && block.code() != 0) {
                     if (loc == ZoneMapper.LOC_GRAVE) {
-                        setOrAdd(p.graveyard, index, identityOf(block.code()));
+                        setOrInsert(p.graveyard, index, identityOf(block.code()));
                     } else if (loc == ZoneMapper.LOC_REMOVED) {
-                        setOrAdd(p.banished, index, identityOf(block.code()));
+                        setOrInsert(p.banished, index, identityOf(block.code()));
                     } else if (loc == ZoneMapper.LOC_EXTRA) {
-                        setOrAdd(p.extraDeck, index, identityOf(block.code()));
+                        setOrInsert(p.extraDeck, index, identityOf(block.code()));
                     }
                 }
             }
@@ -892,14 +1045,40 @@ public final class StateProjector {
 
     /**
      * 某格上卡片**已知**的身份；拿不到就是 {@link CardIdentity#UNKNOWN}。
+     *
+     * <p>列表区域（墓地/除外/额外）不在 {@code zoneIndex}：身份记在玩家的身份列表里，
+     * 下标即引擎列表下标——SELECT_CARD 的候选就是按 (座位, 区域, 下标) 来问的，
+     * 不支持列表区域的话，对手墓地候选全部回填落空（2026-11-15 实机：虎鲨选错融合素材）。
      */
     public synchronized CardIdentity identityAt(int seat, int location, int sequence) {
+        List<CardIdentity> list = identityList(seat, location);
+        if (list != null) {
+            return sequence >= 0 && sequence < list.size()
+                    ? list.get(sequence) : CardIdentity.UNKNOWN;
+        }
         Long id = zoneIndex.get(zoneKey(seat, location, sequence));
         if (id == null) {
             return CardIdentity.UNKNOWN;
         }
         Card card = cards.get(id);
         return card == null || card.identity == null ? CardIdentity.UNKNOWN : card.identity;
+    }
+
+    /**
+     * 列表区域的身份列表（下标 == 引擎列表下标）；主卡组不逐卡跟踪，手牌顺序
+     * 常与协议序号漂移（见 {@link #handCardAt}），两者都不在这里解析。
+     */
+    private List<CardIdentity> identityList(int seat, int location) {
+        Player p = players.get(seat);
+        if (p == null) {
+            return null;
+        }
+        return switch (location) {
+            case ZoneMapper.LOC_GRAVE -> p.graveyard;
+            case ZoneMapper.LOC_REMOVED -> p.banished;
+            case ZoneMapper.LOC_EXTRA -> p.extraDeck;
+            default -> null;
+        };
     }
 
     private Card takeFromZone(ZoneMapper.Packed from) {
@@ -963,6 +1142,76 @@ public final class StateProjector {
         return cards.get(p.hand.remove(idx));
     }
 
+    /**
+     * 卡离开列表区域（墓地/除外/额外）时，把它从对应的身份列表里摘出。
+     *
+     * <p>为什么必须单独做：列表区域的卡不占 {@code zoneIndex}，{@link #takeFromZone}
+     * 必然落空——旧实现在这条路径上**只进不出**，离开墓地的卡会永远留在身份列表里
+     * （张数虚高、候选回填对错位）。
+     *
+     * <p>为什么按下标删：{@code from.sequence()} 是引擎列表的实时下标（引擎在删除后会
+     * 重排其余卡的下标，Java {@code List.remove} 天然同样重排）；仅当下标与身份对不上时
+     * 才退回按身份查找——宁可少删也不删错。
+     */
+    private void removeFromSourceListZone(ZoneMapper.Packed from, long code) {
+        List<CardIdentity> list = identityList(from.controller(), from.location());
+        if (list == null || list.isEmpty()) {
+            return;
+        }
+        int seq = from.sequence();
+        if (seq >= 0 && seq < list.size()) {
+            CardIdentity at = list.get(seq);
+            boolean plausible = code == 0 || at.passcode() == code || at.isUnknown();
+            if (plausible) {
+                list.remove(seq);
+                return;
+            }
+        }
+        CardIdentity identity = identityOf(code);
+        if (!identity.isUnknown()) {
+            int idx = indexOfIdentity(list, identity);
+            if (idx >= 0) {
+                list.remove(idx);
+            }
+        }
+    }
+
+    /**
+     * 从列表区域的实例索引里取回正在移动的卡实例（只摘索引，实例保留在
+     * {@code cards} 里——它的区域即将被改写，快照 diff 靠"同实例换区域"生成
+     * 带完整 from/to 的 CARD_MOVED）。
+     */
+    private Card takeFromListZone(ZoneMapper.Packed from, long code) {
+        if (identityList(from.controller(), from.location()) == null) {
+            return null;
+        }
+        Long id = listZoneIndex.remove(zoneKey(from.controller(), from.location(), from.sequence()));
+        Card card = id == null ? null : cards.get(id);
+        if (card != null) {
+            return card;
+        }
+        // 序号漂移兜底：同区域同下标的既有实例（宁可复用也不新建孤儿）
+        for (Card c : cards.values()) {
+            if (c.controller == from.controller() && c.location == from.location()
+                    && c.sequence == from.sequence()) {
+                return c;
+            }
+        }
+        return null;
+    }
+
+    /** 登记列表区域实例索引；同格已有旧实例时退役，防孤儿。 */
+    private void registerListZoneInstance(Card card) {
+        if (identityList(card.controller, card.location) == null) {
+            return;
+        }
+        Long prev = listZoneIndex.put(
+                zoneKey(card.controller, card.location, card.sequence), card.id);
+        if (prev != null && prev != card.id) {
+            cards.remove(prev);
+        }
+    }
+
     private long register(Card card) {
         if (card.id == 0) {
             card.id = nextInstanceId++;
@@ -1014,9 +1263,11 @@ public final class StateProjector {
         if (p != null) {
             switch (to.location()) {
                 case ZoneMapper.LOC_HAND -> p.hand.add(card.id);
-                case ZoneMapper.LOC_GRAVE -> p.graveyard.add(card.identity);
-                case ZoneMapper.LOC_REMOVED -> p.banished.add(card.identity);
-                case ZoneMapper.LOC_EXTRA -> p.extraDeck.add(card.identity);
+                // 到达位置按引擎给的列表下标**插入**（引擎 vector 插入会整体后移），
+                // 不能盲目 append，也不能覆盖：seq=0 的连续到达就是"新卡插头部"
+                case ZoneMapper.LOC_GRAVE -> insertAt(p.graveyard, to.sequence(), card.identity);
+                case ZoneMapper.LOC_REMOVED -> insertAt(p.banished, to.sequence(), card.identity);
+                case ZoneMapper.LOC_EXTRA -> insertAt(p.extraDeck, to.sequence(), card.identity);
                 default -> {
                 }
             }

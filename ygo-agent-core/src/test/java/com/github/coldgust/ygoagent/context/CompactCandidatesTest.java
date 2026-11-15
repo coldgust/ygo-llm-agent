@@ -178,7 +178,8 @@ class CompactCandidatesTest {
         String list = builder.compactCandidates(point);
         String digest = builder.compactEffectDigest(point);
 
-        assertTrue(list.contains("C1 发动 零衣①"), "同一张多效果卡要能区分是哪一条: " + list);
+        assertTrue(list.contains("C1 发动 零衣〔效果／怪兽〕①"),
+                "同一张多效果卡要能区分是哪一条（卡种标注帮模型分清怪兽/魔法）: " + list);
         assertTrue(digest.contains("零衣①：自己·对方回合，把这张卡解放才能发动"),
                 "每个候选要带条款正文，否则判断不了发动的是哪个效果: " + digest);
     }

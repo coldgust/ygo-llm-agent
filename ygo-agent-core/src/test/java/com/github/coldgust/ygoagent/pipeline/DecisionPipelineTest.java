@@ -248,28 +248,38 @@ class DecisionPipelineTest {
     }
 
     @Test
-    void replanIsCappedAtOnePerTurn() {
-        // 同回合第二次 needReplan：配额闸挡下——不重复作废建议、不再发重规划请求
-        Rig rig = rig(fastWait(),
-                advisorJson("第一条建议"),
-                "{\"choice\": \"C1\", \"rationale\": \"召唤大黄蜂\", \"confidence\": 0.8, "
-                        + "\"needReplan\": true, \"replanReason\": \"第一手判决\"}",
-                advisorJson("重规划建议"),
-                "{\"choice\": \"C1\", \"rationale\": \"召唤大黄蜂\", \"confidence\": 0.8, "
-                        + "\"needReplan\": true, \"replanReason\": \"第二手判决\"}");
+    void replanIsCappedAtFivePerTurn() {
+        // 每回合最多 5 次重规划（2026-11-15 用户指令）：前 5 次 needReplan 都触发重规划，
+        // 第 6 次被配额闸挡下——不再作废建议、不再发重规划请求。
+        String replanJudgeReply = "{\"choice\": \"C1\", \"rationale\": \"召唤大黄蜂\", \"confidence\": 0.8, "
+                + "\"needReplan\": true, \"replanReason\": \"判决\"}";
+        List<String> replies = new ArrayList<>(List.of(advisorJson("第一条建议")));
+        for (int i = 1; i <= 5; i++) {
+            replies.add(replanJudgeReply);              // 决策器判决 → 重规划 #i
+            replies.add(advisorJson("重规划建议" + i));  // 重规划产出
+        }
+        replies.add(replanJudgeReply);                  // 第 6 次判决：应被配额挡下
+        Rig rig = rig(fastWait(), replies.toArray(String[]::new));
         DecisionPoint point = mainPoint();
         rig.planner().observePoint(point);
         rig.planner().drainForTests();
-        rig.port().decide(point, DecisionDeadline.of(3000));
-        rig.planner().drainForTests();
-        String replannedId = rig.planner().currentAdvice().orElseThrow().adviceId();
 
-        rig.port().decide(point, DecisionDeadline.of(3000));
-        rig.planner().drainForTests();
-        assertEquals(replannedId, rig.planner().currentAdvice().orElseThrow().adviceId(),
-                "同回合第二次重规划应被配额挡下（建议不作废）");
-        assertEquals(1, allUserTexts(rig).split("===重规划", -1).length - 1,
-                "重规划请求行只应出现一次");
+        for (int i = 0; i < 6; i++) {
+            rig.port().decide(point, DecisionDeadline.of(3000));
+            rig.planner().drainForTests();
+        }
+        // 只数每次 LLM 调用的"当前请求行"（最后一条 user 消息）：记忆里回放的历史
+        // 重规划请求行不算，否则 5 次重规划会被数成 1+2+…+5=15
+        long replanCalls = rig.chat().requests.stream()
+                .map(r -> r.messages().stream()
+                        .filter(m -> m instanceof UserMessage)
+                        .map(m -> ((UserMessage) m).singleText())
+                        .reduce((a, b) -> b)
+                        .orElse(""))
+                .filter(t -> t.contains("===重规划"))
+                .count();
+        assertEquals(5, replanCalls,
+                "重规划请求行只应出现 5 次（第 6 次 needReplan 被配额闸挡下）");
     }
 
     /** 假模型收到的全部 user 消息文本（断言"规划器看到了什么"用）。 */
@@ -776,5 +786,94 @@ class DecisionPipelineTest {
         assertTrue(chat.requests.size() >= 2, "换段应触发新锚点 checkpoint");
         assertTrue(VerboseLog.messageText(chat.requests.get(1).messages().getFirst()).contains("战术幕僚"),
                 "段轮换后 system 提示仍在消息首位");
+    }
+
+    /** 第 3 回合我方主阶段的空连锁决策点（测换回合作废/段轮换用）。 */
+    private static DecisionPoint turn3Point() {
+        var state = TestDuels.state(3, true, List.of(), List.of(), List.of(), List.of(), 8000, 8000);
+        return new DecisionPoint(14, 3, state.phase(),
+                PlayerSide.SELF,
+                new ChoiceRequest.ChainRequest(List.of()),
+                state, List.of(), "h3", "r3",
+                RequestKind.CHAIN);
+    }
+
+    /** 直接架 PlannerRuntime（不经决策管线），返回可用实例。 */
+    private PlannerRuntime barePlanner(FakeChatModel chat) {
+        var plannerMemory = newPlannerMemory();
+        return PlannerRuntime.builder(
+                new PlannerAgent(new ResilientChatModel(chat.baked(settings().checkpointOptions(), true)),
+                        plannerMemory, List.of(), trace),
+                new ContextPackBuilder(TestDuels.facts()),
+                settings(), plannerMemory)
+                .feed(feedFor(plannerMemory))
+                .trace(trace)
+                .build();
+    }
+
+    @Test
+    void turnSwitchRetiresPreviousAdviceForTheNewTurn() {
+        // 建议生命周期 = 回合（2026-11-15）：换回合 observePoint 即作废旧建议（决策线程），
+        // 新回合首手 currentAdvice 为空 → 决策管线走 waitForAdvice 等本回合锚点，
+        // 决策器不再拿上回合情报判 needReplan（消灭回合边界双规划的根源）。
+        FakeChatModel chat = new FakeChatModel(advisorJson("T2 建议"), advisorJson("T3 建议"));
+        PlannerRuntime planner = barePlanner(chat);
+
+        planner.observePoint(mainPoint());
+        planner.drainForTests();
+        assertTrue(planner.currentAdvice().isPresent(), "T2 锚点已发布建议");
+
+        planner.observePoint(turn3Point());
+        assertTrue(planner.currentAdvice().isEmpty(),
+                "换回合应立即作废上回合建议——新回合首手等本回合锚点");
+
+        planner.drainForTests();
+        assertEquals(3, planner.currentAdvice().orElseThrow().turn(), "T3 锚点发布本回合建议");
+    }
+
+    @Test
+    void replanQueuedForOldTurnIsDroppedWhenTurnRotates() {
+        // 回合末手的 needReplan 判决：重规划任务已排上 worker 但未执行；新回合 observePoint
+        // 先行轮换段号 → 旧回合重规划在 segment 校验处自弃（规划的是已结束的回合），
+        // 不再与 T3 锚点背靠背双规划。
+        // 时序确定性：模型调用带 300ms 延迟，主线程在 T2 锚点执行期间完成
+        // requestReplan（任务排队）→ observePoint(T3)（段号轮换），轮换必然先于重规划任务出队。
+        FakeChatModel chat = new FakeChatModel(advisorJson("锚点建议"));
+        ChatModel slowRecording = new ChatModel() {
+            @Override
+            public ChatResponse chat(dev.langchain4j.model.chat.request.ChatRequest request) {
+                try {
+                    Thread.sleep(300);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return chat.chat(request);
+            }
+        };
+        var plannerMemory = newPlannerMemory();
+        PlannerRuntime planner = PlannerRuntime.builder(
+                new PlannerAgent(new ResilientChatModel(
+                        FakeChatModel.baked(slowRecording, settings().checkpointOptions(), true)),
+                        plannerMemory, List.of(), trace),
+                new ContextPackBuilder(TestDuels.facts()),
+                settings(), plannerMemory)
+                .feed(feedFor(plannerMemory))
+                .trace(trace)
+                .build();
+
+        planner.observePoint(mainPoint());      // worker：T2 锚点开始（300ms）
+        planner.requestReplan(mainPoint(), "上回合规划已过时"); // 回合末手判决：任务排队、未执行
+        planner.observePoint(turn3Point());     // 决策线程：作废旧建议 + 段号轮换，T3 锚点排队
+        planner.drainForTests();
+
+        var advice = planner.currentAdvice().orElseThrow();
+        assertEquals(3, advice.turn(), "只有 T3 锚点发布建议");
+        assertEquals(2, chat.requests.size(), "旧回合重规划应被丢弃：只有 T2/T3 两次锚点调用");
+        String plannerSaw = chat.requests.stream()
+                .flatMap(r -> r.messages().stream())
+                .filter(m -> m instanceof UserMessage)
+                .map(m -> ((UserMessage) m).singleText())
+                .collect(Collectors.joining("\n"));
+        assertFalse(plannerSaw.contains("===重规划"), "旧回合的重规划不应发出请求行");
     }
 }

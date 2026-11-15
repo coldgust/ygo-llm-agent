@@ -14,6 +14,7 @@ import com.github.coldgust.ygoduellog.JsonlSink;
 import com.github.coldgust.ygoduellog.event.DuelEventKind;
 import com.github.coldgust.ygoduellog.event.DuelEventPayload;
 import com.github.coldgust.ygoduellog.query.DuelLog;
+import com.github.coldgust.ygoprosdk.core.ProtocolEvents;
 import com.github.coldgust.ygoprosdk.core.RequestDecoder;
 import com.github.coldgust.ygoprosdk.core.ResponseEncoder;
 import com.github.coldgust.ygoprosdk.core.StateProjector;
@@ -585,7 +586,35 @@ public final class DuelSession implements AutoCloseable {
             }
 
             projector.apply(type, new ByteReader(body));
+            dispatchProtocolEvents();
             publishState();
+        }
+    }
+
+    /**
+     * 透传投影层攒下的协议级事件（必须在 publishState 之前：记录桥先记协议移动、
+     * 再在状态 diff 里抑制同一实例的重复事件）。
+     */
+    private void dispatchProtocolEvents() {
+        ProtocolEvents.ProtocolMove move;
+        while ((move = projector.pollMove()) != null) {
+            for (DuelListener l : listeners) {
+                try {
+                    l.onProtocolMove(move);
+                } catch (Exception e) {
+                    log.warn("监听器 onProtocolMove 异常", e);
+                }
+            }
+        }
+        ProtocolEvents.ChainTargeted targeted;
+        while ((targeted = projector.pollTargetEvent()) != null) {
+            for (DuelListener l : listeners) {
+                try {
+                    l.onChainTargeted(targeted);
+                } catch (Exception e) {
+                    log.warn("监听器 onChainTargeted 异常", e);
+                }
+            }
         }
     }
 
@@ -989,9 +1018,12 @@ public final class DuelSession implements AutoCloseable {
         public ChoiceRequest.CardChoice choice(int absController, int location, int sequence, long code) {
             CardIdentityResolver resolver = new CardIdentityResolver();
             var identity = resolver.of(code);
-            long knownInstance = projector.instanceIdAt(absController, location, sequence);
-            if (code == 0 && knownInstance > 0) {
-                // 协议对部分卡发 code=0（对手场上的卡 / 里侧卡），但投影层早就知道它是什么。
+            if (code == 0) {
+                // 协议对不可见卡发 code=0（对手场上的卡、里侧卡、对手墓地/除外的卡等），
+                // 但投影层早就通过公开的 MSG_MOVE/UPDATE_DATA 记住了它是什么——按
+                // (座位, 区域, 下标) 回填。旧实现要求 zoneIndex 里有实例才回填，
+                // 而列表区域（墓地等）不占实例 → 对手墓地候选全是"未知卡"
+                // （2026-11-15 实机：虎鲨加农炮选错融合素材，白交一张阻抗）。
                 var projected = projector.identityAt(absController, location, sequence);
                 if (!projected.isUnknown()) {
                     identity = projected;

@@ -1,5 +1,6 @@
 package com.github.coldgust.ygoprosdk.session;
 
+import com.github.coldgust.ygoprosdk.core.ProtocolEvents;
 import com.github.coldgust.ygodomain.decision.ChoiceRequest;
 import com.github.coldgust.ygodomain.decision.ChoiceSelection;
 import com.github.coldgust.ygodomain.duel.CardInstance;
@@ -40,6 +41,8 @@ final class DuelLogBridge implements DuelListener {
 
     private DuelState latest;
     private boolean startedEmitted;
+    /** 本批已按协议记录的实例 id：diffState 跳过它们，防同一移动产出两条事件。 */
+    private final java.util.Set<Long> protocolLogged = new java.util.HashSet<>();
     private int lastTurn = -1;
     private String lastPhase;
     private long turnStartMillis = System.currentTimeMillis();
@@ -118,6 +121,10 @@ final class DuelLogBridge implements DuelListener {
         Map<Long, CardInstance> prevCards = prev.cards();
         Map<Long, CardInstance> nowCards = state.cards();
         for (CardInstance now : nowCards.values()) {
+            // 协议移动已记录的实例不再走 diff（同一移动会产出两条事件）
+            if (protocolLogged.remove(now.instanceId())) {
+                continue;
+            }
             CardInstance before = prevCards.get(now.instanceId());
             if (before == null) {
                 log.append("SYSTEM", DuelEventKind.CARD_MOVED, new DuelEventPayload.CardMoved(
@@ -133,15 +140,52 @@ final class DuelLogBridge implements DuelListener {
             }
         }
         for (CardInstance before : prevCards.values()) {
-            if (!nowCards.containsKey(before.instanceId())) {
+            if (!nowCards.containsKey(before.instanceId())
+                    && !protocolLogged.contains(before.instanceId())) {
                 log.append("SYSTEM", DuelEventKind.CARD_MOVED, new DuelEventPayload.CardMoved(
                         passcodeOf(before), identityOf(before),
                         zoneOf(before), positionOf(before),
                         null, null, null));
             }
         }
+        protocolLogged.clear();
         lpDiff(prev, state, PlayerSide.SELF);
         lpDiff(prev, state, PlayerSide.OPPONENT);
+    }
+
+    /**
+     * 协议层移动（来源在卡组/额外卡组、或 reason 带代价/丢弃位）：diff 拿不到来源与
+     * 原因，这两类信息记录层必须有——MDPRO3 的「代价」块和真实的移动箭头靠它。
+     * instanceId 记入 {@link #protocolLogged}，随后的状态 diff 不再重复记录这一移动。
+     */
+    @Override
+    public void onProtocolMove(ProtocolEvents.ProtocolMove move) {
+        if (!startedEmitted) {
+            return;
+        }
+        if (move.instanceId() > 0) {
+            protocolLogged.add(move.instanceId());
+        }
+        log.append("SYSTEM", DuelEventKind.CARD_MOVED, new DuelEventPayload.CardMoved(
+                move.passcode(),
+                move.passcode() > 0 ? String.valueOf(move.passcode()) : "unknown",
+                zoneOf(move.from()), null,
+                zoneOf(move.to()), move.toPosition(), move.reason()));
+    }
+
+    /** 对象确定（BECOME_TARGET）：渲染成「对象」行——MDPRO3 的对象块。 */
+    @Override
+    public void onChainTargeted(ProtocolEvents.ChainTargeted targeted) {
+        if (!startedEmitted) {
+            return;
+        }
+        String player = targeted.activatorSeat() >= 0 ? "P" + targeted.activatorSeat() : "SYSTEM";
+        List<DuelEventPayload.ChainTargeted.TargetRef> refs = targeted.targets().stream()
+                .map(t -> new DuelEventPayload.ChainTargeted.TargetRef(
+                        zoneOf(t.zone()), t.passcode()))
+                .toList();
+        log.append(player, DuelEventKind.CHAIN_TARGETED,
+                new DuelEventPayload.ChainTargeted(player, targeted.chainIndex(), refs));
     }
 
     private DuelState prevSnapshot;

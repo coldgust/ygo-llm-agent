@@ -54,9 +54,31 @@ public interface DuelTimeline {
          * passcode = 0 表示身份不可见（对手的手牌与盖放内容被协议抹零；
          * 例外是检索/亮牌——那由 MSG_CARD_SELECTED 回填，见 StateProjector）；
          * position 为协议 Position 枚举名，可空。
+         * reason 为协议 MSG_MOVE reason 位的可读标签（如 "COST"、"EFFECT+DESTROY"；
+         * null = 协议未给出）——「COST」渲染成〔代价〕，模型靠它分清进墓是效果结果还是已付的代价。
          */
         record CardMoved(long seq, int turn, Side side, long passcode,
-                         ZoneRef fromZone, ZoneRef toZone, String position) implements Entry {
+                         ZoneRef fromZone, ZoneRef toZone, String position,
+                         String reason) implements Entry {
+            public CardMoved(long seq, int turn, Side side, long passcode,
+                             ZoneRef fromZone, ZoneRef toZone, String position) {
+                this(seq, turn, side, passcode, fromZone, toZone, position, null);
+            }
+        }
+
+        /**
+         * 连锁对象确定（MSG_BECOME_TARGET）：MDPRO3 的「对象」块——这一环要动谁。
+         * chainIndex = 对象所属的连锁环（1 起；null = 链尚未建立，协议乱序）。
+         */
+        record ChainTargeted(long seq, int turn, Side side, Integer chainIndex,
+                             List<Target> targets) implements Entry {
+            public ChainTargeted {
+                targets = targets == null ? List.of() : List.copyOf(targets);
+            }
+
+            /** 一个对象：所在区域 + 身份（解不出为 0，渲染"未知卡"）。 */
+            public record Target(ZoneRef zone, long passcode) {
+            }
         }
 
         /**

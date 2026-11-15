@@ -21,7 +21,7 @@ public record ChainNode(
         ZoneRef source,
         PlayerSide controller,
         boolean negated,
-        List<ZoneRef> targets
+        List<ChainTargetRef> targets
 ) {
 
     public ChainNode {
@@ -39,12 +39,12 @@ public record ChainNode(
         this(index, identity, effectDescription, source, controller, negated, List.of());
     }
 
-    /** 追加对象（协议 BECOME_TARGET 逐个到达）。 */
-    public ChainNode withTargets(List<ZoneRef> more) {
+    /** 追加对象（协议 BECOME_TARGET 逐个到达；身份在解析瞬间解出，见 {@link ChainTargetRef}）。 */
+    public ChainNode withTargets(List<ChainTargetRef> more) {
         if (more == null || more.isEmpty()) {
             return this;
         }
-        List<ZoneRef> merged = new ArrayList<>(targets);
+        List<ChainTargetRef> merged = new ArrayList<>(targets);
         merged.addAll(more);
         return new ChainNode(index, identity, effectDescription, source, controller, negated, merged);
     }

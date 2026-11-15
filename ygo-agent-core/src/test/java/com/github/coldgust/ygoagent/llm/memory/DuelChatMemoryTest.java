@@ -116,6 +116,30 @@ class DuelChatMemoryTest {
     }
 
     @Test
+    void dropIfStagedOnlyDropsItsOwnSnapshot() {
+        // LlmJudge 竞态（2026-11-15 P1）：判断超时的遗留任务（cancel(true) 打不断 HTTP 调用）
+        // 其 finally 晚于下一手 stage 执行——引用守卫保证它只清自己那份，不误清下一手快照
+        DuelChatMemory memory = memory();
+        UserMessage stale = UserMessage.from("[决策快照] 上一手（超时遗留）");
+        memory.stageOnce(stale);
+        assertTrue(texts(memory).getLast().contains("上一手"));
+
+        // 下一手 stage：重入即替换
+        UserMessage current = UserMessage.from("[决策快照] 下一手");
+        memory.stageOnce(current);
+
+        // 遗留任务的 finally：drop 自己那份——槽内已是新引用，不同即不丢
+        memory.dropIfStaged(stale);
+        assertTrue(texts(memory).getLast().contains("下一手"),
+                "遗留任务不得误清下一手的快照: " + texts(memory));
+
+        // 下一手自己的 finally：正常生效
+        memory.dropIfStaged(current);
+        assertFalse(texts(memory).getLast().contains("[决策快照]"),
+                "持有者自己 drop 正常生效: " + texts(memory));
+    }
+
+    @Test
     void clearResetsEverythingIncludingEphemeral() {
         DuelChatMemory memory = memory();
         memory.add(UserMessage.from("请求"));

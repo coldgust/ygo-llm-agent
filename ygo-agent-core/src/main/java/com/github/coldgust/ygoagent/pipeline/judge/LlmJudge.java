@@ -36,6 +36,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 /**
@@ -89,6 +90,9 @@ public final class LlmJudge implements AutoCloseable {
         // 失败原因收集（ArrayList 不是线程安全的，先收集再并回主线程）；细分成
         // "调用失败 / 输出不可解析 / 选择越界 / 超时"，否则查不出原因。
         Queue<String> notes = new ConcurrentLinkedQueue<>();
+        // 超时止损标志：cancel(true) 打不断阻塞中的 HTTP 调用，遗留任务会继续跑到 finally——
+        // 置位后任务在拿到草案处短路，不再触发重规划/重答（过期手的判决本来也会被丢弃）
+        AtomicBoolean stale = new AtomicBoolean(false);
         AdvisorKeeper.Snapshot advice = planner.currentAdvice().orElse(null);
         // 这一手是在执行哪个效果的哪一步：从属决策点（选卡/选位置/选表示形式）全靠它才有语义
         String effectScope = memory.effectScopeFor(point.turn())
@@ -98,9 +102,12 @@ public final class LlmJudge implements AutoCloseable {
             // 记录流先入史（回合收尾摘要 + 对手/系统增量，入 memory），快照随后 stage——
             // 静态资料与记录已在 memory（pinned + 追加流），每手只发薄请求行
             feed.fillBeforeCall(judgeMemory, point.turn());
+            // 快照引用自己持有：finally 走引用守卫丢弃——超时遗留任务的 finally 可能晚于
+            // 下一手的 stage 执行，引用不同即不丢，不会误清下一手的快照（P1 竞态修复）
+            UserMessage snapshot = UserMessage.from(
+                    packer.judgeSnapshot(point, advice, effectScope));
+            judgeMemory.stageOnce(snapshot);
             try {
-                judgeMemory.stageOnce(UserMessage.from(
-                        packer.judgeSnapshot(point, advice, effectScope)));
                 // 工具按需注册：规则 / 连招 / 查卡 / 历史对局，模型自己决定要不要调用（工具轮对上层透明）
                 JudgeAnswer answer;
                 try (var ignored = trace.scope("决策器判断 T" + point.turn() + " " + point.kind())) {
@@ -109,6 +116,11 @@ public final class LlmJudge implements AutoCloseable {
                 } catch (RuntimeException e) {
                     notes.add(callFailure(e) ? "判断调用失败：" + rootCause(e)
                             : "判断输出不可解析：" + rootCause(e));
+                    return Optional.<Drafted>empty();
+                }
+                if (stale.get()) {
+                    // 超时已弃单：草案会随 future 一并丢弃，只重规划/重答才是真实副作用
+                    notes.add("判断已超时弃单，遗留任务放弃后续动作");
                     return Optional.<Drafted>empty();
                 }
                 maybeRequestReplan(point, answer);
@@ -121,6 +133,10 @@ public final class LlmJudge implements AutoCloseable {
                         return Optional.<Drafted>empty();
                     });
                 }
+                if (stale.get()) {
+                    notes.add("判断已超时弃单，遗留任务放弃后续动作");
+                    return Optional.<Drafted>empty();
+                }
                 notes.add("判断选择越界：" + answer.choice()
                         + "（候选 " + point.candidates().size() + " 个），已要求重答");
                 JudgeAnswer second;
@@ -131,11 +147,16 @@ public final class LlmJudge implements AutoCloseable {
                             : "重答仍不可解析：" + rootCause(e));
                     return Optional.<Drafted>empty();
                 }
+                if (stale.get()) {
+                    notes.add("判断已超时弃单，遗留任务放弃后续动作");
+                    return Optional.<Drafted>empty();
+                }
                 maybeRequestReplan(point, second);
                 return buildFromDraft(point, second, "判断·重答", notes);
             } finally {
-                // 快照只用一次（含重答）；入史的只有请求行/更正行/回复/工具对
-                judgeMemory.dropEphemeral();
+                // 快照只用一次（含重答）；入史的只有请求行/更正行/回复/工具对。
+                // 引用守卫：超时遗留任务晚于下一手 stage 时不会误清下一手的快照
+                judgeMemory.dropIfStaged(snapshot);
             }
         }, judgePool)
                 .exceptionally(ex -> {
@@ -149,6 +170,7 @@ public final class LlmJudge implements AutoCloseable {
             missReasons.addAll(notes);
             return decided;
         } catch (TimeoutException e) {
+            stale.set(true);
             judgeFuture.cancel(true);
             notes.add("判断超时：" + deadlineMs + "ms 内未返回");
             missReasons.addAll(notes);
@@ -170,7 +192,7 @@ public final class LlmJudge implements AutoCloseable {
      * <ol>
      *   <li>重置"本回合已等过建议"标记——下一次决策前按配置的首次等待时长
      *       （firstAdviceWaitMs）<b>再</b>等一次新规划；</li>
-     *   <li>{@link PlannerRuntime#requestReplan}：发起重规划（每回合一次配额），
+     *   <li>{@link PlannerRuntime#requestReplan}：发起重规划（每回合最多 5 次），
      *       原因原样转达规划器；配额闸通过时旧建议即刻作废——
      *       新规划没来得及发布，决策器就不带旧规划内容（快照渲染的 [规划器情报] 段缺席）。</li>
      * </ol>

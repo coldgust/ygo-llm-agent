@@ -1,10 +1,12 @@
 package com.github.coldgust.ygoprosdk.core;
 
+import com.github.coldgust.ygodomain.card.CardIdentity;
 import com.github.coldgust.ygodomain.duel.CardInstance;
 import com.github.coldgust.ygodomain.duel.DuelState;
 import com.github.coldgust.ygodomain.duel.PlayerSide;
 import com.github.coldgust.ygodomain.duel.Position;
 import com.github.coldgust.ygodomain.zone.ZoneKind;
+import com.github.coldgust.ygoprosdk.core.ProtocolEvents;
 import com.github.coldgust.ygoprosdk.protocol.ByteReader;
 import com.github.coldgust.ygoprosdk.protocol.ByteWriter;
 import com.github.coldgust.ygoprosdk.protocol.ProtocolIds;
@@ -341,6 +343,120 @@ class StateProjectorTest {
                 "MSG_DRAW 就是从主卡组抽走，卡组剩余数必须减少");
     }
 
+    /** 直接把一张卡送进指定玩家的墓地（MSG_MOVE，真卡号），to.sequence 按引擎给的写。 */
+    private static void sendToGrave(StateProjector projector, int seat, long code, int graveSeq) {
+        projector.apply(ProtocolIds.MSG_MOVE, reader(new ByteWriter()
+                .u32(code)
+                .u32(ZoneMapper.pack(seat, ZoneMapper.LOC_DECK, 0, 0))
+                .u32(ZoneMapper.pack(seat, ZoneMapper.LOC_GRAVE, graveSeq, 0))
+                .u32(0)));
+    }
+
+    @Test
+    void graveArrivalsTrackEngineListIndexInsteadOfBlindAppend() {
+        // 实机（2026-11-15 虎鲨选错融合素材）：引擎往墓地加卡可以在头部插入（seq=0），
+        // 镜像盲目 append 会让整条墓地顺序漂移——SELECT_CARD 候选按下标问身份必错位。
+        StateProjector projector = startDuel(0);
+        sendToGrave(projector, 1, SKY_STRIKER_MOB, 0);
+        sendToGrave(projector, 1, EFFECT_VEILER, 0);   // 引擎：新卡插头部，旧卡下标后移
+        sendToGrave(projector, 1, ASH_BLOSSOM, 0);
+
+        DuelState state = projector.snapshot();
+        assertEquals(List.of(ASH_BLOSSOM, EFFECT_VEILER, SKY_STRIKER_MOB),
+                state.opponent().graveyard().stream().map(CardIdentity::passcode).toList(),
+                "到达下标就是引擎列表下标：seq=0 连续到达要插头部，不能盲目 append");
+        // SELECT_CARD 候选就是按 (座位, LOC_GRAVE, sequence) 来问身份的
+        assertEquals(ASH_BLOSSOM, projector.identityAt(1, ZoneMapper.LOC_GRAVE, 0).passcode(),
+                "候选下标 0 要回填出确切卡名");
+        assertEquals(EFFECT_VEILER, projector.identityAt(1, ZoneMapper.LOC_GRAVE, 1).passcode());
+        assertEquals(SKY_STRIKER_MOB, projector.identityAt(1, ZoneMapper.LOC_GRAVE, 2).passcode());
+        assertTrue(projector.identityAt(1, ZoneMapper.LOC_GRAVE, 3).isUnknown());
+    }
+
+    @Test
+    void graveArrivalsAppendingAtTailAlsoTrackTheIndex() {
+        // 另一种引擎写法（下标=追加）：镜像同样要能对上
+        StateProjector projector = startDuel(0);
+        sendToGrave(projector, 1, SKY_STRIKER_MOB, 0);
+        sendToGrave(projector, 1, EFFECT_VEILER, 1);
+        sendToGrave(projector, 1, ASH_BLOSSOM, 2);
+
+        assertEquals(List.of(SKY_STRIKER_MOB, EFFECT_VEILER, ASH_BLOSSOM),
+                projector.snapshot().opponent().graveyard().stream()
+                        .map(CardIdentity::passcode).toList());
+        assertEquals(SKY_STRIKER_MOB, projector.identityAt(1, ZoneMapper.LOC_GRAVE, 0).passcode());
+        assertEquals(ASH_BLOSSOM, projector.identityAt(1, ZoneMapper.LOC_GRAVE, 2).passcode());
+    }
+
+    @Test
+    void cardLeavingGraveyardIsRemovedFromTheIdentityList() {
+        // 列表区域的卡不占 zoneIndex，离开时必须显式从身份列表摘出，否则张数虚高、回填错位
+        StateProjector projector = startDuel(0);
+        sendToGrave(projector, 1, SKY_STRIKER_MOB, 0);
+        sendToGrave(projector, 1, EFFECT_VEILER, 1);
+
+        // 中间那张被除外（grave seq1 → removed，真卡号）
+        projector.apply(ProtocolIds.MSG_MOVE, reader(new ByteWriter()
+                .u32(EFFECT_VEILER)
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_GRAVE, 1, 0))
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_REMOVED, 0, 0))
+                .u32(0)));
+
+        DuelState state = projector.snapshot();
+        assertEquals(List.of(SKY_STRIKER_MOB), state.opponent().graveyard().stream()
+                .map(CardIdentity::passcode).toList(), "离开墓地的卡必须从身份列表摘出");
+        assertEquals(List.of(EFFECT_VEILER), state.opponent().banished().stream()
+                .map(CardIdentity::passcode).toList());
+        assertEquals(SKY_STRIKER_MOB, projector.identityAt(1, ZoneMapper.LOC_GRAVE, 0).passcode());
+        assertTrue(projector.identityAt(1, ZoneMapper.LOC_GRAVE, 1).isUnknown(),
+                "墓地下标 1 已经没有卡了");
+        assertEquals(1, state.cards().values().stream()
+                        .filter(c -> c.zone() != null && c.zone().owner() == PlayerSide.OPPONENT
+                                && c.zone().kind() == ZoneKind.GRAVEYARD)
+                        .count(),
+                "墓地里只剩 MOB 一张：离开的那张必须复用实例——残留孤儿实例会让快照 diff"
+                        + "把墓地→除外看成凭空出现");
+        assertEquals(1, state.cards().values().stream()
+                        .filter(c -> c.zone() != null && c.zone().owner() == PlayerSide.OPPONENT
+                                && c.zone().kind() == ZoneKind.BANISHED)
+                        .count());
+    }
+
+    @Test
+    void maskedMoveOutOfGraveyardStillRemovesByIndex() {
+        StateProjector projector = startDuel(0);
+        sendToGrave(projector, 1, SKY_STRIKER_MOB, 0);
+        sendToGrave(projector, 1, EFFECT_VEILER, 1);
+
+        // 卡号被抹零的离开（引擎对部分消息抹零）：按下标摘出
+        projector.apply(ProtocolIds.MSG_MOVE, reader(new ByteWriter()
+                .u32(0)
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_GRAVE, 0, 0))
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_REMOVED, 0, 0))
+                .u32(0)));
+
+        assertEquals(List.of(EFFECT_VEILER), projector.snapshot().opponent().graveyard()
+                .stream().map(CardIdentity::passcode).toList());
+    }
+
+    @Test
+    void driftedSequenceFallsBackToIdentityInsteadOfRemovingTheWrongCard() {
+        StateProjector projector = startDuel(0);
+        sendToGrave(projector, 1, SKY_STRIKER_MOB, 0);
+        sendToGrave(projector, 1, EFFECT_VEILER, 1);
+
+        // from.sequence 与身份对不上（顺序漂移）：宁可少删也不删错
+        projector.apply(ProtocolIds.MSG_MOVE, reader(new ByteWriter()
+                .u32(EFFECT_VEILER)
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_GRAVE, 0, 0))
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_REMOVED, 0, 0))
+                .u32(0)));
+
+        assertEquals(List.of(SKY_STRIKER_MOB), projector.snapshot().opponent().graveyard()
+                .stream().map(CardIdentity::passcode).toList(),
+                "下标 0 是 SKY_STRIKER_MOB，不能因为它被删掉");
+    }
+
     @Test
     void placingIntoOccupiedSlotEvictsStaleInstance() {
         StateProjector projector = startDuel(0);
@@ -416,5 +532,116 @@ class StateProjectorTest {
         assertTrue(state.self().hand().stream()
                         .allMatch(c -> c.zone() != null && c.zone().kind() == ZoneKind.HAND),
                 "手牌实例必须落在手牌区（而不是被当成场上卡）");
+    }
+
+    @Test
+    void extraDeckCostMoveIsForwardedWithSourceAndReason() {
+        // 2026-11-15 实机（落胤与圣女的代价）：烙印龙 白界龙 额外卡组→墓地，
+        // diff 只能写"凭空出现（从 未知区域）"，代价位也丢失——协议移动必须透传
+        StateProjector projector = startDuel(0);
+        projector.apply(ProtocolIds.MSG_MOVE, reader(new ByteWriter()
+                .u32(87746184L)
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_EXTRA, 0, 0))
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_GRAVE, 0, 0))
+                .u32(0x80)));   // REASON_COST
+
+        ProtocolEvents.ProtocolMove move = projector.pollMove();
+        assertNotNull(move, "代价移动要透传给记录层");
+        assertEquals(87746184L, move.passcode());
+        assertEquals(ZoneKind.EXTRA_DECK, move.from().kind(), "来源是额外卡组（不再是未知区域）");
+        assertEquals(ZoneKind.GRAVEYARD, move.to().kind());
+        assertEquals(PlayerSide.OPPONENT, move.from().owner());
+        assertTrue(move.reason().contains("COST"), "代价位要转成可读标签: " + move.reason());
+        assertTrue(projector.pollMove() == null, "不重复入队");
+    }
+
+    @Test
+    void movesWithDiffVisibleSourceDoNotEmitProtocolEvent() {
+        // 来源可由 diff 求得（手牌实例存在）且无代价位的普通移动不透传：
+        // 避免记录层同一移动收到两条事件
+        StateProjector projector = startDuel(0);
+        dealToHand(projector, 1, SKY_STRIKER_MOB, 0);
+        projector.apply(ProtocolIds.MSG_MOVE, reader(new ByteWriter()
+                .u32(SKY_STRIKER_MOB)
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_HAND, 0, 0))
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_GRAVE, 0, 0))
+                .u32(0)));
+
+        assertTrue(projector.pollMove() == null,
+                "手牌来源的普通移动走 diff 就够了");
+    }
+
+    @Test
+    void deckToGraveMoveForwardsSourceEvenWithoutCost() {
+        // 卡组里的卡没有实例 → diff 只能写"凭空出现（从 未知区域）"；
+        // 透传后记录能如实写"从卡组"（如愚埋类送墓）
+        StateProjector projector = startDuel(0);
+        projector.apply(ProtocolIds.MSG_MOVE, reader(new ByteWriter()
+                .u32(87746184L)
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_DECK, 0, 0))
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_GRAVE, 0, 0))
+                .u32(0x40)));   // REASON_EFFECT
+
+        ProtocolEvents.ProtocolMove move = projector.pollMove();
+        assertNotNull(move, "卡组来源的移动要透传（diff 拿不到来源）");
+        assertEquals(ZoneKind.DECK, move.from().kind());
+        assertTrue(move.reason().contains("EFFECT"));
+    }
+
+    @Test
+    void becomeTargetEmitsChainTargetEventWithResolvedIdentity() {
+        // MDPRO3 的「对象」块：BECOME_TARGET 的对象（含身份）要进记录，
+        // "无效 X / 保住 X"类判断的事实锚点（2026-11-15 落胤与圣女事故）
+        StateProjector projector = startDuel(0);
+        sendToGrave(projector, 1, EFFECT_VEILER, 0);
+
+        projector.apply(ProtocolIds.MSG_CHAINING, reader(new ByteWriter()
+                .u32(SKY_STRIKER_MOB)
+                .u32(ZoneMapper.pack(0, ZoneMapper.LOC_SZONE, 0, 0))
+                .u8(0)                       // controller
+                .u8(ZoneMapper.LOC_SZONE)    // triggering location
+                .u8(0)                       // triggering sequence
+                .u32(98338152L * 16)         // desc
+                .u8(1)));                    // chainIndex
+        projector.apply(ProtocolIds.MSG_BECOME_TARGET, reader(new ByteWriter()
+                .u8(1)
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_GRAVE, 0, 0))));
+
+        ProtocolEvents.ChainTargeted targeted = projector.pollTargetEvent();
+        assertNotNull(targeted, "对象事件要透传给记录层");
+        assertEquals(1, targeted.chainIndex());
+        assertEquals(0, targeted.activatorSeat(), "发动方是我方（座位 0）");
+        assertEquals(1, targeted.targets().size());
+        assertEquals(EFFECT_VEILER, targeted.targets().getFirst().passcode(),
+                "对象身份要当场解出（墓地也在覆盖范围内）");
+        assertEquals(ZoneKind.GRAVEYARD, targeted.targets().getFirst().zone().kind());
+        assertTrue(projector.pollTargetEvent() == null, "不重复入队");
+    }
+
+    @Test
+    void becomeTargetResolvesGraveIdentityByEngineIndexNotFirstCard() {
+        // 2026-11-15 蒂迈欧事故复现：对象是墓地第 3 张（引擎下标 2），不能被 ZoneRef
+        // 往返抹成下标 0 解成最早进墓的卡（实战解成了山雀，真对象是毁灭之黑魔术师）
+        StateProjector projector = startDuel(0);
+        sendToGrave(projector, 1, SKY_STRIKER_MOB, 0);
+        sendToGrave(projector, 1, EFFECT_VEILER, 1);
+        sendToGrave(projector, 1, ASH_BLOSSOM, 2);
+
+        projector.apply(ProtocolIds.MSG_CHAINING, reader(new ByteWriter()
+                .u32(22283204L)
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_SZONE, 0, 0))
+                .u8(1)
+                .u8(ZoneMapper.LOC_SZONE)
+                .u8(0)
+                .u32(22283204L * 16)
+                .u8(1)));
+        projector.apply(ProtocolIds.MSG_BECOME_TARGET, reader(new ByteWriter()
+                .u8(1)
+                .u32(ZoneMapper.pack(1, ZoneMapper.LOC_GRAVE, 2, 0))));
+
+        ProtocolEvents.ChainTargeted targeted = projector.pollTargetEvent();
+        assertNotNull(targeted);
+        assertEquals(ASH_BLOSSOM, targeted.targets().getFirst().passcode(),
+                "对象身份按协议下标（2 → 墓地第 3 张）解出，绝不能落到下标 0 的卡");
     }
 }

@@ -77,7 +77,7 @@ public final class DuelRecordSections {
                 if (index != null && out.get(index).side() == r.side()) {
                     DuelTimeline.Entry.CardMoved m = (DuelTimeline.Entry.CardMoved) out.get(index);
                     out.set(index, new DuelTimeline.Entry.CardMoved(m.seq(), m.turn(), m.side(),
-                            r.passcode(), m.fromZone(), m.toZone(), m.position()));
+                            r.passcode(), m.fromZone(), m.toZone(), m.position(), m.reason()));
                     continue;
                 }
                 if (index != null) {
@@ -111,7 +111,7 @@ public final class DuelRecordSections {
         }
         if (entry instanceof DuelTimeline.Entry.EffectActivated e) {
             String head = linkPrefix(e.chainIndex()) + sideText(e.side()) + "：发动 "
-                    + cardLabel(e.passcode());
+                    + cardLabel(e.passcode()) + typeTag(e.passcode());
             // 先判"发动的是卡还是效果"（永续魔陷/场地魔法翻开上场的发动不发动任何条款，
             // 2026-11-15 用户反馈）：是卡就明说，别把全部条款写得像"都发动了"
             CardText.ActivationKind kind = cardText.activationKind(
@@ -156,6 +156,13 @@ public final class DuelRecordSections {
         if (entry instanceof DuelTimeline.Entry.ChainEnded) {
             return "〔处理结束〕";
         }
+        if (entry instanceof DuelTimeline.Entry.ChainTargeted t) {
+            // MDPRO3 的「对象」块：这一环要动谁——"无效 X/保住 X"类判断的事实锚点
+            String targets = t.targets().stream()
+                    .map(x -> cardLabel(x.passcode()) + "（" + ZoneCodes.label(x.zone()) + "）")
+                    .collect(java.util.stream.Collectors.joining("、"));
+            return linkPrefix(t.chainIndex()) + sideText(t.side()) + "：对象 " + targets;
+        }
         if (entry instanceof DuelTimeline.Entry.AttackDeclared a) {
             return sideText(a.side()) + "：攻击宣言 " + cardLabel(a.passcode())
                     + (Texts.isBlank(a.target()) ? "" : " → " + a.target());
@@ -177,11 +184,16 @@ public final class DuelRecordSections {
         String name = m.passcode() > 0 ? cardLabel(m.passcode()) : null;
         ZoneRef to = m.toZone();
         ZoneRef from = m.fromZone();
+        // 代价/丢弃位（协议 reason）：这张卡进墓/离场是**已付的代价**，不是效果结果——
+        // 模型必须分清这两者（"落胤与圣女的代价是白界龙" vs "效果把燎里破坏了"）
+        String prefix = movePrefix(m.reason());
         if (to == null) {
             // 离场即从镜像消失（重载全场等罕见情形）：按"离开原区域"如实渲染
-            return who + "：" + (name == null ? "一张卡" : name) + "离开 " + zoneText(from);
+            return prefix + who + "：" + (name == null ? "一张卡" : name) + "离开 " + zoneText(from);
         }
-        return switch (to.kind()) {
+        // 某些分支返回 null（如魔陷翻面=发动行承载，不单独成行）：不能直接拼 prefix，
+        // 否则 null 被字符串化成字面量 "null" 行
+        String line = switch (to.kind()) {
             case HAND -> from == null
                     // 来源不可见（卡组无实例）：可能是抽卡也可能是检索/效果加入，diff 层区分不了，不说死
                     ? who + "：" + (name == null ? "有卡加入手牌（内容不可见）" : name + " 加入手牌")
@@ -195,9 +207,12 @@ public final class DuelRecordSections {
                     + " 进入墓地（从 " + zoneText(from) + "）";
             case BANISHED -> who + "：" + (name == null ? "一张卡" : name)
                     + " 被除外（从 " + zoneText(from) + "）";
-            case DECK -> who + "：" + (name == null ? "一张卡" : name) + " 回到卡组";
-            case EXTRA_DECK -> who + "：" + (name == null ? "一张卡" : name) + " 加入额外卡组";
+            case DECK -> who + "：" + (name == null ? "一张卡" : name) + " 回到卡组"
+                    + (from == null ? "" : "（从 " + zoneText(from) + "）");
+            case EXTRA_DECK -> who + "：" + (name == null ? "一张卡" : name) + " 加入额外卡组"
+                    + (from == null ? "" : "（从 " + zoneText(from) + "）");
         };
+        return line == null ? null : prefix + line;
     }
 
     private String monsterMove(DuelTimeline.Entry.CardMoved m, String who, String name) {
@@ -245,6 +260,37 @@ public final class DuelRecordSections {
         return facts.byPasscode(passcode)
                 .map(f -> f.name())
                 .orElseGet(() -> "卡(" + passcode + ")");
+    }
+
+    /**
+     * 卡种标注（〔速攻魔法〕〔效果／怪兽〕…）：决策请求与记录里只给卡名时，
+     * 模型会把对手的速攻魔法当"效果怪兽"去无效（2026-11-15 实机事故）。
+     */
+    private String typeTag(long passcode) {
+        if (passcode <= 0) {
+            return "";
+        }
+        return facts.byPasscode(passcode)
+                .map(f -> f.cardType() == null || f.cardType().isBlank()
+                        ? "" : "〔" + f.cardType() + "〕")
+                .orElse("");
+    }
+
+    /** 移动原因 → 行前缀：代价位最关键（MDPRO3 的「代价」块）。 */
+    private static String movePrefix(String reason) {
+        if (reason == null) {
+            return "";
+        }
+        if (reason.contains("COST")) {
+            return "〔代价〕";
+        }
+        if (reason.contains("DISCARD")) {
+            return "〔丢弃〕";
+        }
+        if (reason.contains("MATERIAL")) {
+            return "〔素材〕";
+        }
+        return "";
     }
 
     private String zoneText(ZoneRef zone) {

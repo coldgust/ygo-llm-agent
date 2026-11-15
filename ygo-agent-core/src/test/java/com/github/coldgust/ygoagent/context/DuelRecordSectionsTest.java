@@ -3,6 +3,7 @@ package com.github.coldgust.ygoagent.context;
 import com.github.coldgust.ygoagent.knowledge.CardFacts;
 import com.github.coldgust.ygoagent.pipeline.TestDuels;
 import com.github.coldgust.ygodomain.duel.PlayerSide;
+import com.github.coldgust.ygodomain.zone.ZoneKind;
 import com.github.coldgust.ygodomain.zone.ZoneRef;
 import org.junit.jupiter.api.Test;
 
@@ -82,8 +83,8 @@ class DuelRecordSectionsTest {
                         TestDuels.SERVANT, 0, 1, ZoneRef.graveyard(PlayerSide.OPPONENT)));
 
         String section = joined(sections.lines(timeline.turn(3)));
-        assertTrue(section.contains("对方：发动 王之仆人-黑魔术师（对方墓地）："),
-                "来源区域要给出（墓地 → ②）:\n" + section);
+        assertTrue(section.contains("对方：发动 王之仆人-黑魔术师〔效果怪兽〕（对方墓地）："),
+                "来源区域要给出（墓地 → ②）+ 卡种标注:\n" + section);
         assertTrue(section.contains("①：这张卡的卡名只要在场上·墓地存在当作「黑魔术师」使用"),
                 "全部条款全文要给出（①）:\n" + section);
         assertTrue(section.contains("②：这张卡在手卡存在"), "全部条款全文要给出（②）:\n" + section);
@@ -99,7 +100,7 @@ class DuelRecordSectionsTest {
                         TestDuels.SERVANT, 0, 1));
 
         String section = joined(sections.lines(timeline.turn(3)));
-        assertTrue(section.contains("对方：发动 王之仆人-黑魔术师：①："), section);
+        assertTrue(section.contains("对方：发动 王之仆人-黑魔术师〔效果怪兽〕：①："), section);
         assertFalse(section.contains("（对方"), "没有区域就不要编一个:\n" + section);
     }
 
@@ -330,5 +331,38 @@ class DuelRecordSectionsTest {
     void blankTimelineRendersNothing() {
         assertTrue(sections.lines(timeline().turn(1)).isEmpty());
         assertTrue(sections.lines(timeline().turn(1)).isEmpty());
+    }
+
+    @Test
+    void costMoveIsLabelledSoTheModelDistinguishesCostFromEffect() {
+        // MDPRO3 的「代价」块（2026-11-15 落胤与圣女事故）：代价送墓（白界龙 额外卡组→墓地）
+        // 不能渲染成效果结果，来源也不能是"未知区域"
+        DuelTimeline timeline = timeline(
+                new DuelTimeline.Entry.TurnStarted(1, 2, DuelTimeline.Side.OPPONENT),
+                new DuelTimeline.Entry.CardMoved(2, 2, DuelTimeline.Side.OPPONENT, TestDuels.KAGARI,
+                        ZoneRef.extraDeck(PlayerSide.OPPONENT),
+                        ZoneRef.graveyard(PlayerSide.OPPONENT), null, "COST"));
+
+        String section = joined(sections.lines(timeline.turn(2)));
+        assertTrue(section.contains("〔代价〕"), "代价移动要标注，模型才能分清代价与效果结果:\n" + section);
+        assertTrue(section.contains("从 对方额外卡组"), "来源要如实:\n" + section);
+        assertFalse(section.contains("未知区域"), "卡组/额外卡组来源不再是未知区域:\n" + section);
+    }
+
+    @Test
+    void chainTargetsRenderAsTheObjectLine() {
+        // MDPRO3 的「对象」块："无效 X / 保住 X"类判断的事实锚点——
+        // 2026-11-15 实机：连锁行明写对象是燎里，模型仍说"抓锚已无效落胤与圣女"
+        DuelTimeline timeline = timeline(
+                new DuelTimeline.Entry.TurnStarted(1, 2, DuelTimeline.Side.OPPONENT),
+                new DuelTimeline.Entry.ChainTargeted(2, 2, DuelTimeline.Side.OPPONENT, 2,
+                        List.of(new DuelTimeline.Entry.ChainTargeted.Target(
+                                new ZoneRef(ZoneKind.EXTRA_MONSTER_ZONE, PlayerSide.SELF, 0),
+                                TestDuels.KAGARI))));
+
+        String section = joined(sections.lines(timeline.turn(2)));
+        assertTrue(section.contains("〔连锁 2〕对方：对象 闪刀姬-燎里"),
+                "对象行要带连锁号与卡名:\n" + section);
+        assertTrue(section.contains("我方额外怪兽区1"), "对象所在区域要给出:\n" + section);
     }
 }

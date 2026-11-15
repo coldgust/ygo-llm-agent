@@ -1,5 +1,6 @@
 package com.github.coldgust.ygoprosdk.session;
 
+import com.github.coldgust.ygoprosdk.core.ProtocolEvents;
 import com.github.coldgust.ygodomain.decision.ChoiceRequest;
 import com.github.coldgust.ygodomain.decision.ChoiceSelection;
 import com.github.coldgust.ygodomain.duel.DuelState;
@@ -13,6 +14,23 @@ public interface DuelListener {
 
     /** 战场镜像更新（每条状态事件后回调，值为不可变快照）。 */
     default void onStateUpdate(DuelState state) {
+    }
+
+    /**
+     * 协议层卡移动（MSG_MOVE 原始信息）。
+     *
+     * <p>只在状态 diff 拿不到关键信息时才发：来源是卡组/额外卡组（那里的卡无实例，
+     * diff 只能写"凭空出现"）或 reason 带代价/丢弃位。receiver 需自行防重
+     * （同一次移动 diff 也会给出一条）。
+     */
+    default void onProtocolMove(ProtocolEvents.ProtocolMove move) {
+    }
+
+    /**
+     * 连锁对象确定（MSG_BECOME_TARGET）：对象属于最近入链的那一环。
+     * MDPRO3 的「对象」块——记录层靠它把"这环要动谁"写进决斗记录。
+     */
+    default void onChainTargeted(ProtocolEvents.ChainTargeted targeted) {
     }
 
     /** 出现了待决策的请求（与 awaitChoice 返回的是同一个对象）。 */

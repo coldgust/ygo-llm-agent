@@ -10,6 +10,7 @@ import com.github.coldgust.ygodomain.card.CardIdentity;
 import com.github.coldgust.ygodomain.decision.ChoiceRequest;
 import com.github.coldgust.ygodomain.duel.CardInstance;
 import com.github.coldgust.ygodomain.duel.ChainNode;
+import com.github.coldgust.ygodomain.duel.ChainTargetRef;
 import com.github.coldgust.ygodomain.duel.DuelState;
 import com.github.coldgust.ygodomain.duel.PlayerSide;
 import com.github.coldgust.ygodomain.zone.ZoneRef;
@@ -205,18 +206,32 @@ final class CandidateSections {
         sj.add("（下列候选均已通过规则校验：不必再判断能否发动，只判断值不值得）");
     }
 
-    /** 把对象区域翻成"卡名（位置）"；查不到卡就给位置，绝不编名字。 */
-    private String targetLabels(List<ZoneRef> targets, DuelState state) {
+    /**
+     * 把对象翻成"卡名（位置）"；身份优先用协议包解析瞬间解出的 {@link ChainTargetRef#identity()}
+     * （列表区域如墓地的 ZoneRef 不携带引擎下标，按区域回查会在多张卡里取错——实战事故：
+     * 蒂迈欧的墓地对象被解成了另一张卡）。身份解不出才回退按区域找场上实例。
+     */
+    private String targetLabels(List<ChainTargetRef> targets, DuelState state) {
         StringJoiner sj = new StringJoiner("、");
-        for (ZoneRef zone : targets) {
-            String name = state.cards().values().stream()
-                    .filter(card -> zone.equals(card.zone()))
-                    .findFirst()
-                    .map(card -> CardLabels.labelOf(card, facts))
-                    .orElse("（该位置的卡）");
-            sj.add(name + "（" + ZoneCodes.describe(zone) + "）");
+        for (ChainTargetRef target : targets) {
+            String name = targetName(target, state);
+            sj.add(name + "（" + ZoneCodes.describe(target.zone()) + "）");
         }
         return sj.toString();
+    }
+
+    /** 对象卡名：身份已知走卡库；未知才回退区域查找（槽位区域仍然可靠）。 */
+    private String targetName(ChainTargetRef target, DuelState state) {
+        CardIdentity identity = target.identity();
+        if (identity != null && !identity.isUnknown()) {
+            return facts.byPasscode(identity.passcode()).map(CardFact::label)
+                    .orElseGet(() -> "卡(" + identity.passcode() + ")");
+        }
+        return state.cards().values().stream()
+                .filter(card -> target.zone().equals(card.zone()))
+                .findFirst()
+                .map(card -> CardLabels.labelOf(card, facts))
+                .orElse("（该位置的卡）");
     }
 
     /** 链的结算次序（逆算）：#n → #n-1 → … → #1。写出来比让模型自己推更可靠。 */
@@ -278,16 +293,38 @@ final class CandidateSections {
     private String compactLabel(Candidate candidate, DecisionPoint point) {
         String id = candidate.id().value() + " ";
         return id + switch (candidate) {
-            case Candidate.CardC card -> verbOf(card.value(), point) + shortName(card.value());
+            case Candidate.CardC card -> verbOf(card.value(), point) + shortName(card.value())
+                    + typeTag(passcodeOf(card.value()));
             // 带条款号：同一张多效果卡的两个选项（零衣① / 零衣②）否则长得一模一样
-            case Candidate.EffectC effect -> "发动 " + shortName(effect.value().card()) + markOf(effect);
-            case Candidate.AttackC attack -> "攻击 " + shortName(attack.value().card());
-            case Candidate.TributeC tribute -> "祭品 " + shortName(tribute.value().card());
+            case Candidate.EffectC effect -> "发动 " + shortName(effect.value().card())
+                    + typeTag(passcodeOf(effect.value().card())) + markOf(effect);
+            case Candidate.AttackC attack -> "攻击 " + shortName(attack.value().card())
+                    + typeTag(passcodeOf(attack.value().card()));
+            case Candidate.TributeC tribute -> "祭品 " + shortName(tribute.value().card())
+                    + typeTag(passcodeOf(tribute.value().card()));
             case Candidate.ZoneC zone -> ZoneCodes.label(zone.value());
             case Candidate.FlagC flag -> flag.flag().label();
             case Candidate.DeclineC decline -> decline.kind().label();
             case Candidate.CounterC ignored -> "指示物";
         };
+    }
+
+    private static long passcodeOf(ChoiceRequest.CardChoice card) {
+        return card == null || card.identity() == null ? 0 : card.identity().passcode();
+    }
+
+    /**
+     * 卡种标注（〔速攻魔法〕〔效果／怪兽〕…）：连锁/候选只给卡名时，模型会把对手的
+     * 速攻魔法当"效果怪兽"去无效（2026-11-15 实机：抓锚"无效落胤与圣女"）。
+     * 卡库无资料时给空串，绝不编造。
+     */
+    private String typeTag(long passcode) {
+        if (passcode <= 0) {
+            return "";
+        }
+        return facts.byPasscode(passcode)
+                .map(f -> f.cardType() == null || f.cardType().isBlank() ? "" : "〔" + f.cardType() + "〕")
+                .orElse("");
     }
 
     /**
@@ -359,6 +396,7 @@ final class CandidateSections {
         StringBuilder sb = new StringBuilder("连锁").append(node.index()).append(' ')
                 .append(node.controller() == PlayerSide.SELF ? "我方" : "对方").append(' ')
                 .append("「").append(cardText.name(passcode)).append("」")
+                .append(typeTag(passcode))
                 .append("（").append(ZoneCodes.label(node.source())).append("）");
         if (node.negated()) {
             sb.append("［已被无效］");

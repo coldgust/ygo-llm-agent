@@ -29,8 +29,12 @@ import java.util.List;
  * 与 wire 的相对位置（DefaultAiServices#assembleMessages，1.23.0）：框架先读 messages()
  * 再 append 本次 user 消息——首轮请求里快照位于本次请求行**之前**；
  * 工具轮重读 messages() 时快照垫底（在最新工具对之后）。
- * 生命周期由编排代码显式管理（stage → 调用含工具轮/重答 → finally {@link #dropEphemeral}）；
- * 只允许拥有本 memory 的调用线程操作（决策器每时刻至多一次在途调用，规划器 worker 单线程）。
+ * 生命周期由编排代码显式管理（stage → 调用含工具轮/重答 → finally 丢弃）；
+ * 决策器正常路径每时刻至多一次在途调用，规划器 worker 单线程——但决策器<b>超时路径</b>
+ * 会遗留后台任务（{@code cancel(true)} 打不断阻塞中的 HTTP 调用），与下一手并发，
+ * 因此决策器必须用 {@link #dropIfStaged}（引用守卫）丢弃快照：遗留任务只能清掉自己
+ * stage 的那份，不会误清下一手的快照；无并发顾虑的调用方（规划器）仍可用
+ * {@link #dropEphemeral} 无条件清空。
  *
  * <p>修剪（锯齿）：NORMAL 超过阈值才剪；剪后保留 pinned + 全部 RECORD + 最近 keepRecent 条
  * NORMAL；保留边界向后扩到 UserMessage 边界，工具对（AiMessage(toolCalls) ↔ ToolResult 成对
@@ -133,6 +137,20 @@ public final class DuelChatMemory implements ChatMemory {
     public void dropEphemeral() {
         synchronized (this) {
             ephemeral = null;
+        }
+    }
+
+    /**
+     * 带引用守卫的快照丢弃：仅当槽内快照仍是调用方 stage 的那一份（同一引用）时才置空。
+     * 决策器超时会遗留后台任务（{@code cancel(true)} 打不断阻塞中的 HTTP 调用），
+     * 其 finally 可能晚于下一手 {@link #stageOnce} 执行——引用不同即不丢，避免误清下一手的快照
+     * （LlmJudge 竞态，2026-11-15 缺陷修复）。
+     */
+    public void dropIfStaged(UserMessage snapshot) {
+        synchronized (this) {
+            if (ephemeral == snapshot) {
+                ephemeral = null;
+            }
         }
     }
 
