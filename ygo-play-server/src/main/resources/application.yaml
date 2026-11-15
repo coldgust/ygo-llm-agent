@@ -87,7 +87,7 @@ ygo:
     url: ${LIGHTRAG_URL:http://localhost:9621}
     # API key：LightRAG 开启 AUTH_ACCOUNTS 后必填；留空 = 不带认证
     api-key: ${LIGHTRAG_API_KEY:}
-    # 单次检索超时 ms（下限 1000，默认 8000）
+    # 单次检索超时 ms（必须为正数，默认 8000）
     timeout-ms: ${LIGHTRAG_TIMEOUT_MS:8000}
   agent:
     # 全链路日志：true = LLM 请求/响应原文、工具调用、决策流水、轨迹事件打进日志（默认关）
