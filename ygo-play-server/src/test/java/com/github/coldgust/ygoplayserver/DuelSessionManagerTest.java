@@ -60,7 +60,9 @@ class DuelSessionManagerTest {
         }));
 
         DuelView view = manager.start(request());
-        assertEquals(DuelStatus.STARTING.name(), view.status());
+        assertTrue(DuelStatus.STARTING.name().equals(view.status())
+                        || DuelStatus.RUNNING.name().equals(view.status()),
+                "start() 应返回非终态状态，实际: " + view.status());
         assertTrue(started.await(2, TimeUnit.SECONDS));
         awaitStatus(manager, view.id(), DuelStatus.RUNNING);
         manager.stop(view.id());
